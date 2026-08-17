@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# shellcheck disable=SC1091
+source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
+
+if [[ ! -f "${RLCD_IDF_DIR}/export.sh" ]]; then
+  echo "未找到 ESP-IDF v${ESP_IDF_VERSION}: ${RLCD_IDF_DIR}" >&2
+  echo "请先执行: ./scripts/bootstrap.sh" >&2
+  exit 1
+fi
+
+if [[ ! -f "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/CMakeLists.txt" ||
+      ! -f "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2_st7305/CMakeLists.txt" ]]; then
+  echo "未找到外部显示依赖: ${RLCD_WAVESHARE_COMPONENTS_DIR}" >&2
+  echo "请先执行: ./scripts/bootstrap.sh" >&2
+  exit 1
+fi
+
+export IDF_TOOLS_PATH="${RLCD_IDF_TOOLS_DIR}"
+# ESP-IDF's export script prepares the pinned compiler and Python environment.
+# shellcheck disable=SC1091
+source "${RLCD_IDF_DIR}/export.sh"
+
+cd "${RLCD_PROJECT_DIR}"
+# merge-bin depends on the normal build target, so this performs one build and
+# then creates a single image without invoking any serial-port action.
+idf.py -B build merge-bin --output rlcd_firmware_merged.bin
+
+(
+  cd build
+  sha256sum \
+    bootloader/bootloader.bin \
+    partition_table/partition-table.bin \
+    rlcd_firmware.bin \
+    rlcd_firmware_merged.bin \
+    > SHA256SUMS
+)
