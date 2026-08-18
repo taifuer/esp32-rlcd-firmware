@@ -1,0 +1,34 @@
+Logisoso
+
+Copyright (C) 2011 Mathieu-g (Mathieu Gabiot).
+Font copyright statement: Created by Mathieu Gabiot with FontForge 2.0
+(http://fontforge.sf.net) - Brussels - 2009
+
+The U8g2 licensing record notes that Font Library labels Logisoso as OFL,
+while COPYING.TXT from the font archive states GPL version 2 with a font
+exception. This distribution conservatively preserves and applies the
+more explicit archive notice below.
+
+This Font Software is an open font and is released under the GPL v2 with
+font exception; you can redistribute it and/or modify it under the terms
+of the GNU General Public License as published by the Free Software
+Foundation.
+
+This Font Software is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+more details. The full GNU General Public License version 2 is reproduced
+in GPL-2.0-only.txt in this directory.
+
+As a special exception, if you create a document which uses this font,
+and embed this font or unaltered portions of this font into the document,
+this font does not by itself cause the resulting document to be covered
+by the GNU General Public License. This exception does not however
+invalidate any other reasons why the document might be covered by the
+GNU General Public License. If you modify this font, you may extend this
+exception to your version of the font, but you are not obligated to do
+so. If you do not wish to do so, delete this exception statement from
+your version.
+
+Upstream licensing record:
+https://github.com/olikraus/u8g2/wiki/fntgrplogisoso

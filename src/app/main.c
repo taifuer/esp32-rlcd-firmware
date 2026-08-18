@@ -1,8 +1,10 @@
 #include <inttypes.h>
 #include <stdbool.h>
 
+#include "battery.h"
 #include "board_i2c.h"
 #include "board_pins.h"
+#include "chinese_lunar.h"
 #include "display.h"
 #include "esp_app_desc.h"
 #include "esp_err.h"
@@ -16,30 +18,17 @@
 
 static const char *TAG = "rlcd_firmware";
 
-static const char *rtc_error_status(esp_err_t error)
-{
-    return error == ESP_ERR_INVALID_RESPONSE ? "BAD DATA" : "READ ERROR";
-}
-
-static const char *sensor_error_status(esp_err_t error)
-{
-    if (error == ESP_ERR_INVALID_CRC) {
-        return "CRC ERROR";
-    }
-    return error == ESP_ERR_INVALID_RESPONSE ? "WRONG ID" : "READ ERROR";
-}
-
 void app_main(void)
 {
     const esp_app_desc_t *app = esp_app_get_description();
     const size_t psram_bytes = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
     ESP_LOGI(TAG, "%s firmware v%s (ESP-IDF %s)", BOARD_NAME, app->version, app->idf_ver);
     ESP_LOGI(TAG, "PSRAM available: %u KiB", (unsigned)(psram_bytes / 1024U));
-    ESP_LOGI(TAG, "offline hardware test; only explicit SET_TIME writes RTC; Wi-Fi and NTP are disabled");
+    ESP_LOGI(TAG, "offline dashboard; only explicit SET_TIME writes RTC; Wi-Fi and NTP are disabled");
 
     const bool display_ready = display_init() == ESP_OK;
     if (display_ready) {
-        display_show_status("RLCD FIRMWARE", "Starting offline hardware check");
+        display_show_status("RLCD FIRMWARE", "Starting dashboard");
     } else {
         ESP_LOGE(TAG, "ST7305 display initialization failed");
     }
@@ -84,14 +73,22 @@ void app_main(void)
         ESP_LOGW(TAG, "USB RTC time command unavailable: %s", esp_err_to_name(time_sync_error));
     }
 
+    const esp_err_t battery_init_error = battery_init();
+    const bool battery_driver_ready = battery_init_error == ESP_OK;
+    if (battery_driver_ready) {
+        ESP_LOGI(TAG, "battery monitor ready on GPIO %d", BOARD_BATTERY_ADC_GPIO);
+    } else {
+        ESP_LOGW(TAG, "battery monitor unavailable: %s", esp_err_to_name(battery_init_error));
+    }
+
     display_dashboard_t dashboard = {
-        .firmware_version = app->version,
-        .rtc_status = i2c_ready ? "NOT FOUND" : "I2C ERROR",
-        .sensor_status = i2c_ready ? "NOT FOUND" : "I2C ERROR",
-        .sensor_id = sensor_id,
+        .lunar_text = NULL,
     };
     pcf85063_datetime_t datetime = {0};
     shtc3_measurement_t measurement = {0};
+    battery_measurement_t battery_measurement = {0};
+    chinese_lunar_date_t lunar_date = {0};
+    char lunar_text[64] = {0};
     TickType_t last_wake = xTaskGetTickCount();
     uint32_t cycle = 0;
 
@@ -109,10 +106,18 @@ void app_main(void)
                 dashboard.hour = datetime.hour;
                 dashboard.minute = datetime.minute;
                 dashboard.second = datetime.second;
-                dashboard.rtc_status = datetime.clock_integrity ? "OK" : "NEEDS SETTING";
+                dashboard.lunar_valid = datetime.clock_integrity &&
+                                          chinese_lunar_from_gregorian(datetime.year,
+                                                                       datetime.month,
+                                                                       datetime.day,
+                                                                       &lunar_date) &&
+                                          chinese_lunar_format(&lunar_date, lunar_text,
+                                                               sizeof(lunar_text));
+                dashboard.lunar_text = dashboard.lunar_valid ? lunar_text : NULL;
             } else {
                 dashboard.time_valid = false;
-                dashboard.rtc_status = rtc_error_status(error);
+                dashboard.lunar_valid = false;
+                dashboard.lunar_text = NULL;
                 if ((cycle % 10U) == 0U) {
                     ESP_LOGW(TAG, "RTC read failed: %s", esp_err_to_name(error));
                 }
@@ -125,8 +130,6 @@ void app_main(void)
                 dashboard.environment_valid = true;
                 dashboard.temperature_c = measurement.temperature_c;
                 dashboard.humidity_percent = measurement.humidity_percent;
-                dashboard.sensor_id = measurement.sensor_id;
-                dashboard.sensor_status = "OK";
                 if (dashboard.time_valid) {
                     ESP_LOGI(TAG, "RTC %04u-%02u-%02u %02u:%02u:%02u, temp %.1f C, humidity %.1f %%",
                              datetime.year, datetime.month, datetime.day,
@@ -138,8 +141,25 @@ void app_main(void)
                 }
             } else {
                 dashboard.environment_valid = false;
-                dashboard.sensor_status = sensor_error_status(error);
                 ESP_LOGW(TAG, "SHTC3 read failed: %s", esp_err_to_name(error));
+            }
+        }
+
+        if (battery_driver_ready && (cycle % 30U) == 0U) {
+            const esp_err_t error = battery_read(&battery_measurement);
+            if (error == ESP_OK) {
+                dashboard.battery_valid = true;
+                dashboard.battery_percent = battery_measurement.percent;
+                if ((cycle % 300U) == 0U) {
+                    ESP_LOGI(TAG, "battery %u mV, %u%% (%s)", battery_measurement.voltage_mv,
+                             battery_measurement.percent,
+                             battery_measurement.calibrated ? "calibrated" : "nominal");
+                }
+            } else {
+                dashboard.battery_valid = false;
+                if ((cycle % 300U) == 0U) {
+                    ESP_LOGW(TAG, "battery read failed: %s", esp_err_to_name(error));
+                }
             }
         }
 

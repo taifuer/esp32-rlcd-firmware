@@ -5,3 +5,6 @@
 *.sh text eol=lf
 *.ps1 text eol=crlf
 *.bin binary
+
+# Preserve pinned upstream license texts byte-for-byte, including whitespace.
+LICENSES/** -whitespace

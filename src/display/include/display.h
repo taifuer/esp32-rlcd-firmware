@@ -10,7 +10,6 @@ extern "C" {
 #endif
 
 typedef struct {
-    const char *firmware_version;
     bool time_valid;
     uint16_t year;
     uint8_t month;
@@ -19,12 +18,13 @@ typedef struct {
     uint8_t hour;
     uint8_t minute;
     uint8_t second;
+    bool lunar_valid;
+    const char *lunar_text;
     bool environment_valid;
     float temperature_c;
     float humidity_percent;
-    uint16_t sensor_id;
-    const char *rtc_status;
-    const char *sensor_status;
+    bool battery_valid;
+    uint8_t battery_percent;
 } display_dashboard_t;
 
 esp_err_t display_init(void);

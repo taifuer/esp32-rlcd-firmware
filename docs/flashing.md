@@ -1,6 +1,7 @@
-# 固定烧录流程（WSL + Windows COM）
+# 开发烧录流程（WSL + Windows COM）
 
-本文是本机后续烧录的唯一默认流程。不要再把 USBIP 直通作为日常路径。
+本文是本机开发构建的固定烧录流程。普通用户直接安装 `dist/` 中的发布固件时，优先阅读
+[发布固件安装指南](user-install.md)。不要再把 USBIP 直通作为本机日常路径。
 
 ## 为什么使用 Windows COM
 
@@ -12,7 +13,7 @@ USB Serial/JTAG
 ```
 
 这台机器此前尝试把设备通过 `usbipd` 交给 WSL 时遇到
-`VDI_USB_HUB_FILTER`，而 Windows 直接访问 COM5 已连续完成第三方固件和自研固件
+`VDI_USB_HUB_FILTER`，而 Windows 直接访问 COM5 已连续完成外部测试固件和本项目固件
 烧录。因此固定为：WSL 编译，Windows esptool 访问 COM。
 
 COM 号可能变化，但 VID/PID 不应变化。`flash.sh` 会在写入前强制核对设备身份。
@@ -20,7 +21,7 @@ COM 号可能变化，但 VID/PID 不应变化。`flash.sh` 会在写入前强�
 ## 工具只下载一次
 
 `./scripts/flash.sh` 会调用 `install-esptool-windows.sh`。首次运行时，它从 Espressif
-官方 GitHub Release 下载 Windows esptool v5.3.1，并核对归档 SHA-256：
+官方 GitHub Release 下载 Windows esptool v5.3.1，并核对下载压缩包的 SHA-256：
 
 ```text
 2b4a73c45db27426685896f64ce3e557f63a64f43cc100cb65c0cc3486af96d3
@@ -106,11 +107,16 @@ Bootloader”的歧义。
 
 验收条件：
 
-- 启动日志显示 `App version: 0.1.1`；
-- 屏幕显示时间、日期、温湿度和 `Hello, world.`；
+- 启动日志中的版本与 `CMakeLists.txt` 的 `PROJECT_VER` 一致；
+- 屏幕等大显示完整的 `HH:MM:SS`；
+- 屏幕显示公历日期、中文星期、农历、温湿度和电池图标；
 - 串口出现 `RTC_SET_OK`；
 - 后续 RTC 秒数继续增加；
-- PCF85063 与 SHTC3 状态均为 `OK`。
+- PCF85063 与 SHTC3 读取正常；
+- 串口中的电池电压处于合理范围，屏幕电量百分比能够显示。
+
+未连接独立的可充电 RTC 备用电池时，长按 PWR 关机后 RTC 丢失时间属于预期硬件行为；
+这不影响本次开机后的显示验收。
 
 ## 常见问题
 

@@ -1,13 +1,58 @@
-# Third-party notices
+# 第三方软件与字体声明
 
-This project compiles two components directly from the clean Waveshare reference
-checkout at commit `eb1f63427d735a22b9c30e22fa63ebddae1834d3`:
+ESP32 RLCD Firmware
+Copyright 2026 taifu
 
-- `u8g2`: U8g2 monochrome graphics library. The code is BSD-2-Clause; individual
-  fonts have their own notices in the upstream `LICENSE` file.
-- `u8g2_st7305`: Waveshare's ESP-IDF adapter for the board's ST7305 reflective LCD.
+本项目自行编写的源码、脚本和文档采用 Apache License 2.0，完整条款见
+[`LICENSE`](LICENSE)。发布固件还包含下列第三方软件和字体；它们继续适用各自的
+许可证。本文件提供来源、固定版本和许可索引，完整许可文本保存在 [`LICENSES/`](LICENSES/)。
 
-The referenced files remain in an external dependency checkout selected by
-`RLCD_DEPS_DIR` (the current workspace uses `third_party/sources/` outside this
-Git repository). They are not copied into this repository, so their original
-notices remain intact.
+这些许可文本属于随二进制分发的合规材料，不是第三方源码。实际第三方源码仍由构建脚本
+下载到 Git 仓库之外，仓库中不复制或维护它们。
+
+## 构建组件
+
+| 组件 | 固定版本或来源 | 用途 | 许可证与文本 |
+| --- | --- | --- | --- |
+| ESP-IDF | v5.5.3，`2c211b236707889e8400c4dc5644dd5c4ee071e0` | 芯片支持、驱动、Bootloader 和运行时 | Apache-2.0；见 [`LICENSE`](LICENSE) |
+| FreeRTOS Kernel | ESP-IDF v5.5.3 内含 V10.5.1 | 实时操作系统内核 | MIT；见 [`LICENSES/FreeRTOS.txt`](LICENSES/FreeRTOS.txt) |
+| Mbed TLS | ESP-IDF 内含 3.6.5，`ffb280bb63c78bfec1e1ab55040671768c85c923` | 启动与系统使用的哈希实现 | Apache-2.0 OR GPL-2.0-or-later；本固件选择 Apache-2.0，见 [`LICENSES/Mbed-TLS.txt`](LICENSES/Mbed-TLS.txt) |
+| newlib | Espressif Xtensa 工具链 `esp-14.2.0_20251107` | C 标准库 | 多个宽松许可证；见 [`LICENSES/Newlib.txt`](LICENSES/Newlib.txt) |
+| GCC runtime (`libgcc`) | GCC 14.2.0，Espressif Xtensa 工具链 | 编译器运行时辅助函数 | GPL-3.0-or-later WITH GCC-exception-3.1；见 [`GPL-3.0-or-later.txt`](LICENSES/GPL-3.0-or-later.txt) 和 [`GCC-Runtime-Library-Exception-3.1.txt`](LICENSES/GCC-Runtime-Library-Exception-3.1.txt) |
+| TLSF | ESP-IDF 内含 `2867f6883a12920b1969ff9624c0ab0e4185c2ce` | 堆内存分配器 | BSD-3-Clause；见 [`LICENSES/TLSF-BSD-3-Clause.txt`](LICENSES/TLSF-BSD-3-Clause.txt) |
+| Cadence/Tensilica Xtensa 支持代码 | ESP-IDF v5.5.3 / ESP32-S3 HAL | CPU 启动、中断和 HAL | MIT；见 [`LICENSES/Cadence-Xtensa-MIT.txt`](LICENSES/Cadence-Xtensa-MIT.txt) |
+| U8g2 | 微雪固定提交中的组件 | 单色图形和字体渲染 | BSD-2-Clause；见 [`LICENSES/U8g2.txt`](LICENSES/U8g2.txt) |
+| `u8g2_st7305` | 微雪仓库 `eb1f63427d735a22b9c30e22fa63ebddae1834d3` | ST7305 ESP-IDF 适配 | Apache-2.0；见 [`LICENSE`](LICENSE) |
+
+ESP-IDF 和微雪仓库中未另行标注的 Apache-2.0 代码，均使用根目录的同一份 Apache-2.0
+完整文本。ESP-IDF 内部只有实际进入 v0.2.0 链接映像的独立许可组件列在上表中。
+
+主要上游版权归属包括：
+
+- ESP-IDF：Espressif Systems (Shanghai) CO LTD 及贡献者；
+- FreeRTOS Kernel：Copyright (C) 2021 Amazon.com, Inc. or its affiliates；
+- Mbed TLS：Copyright The Mbed TLS Contributors；
+- U8g2：Copyright (c) 2016, olikraus@gmail.com；
+- `u8g2_st7305`：Copyright 2026 Waveshare；
+- TLSF、Cadence/Tensilica、newlib、GCC runtime 和各字体的完整版权声明，保留在上表链接的
+  许可材料中。
+
+## 内嵌字体
+
+v0.2.0 使用以下 U8g2 字体。字体数据编译进固件，但字体版权不转为本项目所有：
+
+| 字体 | 许可证与说明 |
+| --- | --- |
+| `u8g2_font_6x13_tf` | Public domain；上游字体元数据声明为“Public domain font” |
+| `u8g2_font_helvB14_tf`、`u8g2_font_helvB24_tf` | Adobe/DEC X11 字体条款；完整版权和许可见 [`LICENSES/U8g2.txt`](LICENSES/U8g2.txt) |
+| `u8g2_font_wqy16_t_gb2312` | GPL-2.0-only WITH Font-exception-2.0；见 [`WenQuanYi-Bitmap-Song.txt`](LICENSES/WenQuanYi-Bitmap-Song.txt) 和 [`GPL-2.0-only.txt`](LICENSES/GPL-2.0-only.txt) |
+| `u8g2_font_logisoso20_tf`、`u8g2_font_logisoso78_tn` | 按字体归档中的 `COPYING.TXT` 采用 GPL-2.0-only WITH Font-exception-2.0；见 [`Logisoso.txt`](LICENSES/Logisoso.txt) 和 [`GPL-2.0-only.txt`](LICENSES/GPL-2.0-only.txt) |
+
+文泉驿和 Logisoso 字体均以未修改字形的形式嵌入。各自的字体例外原文说明：在文档中
+嵌入字体或未修改字体片段，不会仅因该字体而使文档适用 GPL；本分发包同时保留例外声明
+和 GPL v2 完整文本。
+
+## 来源
+
+依赖版本和下载地址固定在 [`tool-versions.env`](tool-versions.env)。构建目录选择规则及
+更新许可材料的检查步骤见[开发与发布流程](docs/development.md)。

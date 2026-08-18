@@ -23,7 +23,7 @@ foreach(component_name u8g2 u8g2_st7305)
         "${WAVESHARE_U8G2_COMPONENTS}/${component_name}")
 endforeach()
 
-set(PROJECT_VER "0.1.1")
+set(PROJECT_VER "0.2.0")
 set(COMPONENTS app)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(rlcd_firmware)

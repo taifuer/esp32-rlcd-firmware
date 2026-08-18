@@ -1,0 +1,24 @@
+WenQuanYi Bitmap Song
+
+Copyright (C) 2004-2010, WenQuanYi Project
+Board of Trustees and Qianqian Fang
+
+License: GPL-2.0-only WITH Font-exception-2.0
+
+The GNU General Public License version 2 is reproduced in
+GPL-2.0-only.txt in this directory.
+
+Font embedding exception:
+
+As a special exception, if you create a document which uses this font,
+and embed this font or unaltered portions of this font into the document,
+this font does not by itself cause the resulting document to be covered
+by the GNU General Public License. This exception does not however
+invalidate any other reasons why the document might be covered by the
+GNU General Public License. If you modify this font, you may extend this
+exception to your version of the font, but you are not obligated to do
+so. If you do not wish to do so, delete this exception statement from
+your version.
+
+Upstream licensing record:
+https://github.com/olikraus/u8g2/wiki/fntgrpwqy
