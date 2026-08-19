@@ -1,4 +1,3 @@
-#include <inttypes.h>
 #include <stdbool.h>
 
 #include "battery.h"
@@ -12,11 +11,76 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "network_time.h"
 #include "pcf85063.h"
-#include "rtc_time_sync.h"
 #include "shtc3.h"
+#include "usb_commands.h"
 
 static const char *TAG = "rlcd_firmware";
+
+typedef enum {
+    APP_DISPLAY_NONE = 0,
+    APP_DISPLAY_DASHBOARD,
+    APP_DISPLAY_NETWORK_SETUP,
+    APP_DISPLAY_NETWORK_STARTING,
+    APP_DISPLAY_NETWORK_CONNECTING,
+    APP_DISPLAY_NETWORK_SYNCHRONIZING,
+    APP_DISPLAY_NETWORK_RETRY,
+    APP_DISPLAY_NETWORK_ERROR,
+} app_display_mode_t;
+
+static display_network_state_t dashboard_network_state(
+    const network_time_status_t *status)
+{
+    switch (status->state) {
+    case NETWORK_TIME_STATE_SYNCHRONIZED:
+        return DISPLAY_NETWORK_SYNCHRONIZED;
+    case NETWORK_TIME_STATE_UNINITIALIZED:
+    case NETWORK_TIME_STATE_STARTING:
+    case NETWORK_TIME_STATE_CONNECTING:
+    case NETWORK_TIME_STATE_SYNCHRONIZING:
+        return DISPLAY_NETWORK_CONNECTING;
+    case NETWORK_TIME_STATE_PROVISIONING:
+        return status->configured ? DISPLAY_NETWORK_ERROR
+                                  : DISPLAY_NETWORK_UNCONFIGURED;
+    case NETWORK_TIME_STATE_RETRY_WAIT:
+    case NETWORK_TIME_STATE_ERROR:
+    default:
+        return DISPLAY_NETWORK_ERROR;
+    }
+}
+
+static esp_err_t write_network_time_to_rtc(const network_time_datetime_t *network_time)
+{
+    pcf85063_datetime_t requested = {
+        .year = network_time->year,
+        .month = network_time->month,
+        .day = network_time->day,
+        .hour = network_time->hour,
+        .minute = network_time->minute,
+        .second = network_time->second,
+        .clock_integrity = true,
+    };
+    esp_err_t error = pcf85063_calculate_weekday(
+        requested.year, requested.month, requested.day, &requested.weekday);
+    if (error != ESP_OK) {
+        return error;
+    }
+    error = pcf85063_write(&requested);
+    if (error != ESP_OK) {
+        return error;
+    }
+
+    pcf85063_datetime_t verified = {0};
+    error = pcf85063_read(&verified);
+    if (error != ESP_OK || !verified.clock_integrity) {
+        return error == ESP_OK ? ESP_ERR_INVALID_RESPONSE : error;
+    }
+    ESP_LOGI(TAG, "NTP_RTC_SET_OK %04u-%02u-%02u %02u:%02u:%02u weekday=%u",
+             verified.year, verified.month, verified.day, verified.hour,
+             verified.minute, verified.second, verified.weekday);
+    return ESP_OK;
+}
 
 void app_main(void)
 {
@@ -24,7 +88,7 @@ void app_main(void)
     const size_t psram_bytes = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
     ESP_LOGI(TAG, "%s firmware v%s (ESP-IDF %s)", BOARD_NAME, app->version, app->idf_ver);
     ESP_LOGI(TAG, "PSRAM available: %u KiB", (unsigned)(psram_bytes / 1024U));
-    ESP_LOGI(TAG, "offline dashboard; only explicit SET_TIME writes RTC; Wi-Fi and NTP are disabled");
+    ESP_LOGI(TAG, "dashboard with SoftAP provisioning, NVS Wi-Fi settings, and SNTP RTC sync");
 
     const bool display_ready = display_init() == ESP_OK;
     if (display_ready) {
@@ -68,17 +132,24 @@ void app_main(void)
         }
     }
 
-    const esp_err_t time_sync_error = rtc_time_sync_init();
-    if (time_sync_error != ESP_OK) {
-        ESP_LOGW(TAG, "USB RTC time command unavailable: %s", esp_err_to_name(time_sync_error));
-    }
-
     const esp_err_t battery_init_error = battery_init();
     const bool battery_driver_ready = battery_init_error == ESP_OK;
     if (battery_driver_ready) {
         ESP_LOGI(TAG, "battery monitor ready on GPIO %d", BOARD_BATTERY_ADC_GPIO);
     } else {
         ESP_LOGW(TAG, "battery monitor unavailable: %s", esp_err_to_name(battery_init_error));
+    }
+
+    const esp_err_t network_error = network_time_init();
+    if (network_error != ESP_OK) {
+        ESP_LOGW(TAG, "automatic network time unavailable: %s",
+                 esp_err_to_name(network_error));
+    }
+
+    const esp_err_t usb_commands_error = usb_commands_init();
+    if (usb_commands_error != ESP_OK) {
+        ESP_LOGW(TAG, "USB command console unavailable: %s",
+                 esp_err_to_name(usb_commands_error));
     }
 
     display_dashboard_t dashboard = {
@@ -90,10 +161,26 @@ void app_main(void)
     chinese_lunar_date_t lunar_date = {0};
     char lunar_text[64] = {0};
     TickType_t last_wake = xTaskGetTickCount();
+    network_time_state_t previous_network_state = NETWORK_TIME_STATE_UNINITIALIZED;
+    TickType_t provisioning_started = last_wake;
+    app_display_mode_t previous_display_mode = APP_DISPLAY_NONE;
     uint32_t cycle = 0;
 
     while (true) {
-        rtc_time_sync_poll(rtc_driver_ready);
+        usb_commands_poll(rtc_driver_ready);
+
+        network_time_datetime_t synchronized_time = {0};
+        if (network_time_take_datetime(&synchronized_time)) {
+            if (!rtc_driver_ready) {
+                ESP_LOGW(TAG, "SNTP succeeded but PCF85063 is unavailable");
+            } else {
+                const esp_err_t error = write_network_time_to_rtc(&synchronized_time);
+                if (error != ESP_OK) {
+                    ESP_LOGW(TAG, "could not write SNTP time to RTC: %s",
+                             esp_err_to_name(error));
+                }
+            }
+        }
 
         if (rtc_driver_ready) {
             const esp_err_t error = pcf85063_read(&datetime);
@@ -163,8 +250,64 @@ void app_main(void)
             }
         }
 
+        network_time_status_t network_status = {0};
+        (void)network_time_get_status(&network_status);
+        dashboard.network_state = dashboard_network_state(&network_status);
+        const TickType_t now = xTaskGetTickCount();
+        if (network_status.state != previous_network_state) {
+            if (network_status.state == NETWORK_TIME_STATE_PROVISIONING) {
+                provisioning_started = now;
+            }
+            previous_network_state = network_status.state;
+        }
+
         if (display_ready) {
-            display_show_dashboard(&dashboard);
+            const TickType_t provisioning_elapsed = now - provisioning_started;
+            const bool show_setup =
+                network_status.state == NETWORK_TIME_STATE_PROVISIONING &&
+                (!dashboard.time_valid ||
+                 (provisioning_elapsed >= pdMS_TO_TICKS(3000U) &&
+                  provisioning_elapsed < pdMS_TO_TICKS(63000U)));
+            app_display_mode_t display_mode = APP_DISPLAY_DASHBOARD;
+            if (show_setup) {
+                display_mode = APP_DISPLAY_NETWORK_SETUP;
+            } else if (!dashboard.time_valid &&
+                       network_status.state == NETWORK_TIME_STATE_STARTING) {
+                display_mode = APP_DISPLAY_NETWORK_STARTING;
+            } else if (!dashboard.time_valid &&
+                       network_status.state == NETWORK_TIME_STATE_CONNECTING) {
+                display_mode = APP_DISPLAY_NETWORK_CONNECTING;
+            } else if (!dashboard.time_valid &&
+                       network_status.state == NETWORK_TIME_STATE_SYNCHRONIZING) {
+                display_mode = APP_DISPLAY_NETWORK_SYNCHRONIZING;
+            } else if (!dashboard.time_valid &&
+                       network_status.state == NETWORK_TIME_STATE_RETRY_WAIT) {
+                display_mode = APP_DISPLAY_NETWORK_RETRY;
+            } else if (!dashboard.time_valid &&
+                       network_status.state == NETWORK_TIME_STATE_ERROR) {
+                display_mode = APP_DISPLAY_NETWORK_ERROR;
+            }
+
+            if (display_mode == APP_DISPLAY_DASHBOARD) {
+                display_show_dashboard(&dashboard);
+            } else if (display_mode == previous_display_mode) {
+                /* Static status pages need no one-second redraw. */
+            } else if (display_mode == APP_DISPLAY_NETWORK_SETUP) {
+                display_show_network_setup(network_status.setup_ssid,
+                                           network_status.setup_password,
+                                           network_status.setup_url);
+            } else if (display_mode == APP_DISPLAY_NETWORK_STARTING) {
+                display_show_status("WI-FI", "Starting network");
+            } else if (display_mode == APP_DISPLAY_NETWORK_CONNECTING) {
+                display_show_status("WI-FI", "Connecting...");
+            } else if (display_mode == APP_DISPLAY_NETWORK_SYNCHRONIZING) {
+                display_show_status("SETTING TIME", "Waiting for NTP");
+            } else if (display_mode == APP_DISPLAY_NETWORK_RETRY) {
+                display_show_status("WI-FI RETRY", "Check setup details");
+            } else if (display_mode == APP_DISPLAY_NETWORK_ERROR) {
+                display_show_status("NETWORK ERROR", "Use USB SET_TIME");
+            }
+            previous_display_mode = display_mode;
         }
         cycle++;
         xTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000));

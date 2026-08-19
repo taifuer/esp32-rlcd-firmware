@@ -44,24 +44,45 @@ required_files=(
     "LICENSES/GCC-Runtime-Library-Exception-3.1.txt"
     "LICENSES/GPL-2.0-only.txt"
     "LICENSES/GPL-3.0-or-later.txt"
+    "LICENSES/HTTP-Parser.txt"
     "LICENSES/Logisoso.txt"
     "LICENSES/Mbed-TLS.txt"
+    "LICENSES/Nayuki-QR-Code-Generator.txt"
     "LICENSES/Newlib.txt"
     "LICENSES/TLSF-BSD-3-Clause.txt"
     "LICENSES/U8g2.txt"
+    "LICENSES/WPA-Supplicant-COPYING.txt"
+    "LICENSES/WPA-Supplicant.txt"
     "LICENSES/WenQuanYi-Bitmap-Song.txt"
+    "LICENSES/lwIP.txt"
 )
 for relative_path in "${required_files[@]}"; do
     require_file "${RLCD_PROJECT_DIR}/${relative_path}"
 done
 
 compare_file "${RLCD_PROJECT_DIR}/LICENSE" "${RLCD_IDF_DIR}/LICENSE" "Apache-2.0"
+compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
+    "${RLCD_IDF_DIR}/components/esp_wifi/lib/LICENSE" "ESP32 Wi-Fi libraries"
+compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
+    "${RLCD_IDF_DIR}/components/esp_phy/lib/LICENSE" "ESP32 PHY libraries"
+compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
+    "${RLCD_IDF_DIR}/components/esp_coex/lib/LICENSE" "ESP32 coexistence libraries"
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/U8g2.txt" \
     "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/LICENSE" "U8g2"
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/FreeRTOS.txt" \
     "${RLCD_IDF_DIR}/components/freertos/FreeRTOS-Kernel/LICENSE.md" "FreeRTOS"
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/Mbed-TLS.txt" \
     "${RLCD_IDF_DIR}/components/mbedtls/mbedtls/LICENSE" "Mbed TLS"
+compare_file "${RLCD_PROJECT_DIR}/LICENSES/HTTP-Parser.txt" \
+    "${RLCD_IDF_DIR}/components/http_parser/LICENSE.txt" "HTTP Parser"
+compare_file "${RLCD_PROJECT_DIR}/LICENSES/lwIP.txt" \
+    "${RLCD_IDF_DIR}/components/lwip/lwip/COPYING" "lwIP"
+compare_file "${RLCD_PROJECT_DIR}/LICENSES/WPA-Supplicant.txt" \
+    "${RLCD_IDF_DIR}/components/wpa_supplicant/README" "wpa_supplicant"
+compare_file "${RLCD_PROJECT_DIR}/LICENSES/WPA-Supplicant-COPYING.txt" \
+    "${RLCD_IDF_DIR}/components/wpa_supplicant/COPYING" "wpa_supplicant COPYING"
+compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
+    "${RLCD_QRCODE_COMPONENT_DIR}/LICENSE" "Espressif QR Code"
 
 xtensa_license_dir="$(find "${RLCD_IDF_TOOLS_DIR}/tools/xtensa-esp-elf" -type d \
     -path '*/xtensa-esp-elf/share/licenses' -print -quit)"
@@ -83,23 +104,33 @@ notice_entries=(
     "${ESP_IDF_COMMIT}"
     "${WAVESHARE_COMMIT}"
     "FreeRTOS Kernel"
+    "HTTP Parser"
+    "Espressif QR Code"
     "Mbed TLS"
+    "lwIP"
     "newlib"
     "libgcc"
+    "libstdc++"
     "TLSF"
     "Cadence/Tensilica"
     "U8g2"
     "u8g2_st7305"
+    "wpa_supplicant"
     "Copyright (C) 2021 Amazon.com, Inc. or its affiliates"
+    "Copyright (c) 2001, 2002 Swedish Institute of Computer Science"
+    "Copyright (c) 2002-2022, Jouni Malinen"
     "Copyright The Mbed TLS Contributors"
     "Copyright (c) 2016, olikraus@gmail.com"
     "Copyright 2026 Waveshare"
+    "Copyright (c) Project Nayuki"
+    "${IDF_EXTRA_COMPONENTS_COMMIT}"
 )
 for notice_entry in "${notice_entries[@]}"; do
     require_notice_entry "${notice_entry}"
 done
 
 expected_fonts="$(printf '%s\n' \
+    u8g2_font_5x8_tf \
     u8g2_font_6x13_tf \
     u8g2_font_helvB14_tf \
     u8g2_font_helvB24_tf \
@@ -117,8 +148,9 @@ while IFS= read -r font_name; do
     require_notice_entry "${font_name}"
 done <<< "${expected_fonts}"
 
-if git -C "${RLCD_PROJECT_DIR}" ls-files | grep -E '(^|/)third_party/' >/dev/null; then
-    echo "Git 仓库中不应包含 third_party 源码目录" >&2
+if git -C "${RLCD_PROJECT_DIR}" ls-files | \
+    grep -E '(^|/)(third_party|managed_components)/' >/dev/null; then
+    echo "Git 仓库中不应包含第三方源码目录" >&2
     exit 1
 fi
 

@@ -5,7 +5,9 @@
 - 只使用原生 ESP-IDF，不维护 Arduino 构建路线。
 - 当前固定 ESP-IDF v5.5.3，目标芯片为 ESP32-S3。
 - 项目源码按 ESP-IDF 组件拆分在 `src/`，应用入口位于 `src/app/`。
-- U8g2 与微雪 ST7305 适配器作为外部构建依赖使用。
+- 网络功能独立位于 `src/network/`，使用 ESP-IDF Wi-Fi、HTTP Server、NVS 与
+  ESP-NETIF SNTP API。
+- U8g2、微雪 ST7305 适配器和 Espressif QR Code 作为外部构建依赖使用。
 
 固定版本见 `tool-versions.env`。如果需要升级依赖，必须同时更新版本/提交哈希、重新完整
 构建、实机验收并记录到 CHANGELOG。
@@ -17,7 +19,7 @@
 由开发环境按需准备，不提交到版本库：
 
 - ESP-IDF、编译器工具链和 Python 环境；
-- U8g2、微雪示例等第三方源码；
+- U8g2、微雪示例、Espressif QR Code 等第三方源码；
 - `build/`、`sdkconfig` 等本机构建结果；
 - 社区固件和其他外部预编译文件。
 
@@ -37,21 +39,27 @@
 3. 独立克隆仓库旁的 `../esp32-rlcd-firmware-deps/`。
 
 `bootstrap.sh` 会输出最终选中的绝对路径，并且只写入该仓库外目录，不会把依赖复制到
-版本库中。
+版本库中。项目禁用 ESP-IDF Component Manager 的隐式下载；所有外部组件均由该脚本按
+`tool-versions.env` 的提交哈希准备。
 
 ## 常用命令
 
 ```bash
 ./scripts/bootstrap.sh --check
+./scripts/configure.sh
 ./scripts/check-licenses.sh
 ./scripts/test.sh
 ./scripts/build.sh
-./scripts/package-release.sh v0.2.0
+./scripts/package-release.sh v0.3.0
 ./scripts/flash.sh --port COM5 --confirm
 ./scripts/set-rtc.sh --port COM5
 ```
 
 具体步骤见[开发烧录指南](flashing.md)，不从聊天记录还原命令。
+
+`configure.sh` 调用固定版本 ESP-IDF 的 `menuconfig`，修改写入已忽略的本地 `sdkconfig`。
+项目可公开的默认值保存在 `sdkconfig.defaults`；个人固定热点密码不得写入该文件或提交到
+Git。删除 `sdkconfig` 后会恢复项目默认值。
 
 `package-release.sh` 在 `build/release/vX.Y.Z/` 生成待上传文件，包括固件、校验值、
 `LICENSE`、`NOTICE.md` 和完整许可文本压缩包，并在返回成功前自检全部附件。它不会创建
@@ -69,6 +77,8 @@
 7. 核对 `build/SHA256SUMS`。
 8. 按[开发烧录指南](flashing.md)烧录到实机。
 9. 验证屏幕、RTC、农历、温湿度、电池 ADC、PSRAM 和串口日志。
+   含联网功能的版本还必须验证首次配网、错误密码恢复、自动 SNTP、RTC 写后回读、断电
+   重连、`GET_NETWORK` 和 `RESET_WIFI`，并确认日志不包含家庭 SSID 或密码。
 10. 只有实机通过后，才把合并镜像复制到 `dist/vX.Y.Z/`，并保存大小、SHA-256、
     构建依赖和验收记录。
 11. 按[发布固件安装指南](user-install.md)重新执行发布路径，确认普通用户命令和文件名一致。
@@ -104,5 +114,31 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
 - 构建与烧录是两个明确分开的动作。
 - 烧录必须显式传入 `--confirm`，且脚本必须验证目标 VID/PID。
 - 不默认执行 `erase-flash`。
-- Wi-Fi 密码和其他私密配置只能放在被忽略的本地文件中。
+- 家庭 Wi-Fi 密码不得写入源码、构建配置、构建日志或 Git；运行时凭据只允许由配网页面
+  写入设备 NVS。临时配网热点可在已忽略的本地 `sdkconfig` 中设置固定密码，但默认应
+  留空并在运行时随机生成；固定值会嵌入固件，不应视为秘密。当前 NVS 未加密，这一限制
+  必须在面向用户的文档中明确说明。
+- 任何配网或网络日志都不得输出家庭 SSID、密码或 HTTP 请求正文；调试状态只报告是否
+  已配置、状态名、错误码和非敏感长度。
+- 二维码原文包含临时热点密码；外部组件的输入日志必须在编译时关闭，`build.sh` 会检查
+  最终组件归档，发现相关日志字符串时拒绝生成可用构建结果。
 - 不改写或提交仓库外的上游参考源码。
+
+## 网络功能验收
+
+当前网络设计与操作说明见[自动配网与网络校时](network-time.md)。正式发布前至少覆盖：
+
+1. 空白 NVS 启动后屏幕显示默认热点名称、随机密码和固定入口地址；另外验证自定义名称、
+   关闭设备后缀与固定密码配置；
+2. Android 和 iOS 扫描二维码均能识别热点名称和密码；特殊字符转义正确，二维码四周
+   静区完整，扫码后也可按文字信息手动连接；
+3. 手机连接临时热点，提交开放网络和 WPA2/WPA3 Personal 凭据的正常/错误边界；
+4. 正确凭据下取得 DHCP 地址，SNTP 获取 UTC+8 时间，PCF85063 写入后秒数持续增加；
+5. 家庭 Wi-Fi 凭据错误或热点离线时，5 分钟修正窗口和后续重试符合文档；
+6. 无 RTC 备用电池彻底断电后，NVS 凭据保留且开机能自动恢复时间；
+7. `RESET_WIFI` 只清除项目网络命名空间，重启后回到首次配网；
+8. 标准完整镜像重新烧录后 NVS 被清空，并能重新完成首次配网；
+9. 串口和构建产物的字符串检查不包含实机家庭 SSID、家庭密码或二维码中的临时热点密码。
+
+纯逻辑表单测试由 `./scripts/test.sh` 执行。网络驱动、DHCP、HTTP、SNTP、NVS 和 RTC
+联动无法由 WSL 主机测试替代，必须在目标开发板上验收。

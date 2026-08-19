@@ -1,0 +1,27 @@
+menu "ESP32 RLCD network"
+
+    config RLCD_SETUP_AP_SSID
+        string "Setup access point base name"
+        default "ESP32-RLCD"
+        help
+            Base name of the temporary Wi-Fi access point used for local
+            provisioning. Use 1 to 25 printable ASCII characters when the
+            device ID suffix is enabled, or 1 to 32 characters otherwise.
+
+    config RLCD_SETUP_AP_APPEND_DEVICE_ID
+        bool "Append a unique device ID to the access point name"
+        default y
+        help
+            Append a dash and the final six hexadecimal digits of the SoftAP
+            MAC address. Keeping this enabled makes nearby devices easy to
+            distinguish without exposing the complete MAC address.
+
+    config RLCD_SETUP_AP_PASSWORD
+        string "Fixed setup access point password"
+        default ""
+        help
+            Leave empty to generate a new eight-character WPA2 password every
+            time provisioning starts. A fixed value must contain 8 to 63
+            printable ASCII characters and is embedded in the firmware image.
+
+endmenu

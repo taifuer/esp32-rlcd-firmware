@@ -8,8 +8,8 @@
 extern "C" {
 #endif
 
-esp_err_t rtc_time_sync_init(void);
-void rtc_time_sync_poll(bool rtc_available);
+esp_err_t usb_commands_init(void);
+void usb_commands_poll(bool rtc_available);
 
 #ifdef __cplusplus
 }

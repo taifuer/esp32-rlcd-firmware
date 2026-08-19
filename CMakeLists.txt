@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
+# All external components are pinned and prepared by scripts/bootstrap.sh.
+# Disable implicit registry downloads and their in-tree managed_components dir.
+set(ENV{IDF_COMPONENT_MANAGER} "0")
+
 # Keep all project-owned ESP-IDF components under src/. The directory contains
 # one subdirectory per component, including the application component.
 list(APPEND EXTRA_COMPONENT_DIRS "${CMAKE_CURRENT_LIST_DIR}/src")
@@ -23,7 +27,20 @@ foreach(component_name u8g2 u8g2_st7305)
         "${WAVESHARE_U8G2_COMPONENTS}/${component_name}")
 endforeach()
 
-set(PROJECT_VER "0.2.0")
+if(DEFINED ENV{RLCD_QRCODE_COMPONENT_DIR})
+    file(TO_CMAKE_PATH "$ENV{RLCD_QRCODE_COMPONENT_DIR}" QRCODE_COMPONENT_DIR)
+else()
+    set(QRCODE_COMPONENT_DIR
+        "${CMAKE_CURRENT_LIST_DIR}/../../third_party/sources/espressif/idf-extra-components/qrcode")
+endif()
+if(NOT EXISTS "${QRCODE_COMPONENT_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "Missing Espressif QR Code component. Expected it under: "
+        "${QRCODE_COMPONENT_DIR}")
+endif()
+list(APPEND EXTRA_COMPONENT_DIRS "${QRCODE_COMPONENT_DIR}")
+
+set(PROJECT_VER "0.3.0")
 set(COMPONENTS app)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(rlcd_firmware)
@@ -32,3 +49,9 @@ project(rlcd_firmware)
 # unused. Keep the upstream checkout clean while silencing only that warning.
 idf_component_get_property(st7305_component_lib u8g2_st7305 COMPONENT_LIB)
 target_compile_options(${st7305_component_lib} PRIVATE -Wno-unused-function)
+
+# The upstream QR wrapper logs its input at INFO level. The input contains the
+# temporary access-point password, so compile those logs out instead of relying
+# on a runtime log-level setting.
+idf_component_get_property(qrcode_component_lib qrcode COMPONENT_LIB)
+target_compile_definitions(${qrcode_component_lib} PRIVATE LOG_LOCAL_LEVEL=ESP_LOG_NONE)

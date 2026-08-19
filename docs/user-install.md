@@ -8,7 +8,7 @@
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.2.0/esp32-rlcd-firmware-v0.2.0.bin`](../dist/v0.2.0/esp32-rlcd-firmware-v0.2.0.bin)。
+[`dist/v0.3.0/esp32-rlcd-firmware-v0.3.0.bin`](../dist/v0.3.0/esp32-rlcd-firmware-v0.3.0.bin)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
 每个正式版本目录都应同时包含完整 `.bin`、`SHA256SUMS` 和版本说明。
 从 v0.2.0 开始，版本目录还包含对应的首屏效果图。
@@ -24,7 +24,7 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 | 固件类型 | Bootloader、分区表和应用组成的完整合并镜像 |
 | 烧录地址 | `0x0` |
 | Flash 参数 | DIO、80 MHz、16 MB |
-| SHA-256 | `d034c397aba9f79985bc7c187c24fb8db4e974b6b7ca7c0dcd0b724e1a21e389` |
+| SHA-256 | 见 [`dist/v0.3.0/SHA256SUMS`](../dist/v0.3.0/SHA256SUMS) |
 
 不要把仅包含应用的 `rlcd_firmware.bin` 写到 `0x0`。合并镜像也不是 BIOS：ESP32-S3
 芯片内置的 ROM 下载程序不会被这个文件替换。
@@ -40,7 +40,7 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.2.0
+cd dist/v0.3.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -48,14 +48,14 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.2.0/esp32-rlcd-firmware-v0.2.0.bin
+shasum -a 256 dist/v0.3.0/esp32-rlcd-firmware-v0.3.0.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.2.0\esp32-rlcd-firmware-v0.2.0.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.2.0\SHA256SUMS
+(Get-FileHash .\dist\v0.3.0\esp32-rlcd-firmware-v0.3.0.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.3.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -76,7 +76,7 @@ Windows 或 WSL。
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.2.0/esp32-rlcd-firmware-v0.2.0.bin \
+  --firmware dist/v0.3.0/esp32-rlcd-firmware-v0.3.0.bin \
   --confirm
 ```
 
@@ -117,7 +117,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.2.0\esp32-rlcd-firmware-v0.2.0.bin
+  0x0 .\dist\v0.3.0\esp32-rlcd-firmware-v0.3.0.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -135,7 +135,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.2.0/esp32-rlcd-firmware-v0.2.0.bin
+  0x0 dist/v0.3.0/esp32-rlcd-firmware-v0.3.0.bin
 ```
 
 ## 烧录后启动
@@ -149,10 +149,22 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
 
 全反射屏断电后可能保留旧画面，所以“仍看到旧内容”不代表新固件没有写入。
 
-## 设置时间
+## 首次配网与自动校时
 
-未连接独立可充电 RTC 电池时，彻底关机后时间丢失是预期现象。正常启动固件后可从 WSL
-执行：
+标准完整镜像会清除原有 NVS。首次启动时，屏幕显示 `WI-FI SETUP`、二维码、临时热点
+名称、8 位随机密码和 `http://192.168.4.1`：
+
+1. 用支持 Wi-Fi 二维码的手机相机扫码并确认加入临时热点；小米 Android 手机已实机
+   验证。无法扫码时，按屏幕显示的名称和密码手动连接。
+2. 手机通常会自动打开配网页面；没有打开时，在浏览器访问 `http://192.168.4.1`。
+3. 填写设备要连接的 2.4 GHz 家庭 Wi-Fi，选择“保存并校时”。
+4. 临时热点关闭后，设备连接家庭 Wi-Fi、获取网络时间、写入 PCF85063，并回到仪表盘。
+
+家庭 Wi-Fi 凭据保存在设备 NVS，日常只需配置一次。未连接独立可充电 RTC 电池时，彻底
+断电会使 RTC 时间失效，但下次开机会用已保存的网络配置自动恢复时间。重新烧录完整镜像
+或执行 USB `RESET_WIFI` 后才需要重新配网。
+
+USB 手动校时保留为无法联网时的后备方式，可从 WSL 执行：
 
 ```bash
 ./scripts/set-rtc.sh --port COM5
@@ -167,7 +179,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 
 脚本发送当前中国标准时间。出现 `RTC_SET_OK`，随后读取到的秒数继续递增，即表示校时
 成功。直接运行 Windows 脚本前请自行确认 COM 口属于本开发板；WSL 包装脚本会自动核对
-VID/PID。
+VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校时](network-time.md)。
 
 ## 常见问题
 
@@ -189,8 +201,9 @@ VID/PID。
 
 ### 开机显示时间无效
 
-正常启动后执行校时脚本。若希望关机仍保持时间，应按微雪产品文档使用 PH1.0 接口的
-兼容可充电 RTC 电池，不要接入不可充电纽扣电池。
+首次启动请按屏幕完成配网；已有网络配置时等待设备自动连接并校时。网络不可用时再使用
+USB 校时脚本。若希望关机仍保持时间，应按微雪产品文档使用 PH1.0 接口的兼容可充电 RTC
+电池，不要接入不可充电纽扣电池。
 
 ## 参考资料
 

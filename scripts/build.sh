@@ -27,6 +27,16 @@ cd "${RLCD_PROJECT_DIR}"
 # then creates a single image without invoking any serial-port action.
 idf.py -B build merge-bin --output rlcd_firmware_merged.bin
 
+RLCD_QRCODE_ARCHIVE="${RLCD_PROJECT_DIR}/build/esp-idf/qrcode/libqrcode.a"
+if [[ ! -f "${RLCD_QRCODE_ARCHIVE}" ]]; then
+  echo "未生成二维码组件: ${RLCD_QRCODE_ARCHIVE}" >&2
+  exit 1
+fi
+if grep -aFq -- "Encoding below text" "${RLCD_QRCODE_ARCHIVE}"; then
+  echo "二维码组件仍包含输入日志，可能泄漏临时热点密码" >&2
+  exit 1
+fi
+
 (
   cd build
   sha256sum \

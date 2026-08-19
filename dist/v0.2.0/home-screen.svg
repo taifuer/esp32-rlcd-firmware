@@ -1,26 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
   <title id="title">ESP32 RLCD Firmware dashboard</title>
-  <desc id="description">A monochrome 400 by 300 dashboard with date, lunar date, weekday, battery, large time, temperature, heart and humidity.</desc>
-  <defs>
-    <filter id="paper" x="-10%" y="-10%" width="120%" height="120%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.8" numOctaves="2" seed="18" result="noise"/>
-      <feColorMatrix in="noise" type="saturate" values="0" result="grayNoise"/>
-      <feComponentTransfer in="grayNoise" result="faintNoise">
-        <feFuncA type="table" tableValues="0 0.035"/>
-      </feComponentTransfer>
-      <feBlend in="SourceGraphic" in2="faintNoise" mode="multiply"/>
-    </filter>
-  </defs>
-  <rect width="400" height="300" rx="3" fill="#d9ddc9"/>
-  <g fill="#161a15" stroke="#161a15" filter="url(#paper)">
+  <desc id="description">A white-on-black monochrome 400 by 300 dashboard with date, lunar date, weekday, battery, large time, temperature, heart and humidity.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
     <text x="12" y="31" stroke="none" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="15.5" font-weight="600">2026年8月18日</text>
     <text x="154" y="31" stroke="none" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="15.5" font-weight="600">七月初六</text>
     <text x="248" y="31" stroke="none" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="15.5" font-weight="600">星期二</text>
 
     <g transform="translate(329 20)" fill="none" stroke-width="1.4" shape-rendering="crispEdges">
       <rect x="0" y="0" width="28" height="14"/>
-      <rect x="28" y="4" width="3" height="6" fill="#161a15" stroke="none"/>
-      <rect x="2" y="2" width="23" height="10" fill="#161a15" stroke="none"/>
+      <rect x="28" y="4" width="3" height="6" fill="#eef3e8" stroke="none"/>
+      <rect x="2" y="2" width="23" height="10" fill="#eef3e8" stroke="none"/>
     </g>
     <text x="367" y="32" stroke="none" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="10.5" font-weight="700">93%</text>
 

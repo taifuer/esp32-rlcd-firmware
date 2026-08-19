@@ -106,5 +106,6 @@ cat <<EOF
 烧录及写后哈希验证完成。芯片仍停在下载模式，请：
   1. 长按 PWR 关机；
   2. 不要按 BOOT，短按 PWR 正常开机；
-  3. 需要校时时执行: ./scripts/set-rtc.sh --port ${port}
+  3. 支持自动校时的版本按屏幕完成配网；需要手动校时时执行:
+     ./scripts/set-rtc.sh --port ${port}
 EOF

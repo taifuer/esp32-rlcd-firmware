@@ -46,6 +46,12 @@ require_command python3
 if [[ "${check_only}" == true ]]; then
     verify_checkout "${RLCD_IDF_DIR}" "${ESP_IDF_COMMIT}" "ESP-IDF v${ESP_IDF_VERSION}"
     verify_checkout "${RLCD_WAVESHARE_DIR}" "${WAVESHARE_COMMIT}" "Waveshare display source"
+    verify_checkout "${RLCD_IDF_EXTRA_COMPONENTS_DIR}" \
+        "${IDF_EXTRA_COMPONENTS_COMMIT}" "Espressif QR Code component"
+    if [[ ! -f "${RLCD_QRCODE_COMPONENT_DIR}/include/qrcode.h" ]]; then
+        echo "二维码组件不完整: ${RLCD_QRCODE_COMPONENT_DIR}" >&2
+        exit 1
+    fi
     if [[ ! -f "${RLCD_IDF_TOOLS_DIR}/idf-env.json" ]]; then
         echo "ESP-IDF 工具尚未安装: ${RLCD_IDF_TOOLS_DIR}" >&2
         exit 1
@@ -57,6 +63,7 @@ fi
 
 mkdir -p "${RLCD_EXTERNAL_DEPS_DIR}/toolchains"
 mkdir -p "${RLCD_EXTERNAL_DEPS_DIR}/sources/waveshareteam"
+mkdir -p "${RLCD_EXTERNAL_DEPS_DIR}/sources/espressif"
 
 if [[ ! -d "${RLCD_IDF_DIR}/.git" ]]; then
     git clone --branch "v${ESP_IDF_VERSION}" --depth 1 --recursive --shallow-submodules \
@@ -74,6 +81,18 @@ if [[ ! -d "${RLCD_WAVESHARE_DIR}/.git" ]]; then
     git -C "${RLCD_WAVESHARE_DIR}" checkout --detach "${WAVESHARE_COMMIT}"
 fi
 verify_checkout "${RLCD_WAVESHARE_DIR}" "${WAVESHARE_COMMIT}" "Waveshare display source"
+
+if [[ ! -d "${RLCD_IDF_EXTRA_COMPONENTS_DIR}/.git" ]]; then
+    git clone --filter=blob:none --no-checkout \
+        "${IDF_EXTRA_COMPONENTS_REPOSITORY_URL}" "${RLCD_IDF_EXTRA_COMPONENTS_DIR}"
+    git -C "${RLCD_IDF_EXTRA_COMPONENTS_DIR}" sparse-checkout init --cone
+    git -C "${RLCD_IDF_EXTRA_COMPONENTS_DIR}" sparse-checkout set \
+        "${QRCODE_COMPONENT_RELATIVE_PATH}"
+    git -C "${RLCD_IDF_EXTRA_COMPONENTS_DIR}" checkout --detach \
+        "${IDF_EXTRA_COMPONENTS_COMMIT}"
+fi
+verify_checkout "${RLCD_IDF_EXTRA_COMPONENTS_DIR}" \
+    "${IDF_EXTRA_COMPONENTS_COMMIT}" "Espressif QR Code component"
 
 if [[ ! -f "${RLCD_IDF_TOOLS_DIR}/idf-env.json" ]]; then
     export IDF_TOOLS_PATH="${RLCD_IDF_TOOLS_DIR}"

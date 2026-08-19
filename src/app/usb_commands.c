@@ -1,4 +1,4 @@
-#include "rtc_time_sync.h"
+#include "usb_commands.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -7,7 +7,10 @@
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "network_time.h"
 #include "pcf85063.h"
 
 #define RTC_COMMAND_MAX_LENGTH 63U
@@ -15,7 +18,7 @@
 #define RTC_COMMAND_PREFIX_LENGTH 9U
 #define RTC_COMMAND_DATETIME_LENGTH 19U
 
-static const char *TAG = "rtc_time_sync";
+static const char *TAG = "usb_commands";
 static char s_line[RTC_COMMAND_MAX_LENGTH + 1U];
 static size_t s_line_length;
 static bool s_line_overflow;
@@ -87,7 +90,41 @@ static void log_datetime(const char *prefix, const pcf85063_datetime_t *datetime
 static void process_line(const char *line, bool rtc_available)
 {
     if (strcmp(line, "HELP") == 0) {
-        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | HELP");
+        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | RESET_WIFI | HELP");
+        return;
+    }
+
+    if (strcmp(line, "GET_NETWORK") == 0) {
+        network_time_status_t status = {0};
+        const esp_err_t error = network_time_get_status(&status);
+        if (error == ESP_OK) {
+            ESP_LOGI(TAG, "NETWORK state=%s configured=%s last_error=%s",
+                     network_time_state_name(status.state),
+                     status.configured ? "yes" : "no",
+                     esp_err_to_name(status.last_error));
+        } else {
+            ESP_LOGW(TAG, "NETWORK_ERROR %s", esp_err_to_name(error));
+        }
+        return;
+    }
+
+    if (strcmp(line, "RESET_WIFI") == 0) {
+        const esp_err_t error = network_time_clear_credentials();
+        if (error != ESP_OK) {
+            ESP_LOGW(TAG, "WIFI_RESET_ERROR %s", esp_err_to_name(error));
+            return;
+        }
+        ESP_LOGI(TAG, "WIFI_RESET_OK restarting into setup mode");
+        vTaskDelay(pdMS_TO_TICKS(150));
+        esp_restart();
+        return;
+    }
+
+    const bool is_get_time = strcmp(line, "GET_TIME") == 0;
+    const bool is_set_time = strncmp(line, RTC_COMMAND_PREFIX,
+                                     RTC_COMMAND_PREFIX_LENGTH) == 0;
+    if (!is_get_time && !is_set_time) {
+        ESP_LOGW(TAG, "COMMAND_ERROR unknown command; use HELP");
         return;
     }
 
@@ -96,7 +133,7 @@ static void process_line(const char *line, bool rtc_available)
         return;
     }
 
-    if (strcmp(line, "GET_TIME") == 0) {
+    if (is_get_time) {
         pcf85063_datetime_t current = {0};
         const esp_err_t error = pcf85063_read(&current);
         if (error == ESP_OK) {
@@ -152,7 +189,7 @@ static void consume_byte(uint8_t byte, bool rtc_available)
     }
 
     if (s_line_overflow) {
-        ESP_LOGW(TAG, "RTC_SET_ERROR command is too long");
+        ESP_LOGW(TAG, "COMMAND_ERROR command is too long");
     } else if (s_line_length > 0U) {
         s_line[s_line_length] = '\0';
         process_line(s_line, rtc_available);
@@ -161,7 +198,7 @@ static void consume_byte(uint8_t byte, bool rtc_available)
     s_line_overflow = false;
 }
 
-esp_err_t rtc_time_sync_init(void)
+esp_err_t usb_commands_init(void)
 {
     if (!usb_serial_jtag_is_driver_installed()) {
         usb_serial_jtag_driver_config_t config = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
@@ -173,11 +210,11 @@ esp_err_t rtc_time_sync_init(void)
 
     usb_serial_jtag_vfs_use_driver();
     s_ready = true;
-    ESP_LOGI(TAG, "USB RTC command ready; use SET_TIME YYYY-MM-DD HH:MM:SS");
+    ESP_LOGI(TAG, "USB command console ready; use HELP to list commands");
     return ESP_OK;
 }
 
-void rtc_time_sync_poll(bool rtc_available)
+void usb_commands_poll(bool rtc_available)
 {
     if (!s_ready) {
         return;
