@@ -37,6 +37,15 @@ enum {
     SETUP_QR_AREA_SIZE = 170,
     SETUP_QR_QUIET_MODULES = 4,
     SETUP_QR_MAX_SCALE = 5,
+    DEVICE_SIDE_MARGIN = 12,
+    DEVICE_TITLE_BASELINE_Y = 32,
+    DEVICE_DIVIDER_Y = 44,
+    DEVICE_LABEL_X = 18,
+    DEVICE_VALUE_X = 116,
+    DEVICE_FIRST_ROW_Y = 75,
+    DEVICE_ROW_GAP = 30,
+    DEVICE_FOOTER_DIVIDER_Y = 244,
+    DEVICE_FOOTER_BASELINE_Y = 274,
 };
 
 /*
@@ -79,6 +88,14 @@ static void draw_setup_line(int baseline_y, const char *text)
         u8g2_SetFont(s_u8g2, u8g2_font_5x8_tf);
     }
     draw_centered(baseline_y, text);
+}
+
+static void draw_device_row(int baseline_y, const char *label, const char *value)
+{
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    u8g2_DrawStr(s_u8g2, DEVICE_LABEL_X, baseline_y, label);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    u8g2_DrawStr(s_u8g2, DEVICE_VALUE_X, baseline_y, value);
 }
 
 typedef struct {
@@ -366,5 +383,84 @@ void display_show_dashboard(const display_dashboard_t *dashboard)
     draw_heart(BOARD_DISPLAY_WIDTH / 2, HEART_CENTER_Y);
     draw_utf8_centered_in_region(BOARD_DISPLAY_WIDTH / 2, BOARD_DISPLAY_WIDTH / 2,
                                  ENVIRONMENT_BASELINE_Y, humidity_text);
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_device_status(const display_device_status_t *status)
+{
+    if (s_u8g2 == NULL || status == NULL) {
+        return;
+    }
+
+    char value[64];
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    draw_centered(DEVICE_TITLE_BASELINE_Y, "DEVICE STATUS");
+    u8g2_DrawHLine(s_u8g2, DEVICE_SIDE_MARGIN, DEVICE_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * DEVICE_SIDE_MARGIN);
+
+    snprintf(value, sizeof(value), "v%s",
+             status->firmware_version != NULL ? status->firmware_version : "-");
+    draw_device_row(DEVICE_FIRST_ROW_Y, "FIRMWARE", value);
+
+    if (!status->rtc_ready) {
+        snprintf(value, sizeof(value), "NOT FOUND");
+    } else if (!status->time_valid) {
+        snprintf(value, sizeof(value), "INVALID TIME");
+    } else {
+        snprintf(value, sizeof(value), "OK | %04u-%02u-%02u %02u:%02u",
+                 status->year, status->month, status->day,
+                 status->hour, status->minute);
+    }
+    draw_device_row(DEVICE_FIRST_ROW_Y + DEVICE_ROW_GAP, "RTC", value);
+
+    if (!status->sensor_ready) {
+        snprintf(value, sizeof(value), "NOT FOUND");
+    } else if (!status->environment_valid) {
+        snprintf(value, sizeof(value), "READ ERROR");
+    } else {
+        snprintf(value, sizeof(value), "%.1f C | %.0f %%",
+                 (double)status->temperature_c,
+                 (double)status->humidity_percent);
+    }
+    draw_device_row(DEVICE_FIRST_ROW_Y + 2 * DEVICE_ROW_GAP, "SENSOR", value);
+
+    if (!status->battery_ready) {
+        snprintf(value, sizeof(value), "NOT READY");
+    } else if (!status->battery_valid) {
+        snprintf(value, sizeof(value), "READ ERROR");
+    } else {
+        snprintf(value, sizeof(value), "%u %% | %u mV",
+                 status->battery_percent, status->battery_voltage_mv);
+    }
+    draw_device_row(DEVICE_FIRST_ROW_Y + 3 * DEVICE_ROW_GAP, "BATTERY", value);
+
+    if (!status->network_ready) {
+        snprintf(value, sizeof(value), "NOT READY");
+    } else if (!status->network_configured) {
+        snprintf(value, sizeof(value), "NOT CONFIGURED");
+    } else {
+        snprintf(value, sizeof(value), "%s",
+                 status->network_state != NULL ? status->network_state : "UNKNOWN");
+    }
+    draw_device_row(DEVICE_FIRST_ROW_Y + 4 * DEVICE_ROW_GAP, "NETWORK", value);
+
+    if (status->last_sync_valid) {
+        snprintf(value, sizeof(value), "%04u-%02u-%02u %02u:%02u",
+                 status->last_sync_year, status->last_sync_month,
+                 status->last_sync_day, status->last_sync_hour,
+                 status->last_sync_minute);
+    } else {
+        snprintf(value, sizeof(value), "--");
+    }
+    draw_device_row(DEVICE_FIRST_ROW_Y + 5 * DEVICE_ROW_GAP, "LAST SYNC", value);
+
+    u8g2_DrawHLine(s_u8g2, DEVICE_SIDE_MARGIN, DEVICE_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * DEVICE_SIDE_MARGIN);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(DEVICE_FOOTER_BASELINE_Y,
+                  "KEY: HOME  |  HOLD 5s: RESET WI-FI");
     u8g2_SendBuffer(s_u8g2);
 }

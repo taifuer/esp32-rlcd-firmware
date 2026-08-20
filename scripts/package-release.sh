@@ -31,9 +31,12 @@ install -m 0644 "${firmware_path}" "${release_dir}/${firmware_name}"
 install -m 0644 "${version_dir}/SHA256SUMS" "${release_dir}/SHA256SUMS"
 install -m 0644 "${RLCD_PROJECT_DIR}/LICENSE" "${release_dir}/LICENSE"
 install -m 0644 "${RLCD_PROJECT_DIR}/NOTICE.md" "${release_dir}/NOTICE.md"
-if [[ -f "${version_dir}/home-screen.svg" ]]; then
-    install -m 0644 "${version_dir}/home-screen.svg" "${release_dir}/home-screen.svg"
-fi
+for preview_name in home-screen.svg device-status.svg; do
+    if [[ -f "${version_dir}/${preview_name}" ]]; then
+        install -m 0644 "${version_dir}/${preview_name}" \
+            "${release_dir}/${preview_name}"
+    fi
+done
 
 license_archive="${release_dir}/esp32-rlcd-firmware-${version}-licenses.tar.gz"
 tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \

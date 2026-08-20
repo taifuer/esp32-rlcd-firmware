@@ -8,15 +8,17 @@
 
 ## 效果预览
 
-![ESP32 RLCD Firmware v0.3.0 首屏效果图](docs/assets/home-screen.svg)
+![ESP32 RLCD Firmware v0.4.0 首屏效果图](docs/assets/home-screen.svg)
 
-400 × 300 黑底白字效果图；全反射屏的实际观感会随环境光变化。
+![ESP32 RLCD Firmware v0.4.0 设备状态页效果图](docs/assets/device-status.svg)
+
+两张效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
 
 ## 项目概况
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新版本 | [v0.3.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新版本 | [v0.4.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 发布方式 | GitHub Releases 保留最新固件，`dist/` 保存各正式版本 |
@@ -29,6 +31,8 @@
 - 首次启动提供 WPA2 临时热点、配网页面和 Wi-Fi 加入二维码；
 - Wi-Fi 凭据保存在 NVS，断电重启后可自动联网并通过 SNTP 恢复时间；
 - 校时成功后关闭 Wi-Fi，每 24 小时重新同步；
+- 短按板载 `KEY` 查看固件、RTC、传感器、电池、网络和最近校时状态；
+- 长按 `KEY` 5 秒可清除本项目保存的 Wi-Fi 凭据并重新进入配网；
 - USB 命令支持查询状态、手动校时和重置网络配置。
 
 暂未提供联网天气、语音交互、蓝牙和 OTA。界面与联网行为的详细说明见
@@ -45,11 +49,11 @@
 2. 在仓库根目录执行：
 
    ```bash
-   cd dist/v0.3.0
+   cd dist/v0.4.0
    sha256sum --check SHA256SUMS
    cd ../..
    ./scripts/flash.sh --port COM5 \
-     --firmware dist/v0.3.0/esp32-rlcd-firmware-v0.3.0.bin \
+     --firmware dist/v0.4.0/esp32-rlcd-firmware-v0.4.0.bin \
      --confirm
    ```
 
@@ -75,6 +79,7 @@
 │   ├── board/           # 板级总线和引脚
 │   ├── calendar/        # 公历转农历
 │   ├── display/         # ST7305 界面
+│   ├── input/           # KEY 驱动与按键状态机
 │   ├── network/         # 配网、NVS 与 SNTP
 │   ├── power/           # 电池采样与估算
 │   ├── rtc/             # PCF85063 驱动

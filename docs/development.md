@@ -51,7 +51,7 @@
 ./scripts/check-licenses.sh
 ./scripts/test.sh
 ./scripts/build.sh
-./scripts/package-release.sh v0.3.0
+./scripts/package-release.sh vX.Y.Z
 ./scripts/flash.sh --port COM5 --confirm
 ./scripts/set-rtc.sh --port COM5
 ```
@@ -80,7 +80,8 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 9. 按[开发烧录指南](flashing.md)烧录到实机。
 10. 验证屏幕、RTC、农历、温湿度、电池 ADC、PSRAM 和串口日志。
     含联网功能的版本还必须验证首次配网、错误密码恢复、自动 SNTP、RTC 写后回读、断电
-    重连、`GET_NETWORK` 和 `RESET_WIFI`，并确认日志不包含家庭 SSID 或密码。
+    重连、`GET_NETWORK`、USB `RESET_WIFI`、`KEY` 状态页和长按重配网，并确认日志不
+    包含家庭 SSID 或密码。
 11. 只有实机通过后，才把合并镜像复制到 `dist/vX.Y.Z/`，并保存大小、SHA-256、
     构建依赖和验收记录。
 12. 按[发布固件安装指南](user-install.md)重新执行发布路径，确认普通用户命令和文件名一致。
@@ -138,7 +139,8 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
 4. 正确凭据下取得 DHCP 地址，SNTP 获取 UTC+8 时间，PCF85063 写入后秒数持续增加；
 5. 家庭 Wi-Fi 凭据错误或热点离线时，5 分钟修正窗口和后续重试符合文档；
 6. 无 RTC 备用电池彻底断电后，NVS 凭据保留且开机能自动恢复时间；
-7. `RESET_WIFI` 只清除项目网络命名空间，重启后回到首次配网；
+7. USB `RESET_WIFI` 与 `KEY` 长按 5 秒都只清除项目网络命名空间，重启后回到首次配网；
+   `KEY` 在 5 秒前松开必须取消，且一次长按只能触发一次；
 8. 标准完整镜像重新烧录后 NVS 被清空，并能重新完成首次配网；
 9. 串口和构建产物的字符串检查不包含实机家庭 SSID、家庭密码或二维码中的临时热点密码。
 

@@ -37,7 +37,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   tests/test_network_qr.c \
   -o "${RLCD_TEST_TMP}/test_network_qr"
 
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/input/include \
+  src/input/button_state.c tests/test_button_state.c \
+  -o "${RLCD_TEST_TMP}/test_button_state"
+
 "${RLCD_TEST_TMP}/test_chinese_lunar"
 "${RLCD_TEST_TMP}/test_battery_level"
 "${RLCD_TEST_TMP}/test_network_credentials"
 "${RLCD_TEST_TMP}/test_network_qr"
+"${RLCD_TEST_TMP}/test_button_state"
