@@ -42,6 +42,7 @@ typedef struct {
 esp_err_t network_time_init(void);
 esp_err_t network_time_get_status(network_time_status_t *status);
 bool network_time_take_datetime(network_time_datetime_t *datetime);
+esp_err_t network_time_request_sync(void);
 esp_err_t network_time_clear_credentials(void);
 const char *network_time_state_name(network_time_state_t state);
 

@@ -1,24 +1,28 @@
 # ESP32 RLCD Firmware
 
-面向微雪 ESP32-S3-RLCD-4.2 开发板的原生 ESP-IDF 固件，提供日常信息首屏、
-本地 Wi-Fi 配网和自动网络校时。
+面向微雪 ESP32-S3-RLCD-4.2 开发板的原生 ESP-IDF 固件，提供日常信息仪表盘、
+月历、本地 Wi-Fi 配网和自动网络校时。
 
 > 本项目是独立的社区固件，与 Espressif Systems、Waveshare 及相关上游项目不存在
 > 隶属、赞助或官方背书关系。产品名和商标仅用于说明兼容硬件与依赖来源。
 
 ## 效果预览
 
-![ESP32 RLCD Firmware v0.4.0 首屏效果图](docs/assets/home-screen.svg)
+![ESP32 RLCD Firmware v0.5.0 首屏效果图](docs/assets/home-screen.svg)
 
-![ESP32 RLCD Firmware v0.4.0 设备状态页效果图](docs/assets/device-status.svg)
+![ESP32 RLCD Firmware v0.5.0 月历页效果图](docs/assets/calendar-screen.svg)
 
-两张效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
+![ESP32 RLCD Firmware v0.5.0 固件信息页效果图](docs/assets/firmware-info.svg)
+
+![ESP32 RLCD Firmware v0.5.0 设备状态页效果图](docs/assets/device-status.svg)
+
+效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
 
 ## 项目概况
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新版本 | [v0.4.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新版本 | [v0.5.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 发布方式 | GitHub Releases 保留最新固件，`dist/` 保存各正式版本 |
@@ -31,12 +35,14 @@
 - 首次启动提供 WPA2 临时热点、配网页面和 Wi-Fi 加入二维码；
 - Wi-Fi 凭据保存在 NVS，断电重启后可自动联网并通过 SNTP 恢复时间；
 - 校时成功后关闭 Wi-Fi，每 24 小时重新同步；
+- 短按板载 `BOOT` 在首屏、当月月历和固件信息页之间循环，次级页面 30 秒后自动返回；
+- 固件信息页提供最新 GitHub Release 二维码，长按 `BOOT` 2 秒可立即联网校时；
 - 短按板载 `KEY` 查看固件、RTC、传感器、电池、网络和最近校时状态；
 - 长按 `KEY` 5 秒可清除本项目保存的 Wi-Fi 凭据并重新进入配网；
 - USB 命令支持查询状态、手动校时和重置网络配置。
 
 暂未提供联网天气、语音交互、蓝牙和 OTA。界面与联网行为的详细说明见
-[首屏布局规范](docs/home-screen.md)和[自动配网与网络校时](docs/network-time.md)。
+[界面与按键设计](docs/home-screen.md)和[自动配网与网络校时](docs/network-time.md)。
 
 ## 安装使用
 
@@ -49,11 +55,11 @@
 2. 在仓库根目录执行：
 
    ```bash
-   cd dist/v0.4.0
+   cd dist/v0.5.0
    sha256sum --check SHA256SUMS
    cd ../..
    ./scripts/flash.sh --port COM5 \
-     --firmware dist/v0.4.0/esp32-rlcd-firmware-v0.4.0.bin \
+     --firmware dist/v0.5.0/esp32-rlcd-firmware-v0.5.0.bin \
      --confirm
    ```
 
@@ -77,9 +83,9 @@
 ├── src/                 # ESP-IDF 组件与项目源码
 │   ├── app/             # 应用入口与 USB 命令
 │   ├── board/           # 板级总线和引脚
-│   ├── calendar/        # 公历转农历
+│   ├── calendar/        # 公历月份与农历换算
 │   ├── display/         # ST7305 界面
-│   ├── input/           # KEY 驱动与按键状态机
+│   ├── input/           # BOOT、KEY 驱动与按键状态机
 │   ├── network/         # 配网、NVS 与 SNTP
 │   ├── power/           # 电池采样与估算
 │   ├── rtc/             # PCF85063 驱动
@@ -109,7 +115,7 @@
 
 - [发布固件安装指南](docs/user-install.md)：下载、校验、烧录、首次配网和故障排查；
 - [自动配网与网络校时](docs/network-time.md)：热点、二维码、NVS、SNTP 与安全边界；
-- [首屏布局规范](docs/home-screen.md)：信息层级、尺寸和异常状态；
+- [界面与按键设计](docs/home-screen.md)：首屏、月历、固件信息、状态页和按键行为；
 - [开发与发布指南](docs/development.md)：依赖、测试、版本和 Release 流程；
 - [实机验证记录](docs/bringup-log.md)：硬件事实、构建哈希和验收结果；
 - [版本变更记录](CHANGELOG.md)：各正式版本的功能变化。

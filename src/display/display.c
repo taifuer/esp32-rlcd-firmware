@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "board_pins.h"
+#include "calendar_month.h"
 #include "network_credentials.h"
 #include "qrcode.h"
 #include "u8g2.h"
@@ -14,6 +15,10 @@ static u8g2_t *s_u8g2;
 
 static const char *const WEEKDAYS[] = {
     "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六",
+};
+
+static const char *const CALENDAR_WEEKDAYS[] = {
+    "一", "二", "三", "四", "五", "六", "日",
 };
 
 enum {
@@ -46,6 +51,24 @@ enum {
     DEVICE_ROW_GAP = 30,
     DEVICE_FOOTER_DIVIDER_Y = 244,
     DEVICE_FOOTER_BASELINE_Y = 274,
+    CALENDAR_SIDE_MARGIN = 11,
+    CALENDAR_HEADER_BASELINE_Y = 30,
+    CALENDAR_HEADER_DIVIDER_Y = 43,
+    CALENDAR_WEEKDAY_BASELINE_Y = 67,
+    CALENDAR_WEEKDAY_DIVIDER_Y = 75,
+    CALENDAR_GRID_TOP_Y = 78,
+    CALENDAR_ROW_HEIGHT = 28,
+    CALENDAR_COLUMN_WIDTH = 54,
+    CALENDAR_FOOTER_DIVIDER_Y = 250,
+    CALENDAR_FOOTER_BASELINE_Y = 280,
+    FIRMWARE_SIDE_MARGIN = 12,
+    FIRMWARE_TITLE_BASELINE_Y = 33,
+    FIRMWARE_DIVIDER_Y = 44,
+    FIRMWARE_QR_LEFT = 216,
+    FIRMWARE_QR_TOP = 55,
+    FIRMWARE_QR_SIZE = 172,
+    FIRMWARE_FOOTER_DIVIDER_Y = 250,
+    FIRMWARE_FOOTER_BASELINE_Y = 280,
 };
 
 /*
@@ -79,6 +102,15 @@ static void draw_centered(int baseline_y, const char *text)
     u8g2_DrawStr(s_u8g2, x, baseline_y, text);
 }
 
+static void draw_utf8_right_aligned(int right, int baseline_y, const char *text)
+{
+    int x = right - (int)u8g2_GetUTF8Width(s_u8g2, text);
+    if (x < 0) {
+        x = 0;
+    }
+    u8g2_DrawUTF8(s_u8g2, x, baseline_y, text);
+}
+
 static void draw_setup_line(int baseline_y, const char *text)
 {
     const int available_width = BOARD_DISPLAY_WIDTH - 2 * SETUP_SIDE_MARGIN;
@@ -100,27 +132,39 @@ static void draw_device_row(int baseline_y, const char *label, const char *value
 
 typedef struct {
     bool rendered;
-} setup_qr_context_t;
+    int area_left;
+    int area_top;
+    int area_size;
+    int quiet_modules;
+    int max_scale;
+    bool standard_polarity;
+} display_qr_context_t;
 
-static void draw_setup_qr(esp_qrcode_handle_t qrcode, void *user_data)
+static void draw_qr(esp_qrcode_handle_t qrcode, void *user_data)
 {
-    setup_qr_context_t *context = user_data;
-    const int module_count = esp_qrcode_get_size(qrcode);
-    const int total_modules = module_count + 2 * SETUP_QR_QUIET_MODULES;
-    int scale = total_modules > 0 ? SETUP_QR_AREA_SIZE / total_modules : 0;
-    if (scale > SETUP_QR_MAX_SCALE) {
-        scale = SETUP_QR_MAX_SCALE;
+    display_qr_context_t *context = user_data;
+    if (context == NULL) {
+        return;
     }
-    if (context == NULL || module_count <= 0 || scale <= 0) {
+    const int module_count = esp_qrcode_get_size(qrcode);
+    const int total_modules = module_count + 2 * context->quiet_modules;
+    int scale = total_modules > 0 ? context->area_size / total_modules : 0;
+    if (scale > context->max_scale) {
+        scale = context->max_scale;
+    }
+    if (module_count <= 0 || scale <= 0) {
         return;
     }
 
     const int pixel_size = total_modules * scale;
-    const int left = (BOARD_DISPLAY_WIDTH - pixel_size) / 2;
-    const int top = SETUP_QR_AREA_TOP + (SETUP_QR_AREA_SIZE - pixel_size) / 2;
-    const int data_left = left + SETUP_QR_QUIET_MODULES * scale;
-    const int data_top = top + SETUP_QR_QUIET_MODULES * scale;
+    const int left = context->area_left + (context->area_size - pixel_size) / 2;
+    const int top = context->area_top + (context->area_size - pixel_size) / 2;
+    const int data_left = left + context->quiet_modules * scale;
+    const int data_top = top + context->quiet_modules * scale;
 
+    if (context->standard_polarity) {
+        u8g2_SetDrawColor(s_u8g2, 0);
+    }
     for (int row = 0; row < module_count; ++row) {
         for (int column = 0; column < module_count; ++column) {
             if (esp_qrcode_get_module(qrcode, column, row)) {
@@ -129,7 +173,35 @@ static void draw_setup_qr(esp_qrcode_handle_t qrcode, void *user_data)
             }
         }
     }
+    u8g2_SetDrawColor(s_u8g2, 1);
     context->rendered = true;
+}
+
+static bool draw_qr_payload(const char *payload, display_qr_context_t *context,
+                            int correction)
+{
+    if (payload == NULL || context == NULL) {
+        return false;
+    }
+    context->rendered = false;
+    if (context->standard_polarity) {
+        u8g2_SetDrawColor(s_u8g2, 1);
+        u8g2_DrawBox(s_u8g2, context->area_left, context->area_top,
+                     context->area_size, context->area_size);
+    }
+    esp_qrcode_config_t config = ESP_QRCODE_CONFIG_DEFAULT();
+    config.display_func_with_cb = draw_qr;
+    config.max_qrcode_version = 10;
+    config.qrcode_ecc_level = correction;
+    config.user_data = context;
+    (void)esp_qrcode_generate(&config, payload);
+    if (!context->rendered && context->standard_polarity) {
+        u8g2_SetDrawColor(s_u8g2, 0);
+        u8g2_DrawBox(s_u8g2, context->area_left, context->area_top,
+                     context->area_size, context->area_size);
+        u8g2_SetDrawColor(s_u8g2, 1);
+    }
+    return context->rendered;
 }
 
 static void draw_heart(int center_x, int center_y)
@@ -310,14 +382,15 @@ void display_show_network_setup(const char *ssid, const char *password, const ch
         char payload[NETWORK_SETUP_QR_PAYLOAD_CAPACITY];
         if (network_setup_wifi_qr_payload(ssid, password, payload,
                                           sizeof(payload))) {
-            setup_qr_context_t context = {0};
-            esp_qrcode_config_t config = ESP_QRCODE_CONFIG_DEFAULT();
-            config.display_func_with_cb = draw_setup_qr;
-            config.max_qrcode_version = 10;
-            config.qrcode_ecc_level = ESP_QRCODE_ECC_MED;
-            config.user_data = &context;
-            (void)esp_qrcode_generate(&config, payload);
-            qr_rendered = context.rendered;
+            display_qr_context_t context = {
+                .area_left = (BOARD_DISPLAY_WIDTH - SETUP_QR_AREA_SIZE) / 2,
+                .area_top = SETUP_QR_AREA_TOP,
+                .area_size = SETUP_QR_AREA_SIZE,
+                .quiet_modules = SETUP_QR_QUIET_MODULES,
+                .max_scale = SETUP_QR_MAX_SCALE,
+            };
+            qr_rendered = draw_qr_payload(payload, &context,
+                                          ESP_QRCODE_ECC_MED);
         }
         memset(payload, 0, sizeof(payload));
     }
@@ -383,6 +456,159 @@ void display_show_dashboard(const display_dashboard_t *dashboard)
     draw_heart(BOARD_DISPLAY_WIDTH / 2, HEART_CENTER_Y);
     draw_utf8_centered_in_region(BOARD_DISPLAY_WIDTH / 2, BOARD_DISPLAY_WIDTH / 2,
                                  ENVIRONMENT_BASELINE_Y, humidity_text);
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_calendar(const display_dashboard_t *dashboard)
+{
+    if (s_u8g2 == NULL || dashboard == NULL) {
+        return;
+    }
+    if (!dashboard->time_valid) {
+        display_show_status("CALENDAR", "Time is not set");
+        return;
+    }
+
+    calendar_month_info_t month = {0};
+    if (!calendar_month_info(dashboard->year, dashboard->month, &month)) {
+        display_show_status("CALENDAR", "Date is out of range");
+        return;
+    }
+
+    char header_left[32];
+    char header_right[96];
+    snprintf(header_left, sizeof(header_left), "%04u年%u月",
+             dashboard->year, dashboard->month);
+    snprintf(header_right, sizeof(header_right), "%s  %s  %02u:%02u",
+             dashboard->lunar_valid && dashboard->lunar_text != NULL
+                 ? dashboard->lunar_text
+                 : "--月--",
+             dashboard->weekday <= 6U ? WEEKDAYS[dashboard->weekday] : "星期-",
+             dashboard->hour, dashboard->minute);
+
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+    u8g2_DrawUTF8(s_u8g2, CALENDAR_SIDE_MARGIN,
+                  CALENDAR_HEADER_BASELINE_Y, header_left);
+    draw_utf8_right_aligned(BOARD_DISPLAY_WIDTH - CALENDAR_SIDE_MARGIN,
+                            CALENDAR_HEADER_BASELINE_Y, header_right);
+    u8g2_DrawHLine(s_u8g2, CALENDAR_SIDE_MARGIN,
+                   CALENDAR_HEADER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * CALENDAR_SIDE_MARGIN);
+
+    for (uint8_t column = 0U; column < 7U; ++column) {
+        draw_utf8_centered_in_region(
+            CALENDAR_SIDE_MARGIN + column * CALENDAR_COLUMN_WIDTH,
+            CALENDAR_COLUMN_WIDTH, CALENDAR_WEEKDAY_BASELINE_Y,
+            CALENDAR_WEEKDAYS[column]);
+    }
+    u8g2_DrawHLine(s_u8g2, CALENDAR_SIDE_MARGIN,
+                   CALENDAR_WEEKDAY_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * CALENDAR_SIDE_MARGIN);
+
+    const uint8_t first_column = (uint8_t)((month.first_weekday + 6U) % 7U);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB18_tf);
+    for (uint8_t day = 1U; day <= month.days; ++day) {
+        const uint8_t position = (uint8_t)(first_column + day - 1U);
+        const uint8_t row = position / 7U;
+        const uint8_t column = position % 7U;
+        const int center_x = CALENDAR_SIDE_MARGIN +
+                             column * CALENDAR_COLUMN_WIDTH +
+                             CALENDAR_COLUMN_WIDTH / 2;
+        const int baseline_y = CALENDAR_GRID_TOP_Y + 21 +
+                               row * CALENDAR_ROW_HEIGHT;
+        char day_text[4];
+        snprintf(day_text, sizeof(day_text), "%u", day);
+        const int text_x = center_x -
+                           (int)u8g2_GetStrWidth(s_u8g2, day_text) / 2;
+        if (day == dashboard->day) {
+            u8g2_DrawDisc(s_u8g2, center_x, baseline_y - 7, 13,
+                          U8G2_DRAW_ALL);
+            u8g2_SetDrawColor(s_u8g2, 0);
+            u8g2_DrawStr(s_u8g2, text_x, baseline_y, day_text);
+            u8g2_SetDrawColor(s_u8g2, 1);
+        } else {
+            u8g2_DrawStr(s_u8g2, text_x, baseline_y, day_text);
+        }
+    }
+
+    u8g2_DrawHLine(s_u8g2, CALENDAR_SIDE_MARGIN,
+                   CALENDAR_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * CALENDAR_SIDE_MARGIN);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(CALENDAR_FOOTER_BASELINE_Y,
+                  "BOOT: NEXT | HOLD 2s: SYNC | KEY: STATUS");
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_firmware_info(const char *firmware_version,
+                                const char *release_url)
+{
+    if (s_u8g2 == NULL) {
+        return;
+    }
+
+    char version_text[40];
+    snprintf(version_text, sizeof(version_text), "v%s",
+             firmware_version != NULL ? firmware_version : "-");
+
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    draw_centered(FIRMWARE_TITLE_BASELINE_Y, "FIRMWARE INFO");
+    u8g2_DrawHLine(s_u8g2, FIRMWARE_SIDE_MARGIN, FIRMWARE_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * FIRMWARE_SIDE_MARGIN);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    u8g2_DrawStr(s_u8g2, 18, 80, "ESP32 RLCD");
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    u8g2_DrawStr(s_u8g2, 18, 116, "FIRMWARE");
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB18_tf);
+    u8g2_DrawStr(s_u8g2, 18, 154, version_text);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    u8g2_DrawStr(s_u8g2, 18, 188, "USB UPDATE");
+    u8g2_DrawStr(s_u8g2, 18, 210, "1. POWER OFF");
+    u8g2_DrawStr(s_u8g2, 18, 230, "2. HOLD BOOT + PWR");
+
+    display_qr_context_t context = {
+        .area_left = FIRMWARE_QR_LEFT,
+        .area_top = FIRMWARE_QR_TOP,
+        .area_size = FIRMWARE_QR_SIZE,
+        .quiet_modules = 4,
+        .max_scale = 5,
+        .standard_polarity = true,
+    };
+    const bool qr_rendered = draw_qr_payload(
+        release_url != NULL ? release_url : "https://github.com/taifuer/esp32-rlcd-firmware/releases/latest",
+        &context, ESP_QRCODE_ECC_MED);
+    if (!qr_rendered) {
+        u8g2_DrawFrame(s_u8g2, FIRMWARE_QR_LEFT, FIRMWARE_QR_TOP,
+                       FIRMWARE_QR_SIZE, FIRMWARE_QR_SIZE);
+        u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+        const int center_x = FIRMWARE_QR_LEFT + FIRMWARE_QR_SIZE / 2;
+        const char *message = "QR UNAVAILABLE";
+        u8g2_DrawStr(s_u8g2,
+                     center_x - (int)u8g2_GetStrWidth(s_u8g2, message) / 2,
+                     FIRMWARE_QR_TOP + FIRMWARE_QR_SIZE / 2, message);
+    }
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    const char *qr_label = "LATEST RELEASE";
+    u8g2_DrawStr(s_u8g2,
+                 FIRMWARE_QR_LEFT +
+                     (FIRMWARE_QR_SIZE -
+                      (int)u8g2_GetStrWidth(s_u8g2, qr_label)) /
+                         2,
+                 238, qr_label);
+
+    u8g2_DrawHLine(s_u8g2, FIRMWARE_SIDE_MARGIN,
+                   FIRMWARE_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * FIRMWARE_SIDE_MARGIN);
+    draw_centered(FIRMWARE_FOOTER_BASELINE_Y,
+                  "BOOT: NEXT | HOLD 2s: SYNC | KEY: STATUS");
     u8g2_SendBuffer(s_u8g2);
 }
 
@@ -461,6 +687,6 @@ void display_show_device_status(const display_device_status_t *status)
                    BOARD_DISPLAY_WIDTH - 2 * DEVICE_SIDE_MARGIN);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(DEVICE_FOOTER_BASELINE_Y,
-                  "KEY: HOME  |  HOLD 5s: RESET WI-FI");
+                  "BOOT: NEXT | KEY: BACK | HOLD KEY 5s: RESET WI-FI");
     u8g2_SendBuffer(s_u8g2);
 }

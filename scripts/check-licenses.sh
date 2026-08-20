@@ -133,6 +133,7 @@ expected_fonts="$(printf '%s\n' \
     u8g2_font_5x8_tf \
     u8g2_font_6x13_tf \
     u8g2_font_helvB14_tf \
+    u8g2_font_helvB18_tf \
     u8g2_font_helvB24_tf \
     u8g2_font_logisoso20_tf \
     u8g2_font_logisoso78_tn \

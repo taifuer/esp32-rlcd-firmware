@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware calendar page</title>
+  <desc id="description">A white-on-black monthly calendar for August 2026 with the current day highlighted and lunar date, weekday and time in the header.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="11" y="30" stroke="none" font-family="WenQuanYi Zen Hei, Noto Sans CJK SC, sans-serif" font-size="16">2026年8月</text>
+    <text x="389" y="30" stroke="none" text-anchor="end" font-family="WenQuanYi Zen Hei, Noto Sans CJK SC, sans-serif" font-size="16">七月初八  星期四  21:31</text>
+    <path d="M11 43H389M11 75H389M11 250H389" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+
+    <g stroke="none" text-anchor="middle" font-family="WenQuanYi Zen Hei, Noto Sans CJK SC, sans-serif" font-size="16">
+      <text x="38" y="67">一</text><text x="92" y="67">二</text>
+      <text x="146" y="67">三</text><text x="200" y="67">四</text>
+      <text x="254" y="67">五</text><text x="308" y="67">六</text>
+      <text x="362" y="67">日</text>
+    </g>
+
+    <g stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="18" font-weight="700">
+      <text x="308" y="99">1</text><text x="362" y="99">2</text>
+      <text x="38" y="127">3</text><text x="92" y="127">4</text><text x="146" y="127">5</text><text x="200" y="127">6</text><text x="254" y="127">7</text><text x="308" y="127">8</text><text x="362" y="127">9</text>
+      <text x="38" y="155">10</text><text x="92" y="155">11</text><text x="146" y="155">12</text><text x="200" y="155">13</text><text x="254" y="155">14</text><text x="308" y="155">15</text><text x="362" y="155">16</text>
+      <text x="38" y="183">17</text><text x="92" y="183">18</text><text x="146" y="183">19</text>
+      <circle cx="200" cy="176" r="13"/>
+      <text x="200" y="183" fill="#090b0a">20</text>
+      <text x="254" y="183">21</text><text x="308" y="183">22</text><text x="362" y="183">23</text>
+      <text x="38" y="211">24</text><text x="92" y="211">25</text><text x="146" y="211">26</text><text x="200" y="211">27</text><text x="254" y="211">28</text><text x="308" y="211">29</text><text x="362" y="211">30</text>
+      <text x="38" y="239">31</text>
+    </g>
+
+    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: NEXT | HOLD 2s: SYNC | KEY: STATUS</text>
+  </g>
+</svg>

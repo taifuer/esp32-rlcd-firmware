@@ -56,7 +56,7 @@ Release 同时附带该版本打包时的本文件与完整许可文本。
 | 字体 | 许可证与说明 |
 | --- | --- |
 | `u8g2_font_5x8_tf`、`u8g2_font_6x13_tf` | Public domain；上游字体元数据声明为“Public domain font” |
-| `u8g2_font_helvB14_tf`、`u8g2_font_helvB24_tf` | Adobe/DEC X11 字体条款；完整版权和许可见 [`LICENSES/U8g2.txt`](LICENSES/U8g2.txt) |
+| `u8g2_font_helvB14_tf`、`u8g2_font_helvB18_tf`、`u8g2_font_helvB24_tf` | Adobe/DEC X11 字体条款；完整版权和许可见 [`LICENSES/U8g2.txt`](LICENSES/U8g2.txt) |
 | `u8g2_font_wqy16_t_gb2312` | GPL-2.0-only WITH Font-exception-2.0；见 [`WenQuanYi-Bitmap-Song.txt`](LICENSES/WenQuanYi-Bitmap-Song.txt) 和 [`GPL-2.0-only.txt`](LICENSES/GPL-2.0-only.txt) |
 | `u8g2_font_logisoso20_tf`、`u8g2_font_logisoso78_tn` | 按字体归档中的 `COPYING.TXT` 采用 GPL-2.0-only WITH Font-exception-2.0；见 [`Logisoso.txt`](LICENSES/Logisoso.txt) 和 [`GPL-2.0-only.txt`](LICENSES/GPL-2.0-only.txt) |
 

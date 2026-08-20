@@ -1,4 +1,4 @@
 idf_component_register(
-    SRCS "chinese_lunar.c"
+    SRCS "calendar_month.c" "chinese_lunar.c"
     INCLUDE_DIRS "include"
 )

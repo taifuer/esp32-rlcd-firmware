@@ -10,11 +10,27 @@ static uint32_t add_saturating(uint32_t value, uint32_t increment)
 
 void button_state_init(button_state_t *state, bool raw_pressed)
 {
+    button_state_init_custom(state, raw_pressed, BUTTON_HOLD_PROMPT_MS,
+                             BUTTON_LONG_PRESS_MS);
+}
+
+void button_state_init_custom(button_state_t *state, bool raw_pressed,
+                              uint32_t hold_prompt_ms,
+                              uint32_t long_press_ms)
+{
     if (state == NULL) {
         return;
     }
     memset(state, 0, sizeof(*state));
     state->candidate_pressed = raw_pressed;
+    state->hold_prompt_ms = hold_prompt_ms;
+    state->long_press_ms = long_press_ms;
+    if (state->long_press_ms == 0U) {
+        state->long_press_ms = BUTTON_LONG_PRESS_MS;
+    }
+    if (state->hold_prompt_ms > state->long_press_ms) {
+        state->hold_prompt_ms = state->long_press_ms;
+    }
 }
 
 button_event_t button_state_update(button_state_t *state, bool raw_pressed,
@@ -40,7 +56,7 @@ button_event_t button_state_update(button_state_t *state, bool raw_pressed,
             state->long_press_reported = false;
         } else {
             if (!state->long_press_reported) {
-                event = state->hold_ms >= BUTTON_HOLD_PROMPT_MS
+                event = state->hold_ms >= state->hold_prompt_ms
                             ? BUTTON_EVENT_HOLD_CANCELLED
                             : BUTTON_EVENT_SHORT_PRESS;
             }
@@ -52,7 +68,7 @@ button_event_t button_state_update(button_state_t *state, bool raw_pressed,
     if (state->debounced_pressed) {
         state->hold_ms = add_saturating(state->hold_ms, elapsed_ms);
         if (!state->long_press_reported &&
-            state->hold_ms >= BUTTON_LONG_PRESS_MS) {
+            state->hold_ms >= state->long_press_ms) {
             state->long_press_reported = true;
             event = BUTTON_EVENT_LONG_PRESS;
         }

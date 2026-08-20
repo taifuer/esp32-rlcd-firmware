@@ -67,6 +67,9 @@ esp_err_t display_init(void);
 void display_show_status(const char *title, const char *detail);
 void display_show_network_setup(const char *ssid, const char *password, const char *url);
 void display_show_dashboard(const display_dashboard_t *dashboard);
+void display_show_calendar(const display_dashboard_t *dashboard);
+void display_show_firmware_info(const char *firmware_version,
+                                const char *release_url);
 void display_show_device_status(const display_device_status_t *status);
 
 #ifdef __cplusplus

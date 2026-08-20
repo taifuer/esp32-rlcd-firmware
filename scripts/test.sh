@@ -20,6 +20,11 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_chinese_lunar"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/calendar/include \
+  src/calendar/calendar_month.c tests/test_calendar_month.c \
+  -o "${RLCD_TEST_TMP}/test_calendar_month"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/power/include \
   src/power/battery_level.c tests/test_battery_level.c \
   -o "${RLCD_TEST_TMP}/test_battery_level"
@@ -42,8 +47,15 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   src/input/button_state.c tests/test_button_state.c \
   -o "${RLCD_TEST_TMP}/test_button_state"
 
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/app \
+  src/app/page_state.c tests/test_page_state.c \
+  -o "${RLCD_TEST_TMP}/test_page_state"
+
 "${RLCD_TEST_TMP}/test_chinese_lunar"
+"${RLCD_TEST_TMP}/test_calendar_month"
 "${RLCD_TEST_TMP}/test_battery_level"
 "${RLCD_TEST_TMP}/test_network_credentials"
 "${RLCD_TEST_TMP}/test_network_qr"
 "${RLCD_TEST_TMP}/test_button_state"
+"${RLCD_TEST_TMP}/test_page_state"

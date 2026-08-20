@@ -8,8 +8,9 @@
 extern "C" {
 #endif
 
-esp_err_t user_button_init(void);
-bool user_button_is_pressed(void);
+esp_err_t board_buttons_init(void);
+bool board_boot_is_pressed(void);
+bool board_key_is_pressed(void);
 
 #ifdef __cplusplus
 }

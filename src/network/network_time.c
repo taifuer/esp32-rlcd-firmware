@@ -29,6 +29,7 @@
 #define NETWORK_EVENT_CONNECTED BIT0
 #define NETWORK_EVENT_FAILED BIT1
 #define NETWORK_EVENT_CREDENTIALS_SAVED BIT2
+#define NETWORK_EVENT_SYNC_REQUEST BIT3
 
 #define NETWORK_STATION_MAX_RETRIES 5U
 #define NETWORK_STATION_TIMEOUT_MS 40000U
@@ -147,6 +148,25 @@ esp_err_t network_time_get_status(network_time_status_t *status)
     portENTER_CRITICAL(&s_status_lock);
     *status = s_status;
     portEXIT_CRITICAL(&s_status_lock);
+    return ESP_OK;
+}
+
+esp_err_t network_time_request_sync(void)
+{
+    if (!s_initialized || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    network_time_status_t status = {0};
+    (void)network_time_get_status(&status);
+    if (!status.configured ||
+        status.state != NETWORK_TIME_STATE_SYNCHRONIZED) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    set_status(NETWORK_TIME_STATE_STARTING, true, ESP_OK);
+    xEventGroupSetBits(s_events, NETWORK_EVENT_SYNC_REQUEST);
+    ESP_LOGI(TAG, "manual time synchronization requested");
     return ESP_OK;
 }
 
@@ -642,10 +662,18 @@ static esp_err_t connect_and_synchronize(const network_credentials_t *credential
     return error;
 }
 
+static bool wait_for_sync_request(TickType_t timeout)
+{
+    const EventBits_t bits = xEventGroupWaitBits(
+        s_events, NETWORK_EVENT_SYNC_REQUEST, pdTRUE, pdFALSE, timeout);
+    return (bits & NETWORK_EVENT_SYNC_REQUEST) != 0U;
+}
+
 static void network_task(void *argument)
 {
     (void)argument;
     network_credentials_t credentials = {0};
+    bool user_requested_sync = false;
 
     while (true) {
         esp_err_t error = load_credentials(&credentials);
@@ -664,18 +692,29 @@ static void network_task(void *argument)
             continue;
         }
 
+        if (wait_for_sync_request(0U)) {
+            user_requested_sync = true;
+        }
         error = connect_and_synchronize(&credentials);
         memset(&credentials, 0, sizeof(credentials));
         if (error == ESP_OK) {
             set_status(NETWORK_TIME_STATE_SYNCHRONIZED, true, ESP_OK);
-            vTaskDelay(pdMS_TO_TICKS(NETWORK_RESYNC_INTERVAL_MS));
+            user_requested_sync = wait_for_sync_request(
+                pdMS_TO_TICKS(NETWORK_RESYNC_INTERVAL_MS));
             continue;
         }
 
         const esp_err_t synchronization_error = error;
-        ESP_LOGW(TAG, "automatic time synchronization failed: %s",
+        ESP_LOGW(TAG, "%s time synchronization failed: %s",
+                 user_requested_sync ? "manual" : "automatic",
                  esp_err_to_name(synchronization_error));
         set_status(NETWORK_TIME_STATE_RETRY_WAIT, true, synchronization_error);
+        if (user_requested_sync) {
+            ESP_LOGW(TAG, "manual time synchronization did not complete");
+            user_requested_sync = wait_for_sync_request(
+                pdMS_TO_TICKS(NETWORK_RETRY_DELAY_MS));
+            continue;
+        }
         const esp_err_t provisioning_error = run_provisioning(
             pdMS_TO_TICKS(NETWORK_RECONFIGURE_WINDOW_MS), true,
             synchronization_error);
@@ -689,7 +728,8 @@ static void network_task(void *argument)
         set_status(NETWORK_TIME_STATE_RETRY_WAIT, true,
                    provisioning_error == ESP_ERR_TIMEOUT ? synchronization_error
                                                          : provisioning_error);
-        vTaskDelay(pdMS_TO_TICKS(NETWORK_RETRY_DELAY_MS));
+        user_requested_sync = wait_for_sync_request(
+            pdMS_TO_TICKS(NETWORK_RETRY_DELAY_MS));
     }
 }
 

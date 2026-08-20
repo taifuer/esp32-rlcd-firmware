@@ -1,0 +1,54 @@
+#include <assert.h>
+#include <stdint.h>
+#include <stdio.h>
+
+#include "page_state.h"
+
+int main(void)
+{
+    app_page_state_t state;
+    app_page_state_init(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+
+    app_page_state_boot_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
+    assert(!app_page_state_tick(&state,
+                                APP_PAGE_SECONDARY_TIMEOUT_MS - 1U));
+    app_page_state_note_activity(&state);
+    assert(!app_page_state_tick(&state,
+                                APP_PAGE_SECONDARY_TIMEOUT_MS - 1U));
+    assert(app_page_state_tick(&state, 1U));
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+
+    app_page_state_boot_short_press(&state);
+    app_page_state_boot_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_FIRMWARE);
+    app_page_state_boot_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+
+    app_page_state_boot_short_press(&state);
+    app_page_state_key_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_DEVICE_STATUS);
+    assert(!app_page_state_tick(&state,
+                                APP_PAGE_DEVICE_STATUS_TIMEOUT_MS - 1U));
+    app_page_state_key_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
+
+    app_page_state_key_short_press(&state);
+    app_page_state_boot_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_FIRMWARE);
+    app_page_state_key_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_DEVICE_STATUS);
+    assert(app_page_state_tick(&state, APP_PAGE_DEVICE_STATUS_TIMEOUT_MS));
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+
+    app_page_state_init(NULL);
+    app_page_state_boot_short_press(NULL);
+    app_page_state_key_short_press(NULL);
+    app_page_state_note_activity(NULL);
+    assert(!app_page_state_tick(NULL, UINT32_MAX));
+    assert(app_page_state_current(NULL) == APP_PAGE_HOME);
+
+    puts("page state tests passed");
+    return 0;
+}
