@@ -10,6 +10,7 @@ extern "C" {
 #define BUTTON_DEBOUNCE_MS 40U
 #define BUTTON_HOLD_PROMPT_MS 1000U
 #define BUTTON_LONG_PRESS_MS 5000U
+#define BUTTON_LONG_PRESS_DISABLED_MS UINT32_MAX
 
 typedef enum {
     BUTTON_EVENT_NONE = 0,
@@ -32,6 +33,8 @@ void button_state_init(button_state_t *state, bool raw_pressed);
 void button_state_init_custom(button_state_t *state, bool raw_pressed,
                               uint32_t hold_prompt_ms,
                               uint32_t long_press_ms);
+bool button_state_set_timing(button_state_t *state, uint32_t hold_prompt_ms,
+                             uint32_t long_press_ms);
 button_event_t button_state_update(button_state_t *state, bool raw_pressed,
                                    uint32_t elapsed_ms);
 bool button_state_is_pressed(const button_state_t *state);

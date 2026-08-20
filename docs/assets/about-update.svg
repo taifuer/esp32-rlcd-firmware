@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware about and update page</title>
+  <desc id="description">A clean white-on-black system page showing firmware and ESP-IDF versions, USB flashing instructions and the latest release QR code.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="200" y="32" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">ABOUT &amp; UPDATE</text>
+    <text x="388" y="32" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">4/4</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+    <text x="18" y="78" stroke="none" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="700">ESP32 RLCD</text>
+    <text x="18" y="118" stroke="none" font-family="DejaVu Sans, Arial, sans-serif" font-size="21" font-weight="700">v0.6.0</text>
+    <g stroke="none" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">
+      <text x="18" y="152">ESP-IDF 5.5.3</text>
+      <text x="18" y="174">USB FLASH</text>
+      <text x="18" y="194">POWER OFF FIRST</text>
+      <text x="18" y="214">HOLD BOOT</text>
+      <text x="18" y="234">PRESS PWR</text>
+    </g>
+    <g transform="translate(216 55)" stroke="#090b0a" fill="#eef3e8" shape-rendering="crispEdges">
+      <rect width="172" height="172" stroke="none"/>
+      <g fill="none" stroke-width="5">
+        <rect x="15" y="15" width="35" height="35"/><rect x="122" y="15" width="35" height="35"/><rect x="15" y="122" width="35" height="35"/>
+      </g>
+      <g fill="#090b0a" stroke="none">
+        <rect x="25" y="25" width="15" height="15"/><rect x="132" y="25" width="15" height="15"/><rect x="25" y="132" width="15" height="15"/>
+        <path d="M60 15h10v10H60zM75 15h5v20h-5zM85 20h15v5H85zM105 15h5v15h-5zM60 35h15v5H60zM85 35h5v10h-5zM100 40h15v5h-15zM55 55h10v15H55zM70 55h5v5h-5zM80 50h10v15H80zM95 55h5v15h-5zM105 50h15v5h-15zM125 55h10v15h-10zM140 55h15v5h-15zM55 75h5v15h-5zM65 75h15v5H65zM85 70h5v10h-5zM95 80h15v5H95zM115 70h5v20h-5zM125 80h10v10h-10zM140 70h15v5h-15zM145 80h5v15h-5zM55 95h15v5H55zM75 90h5v15h-5zM85 95h15v10H85zM105 90h10v5h-10zM120 100h15v5h-15zM140 100h15v5h-15zM60 110h5v10h-5zM70 110h15v5H70zM90 110h5v15h-5zM100 115h15v5h-15zM120 110h5v10h-5zM130 115h10v15h-10zM145 110h10v10h-10zM60 130h15v5H60zM80 125h5v15h-5zM90 135h10v10H90zM105 125h10v5h-10zM120 135h5v15h-5zM135 135h20v5h-20zM60 150h10v5H60zM75 145h10v10H75zM100 150h15v5h-15zM130 150h10v5h-10zM150 145h5v10h-5z"/>
+      </g>
+    </g>
+    <text x="302" y="238" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">LATEST RELEASE</text>
+    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: HOME | KEY: NEXT</text>
+  </g>
+</svg>

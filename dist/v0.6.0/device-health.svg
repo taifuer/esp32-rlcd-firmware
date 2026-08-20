@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware device health page</title>
+  <desc id="description">A clean white-on-black system page showing RTC, sensor, battery and PSRAM health.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="200" y="32" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">DEVICE HEALTH</text>
+    <text x="388" y="32" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">1/4</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+    <g stroke="none" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">
+      <text x="18" y="86">RTC</text>
+      <text x="18" y="132">SENSOR</text>
+      <text x="18" y="178">BATTERY</text>
+      <text x="18" y="224">PSRAM</text>
+    </g>
+    <g stroke="none" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="700">
+      <text x="116" y="86">OK | 2026-08-20 21:31</text>
+      <text x="116" y="132">OK | 31.3 C | 73 %</text>
+      <text x="116" y="178">OK | 93 % | 4125 mV</text>
+      <text x="116" y="224">8192 KiB | OK</text>
+    </g>
+    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: HOME | KEY: NEXT</text>
+  </g>
+</svg>

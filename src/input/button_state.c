@@ -8,6 +8,17 @@ static uint32_t add_saturating(uint32_t value, uint32_t increment)
     return increment > UINT32_MAX - value ? UINT32_MAX : value + increment;
 }
 
+static void apply_timing(button_state_t *state, uint32_t hold_prompt_ms,
+                         uint32_t long_press_ms)
+{
+    state->long_press_ms = long_press_ms == 0U
+                               ? BUTTON_LONG_PRESS_MS
+                               : long_press_ms;
+    state->hold_prompt_ms = hold_prompt_ms > state->long_press_ms
+                                ? state->long_press_ms
+                                : hold_prompt_ms;
+}
+
 void button_state_init(button_state_t *state, bool raw_pressed)
 {
     button_state_init_custom(state, raw_pressed, BUTTON_HOLD_PROMPT_MS,
@@ -23,14 +34,18 @@ void button_state_init_custom(button_state_t *state, bool raw_pressed,
     }
     memset(state, 0, sizeof(*state));
     state->candidate_pressed = raw_pressed;
-    state->hold_prompt_ms = hold_prompt_ms;
-    state->long_press_ms = long_press_ms;
-    if (state->long_press_ms == 0U) {
-        state->long_press_ms = BUTTON_LONG_PRESS_MS;
+    apply_timing(state, hold_prompt_ms, long_press_ms);
+}
+
+bool button_state_set_timing(button_state_t *state, uint32_t hold_prompt_ms,
+                             uint32_t long_press_ms)
+{
+    if (state == NULL || state->candidate_pressed ||
+        state->debounced_pressed) {
+        return false;
     }
-    if (state->hold_prompt_ms > state->long_press_ms) {
-        state->hold_prompt_ms = state->long_press_ms;
-    }
+    apply_timing(state, hold_prompt_ms, long_press_ms);
+    return true;
 }
 
 button_event_t button_state_update(button_state_t *state, bool raw_pressed,

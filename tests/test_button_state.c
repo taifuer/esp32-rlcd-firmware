@@ -71,7 +71,20 @@ int main(void)
     assert(boot_long_events == 1U);
     assert(update_for(&state, false, 60U, 10U) == BUTTON_EVENT_NONE);
 
+    button_state_init(&state, false);
+    assert(button_state_set_timing(&state, 2000U, 2000U));
+    assert(update_for(&state, true, 100U, 10U) == BUTTON_EVENT_NONE);
+    assert(!button_state_set_timing(&state, BUTTON_HOLD_PROMPT_MS,
+                                    BUTTON_LONG_PRESS_MS));
+    assert(update_for(&state, false, 60U, 10U) == BUTTON_EVENT_SHORT_PRESS);
+    assert(button_state_set_timing(&state, BUTTON_HOLD_PROMPT_MS,
+                                   BUTTON_LONG_PRESS_DISABLED_MS));
+    assert(update_for(&state, true, 1400U, 10U) == BUTTON_EVENT_NONE);
+    assert(update_for(&state, false, 60U, 10U) ==
+           BUTTON_EVENT_HOLD_CANCELLED);
+
     assert(button_state_update(NULL, true, 10U) == BUTTON_EVENT_NONE);
+    assert(!button_state_set_timing(NULL, 1000U, 2000U));
     assert(!button_state_is_pressed(NULL));
     assert(button_state_hold_ms(NULL) == 0U);
 

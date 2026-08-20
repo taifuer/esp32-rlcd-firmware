@@ -8,13 +8,13 @@
 
 ## 效果预览
 
-![ESP32 RLCD Firmware v0.5.0 首屏效果图](docs/assets/home-screen.svg)
-
-![ESP32 RLCD Firmware v0.5.0 月历页效果图](docs/assets/calendar-screen.svg)
-
-![ESP32 RLCD Firmware v0.5.0 固件信息页效果图](docs/assets/firmware-info.svg)
-
-![ESP32 RLCD Firmware v0.5.0 设备状态页效果图](docs/assets/device-status.svg)
+| 首屏 | 月历 |
+| :---: | :---: |
+| ![ESP32 RLCD Firmware 首屏效果图](docs/assets/home-screen.svg) | ![ESP32 RLCD Firmware 月历页效果图](docs/assets/calendar-screen.svg) |
+| 设备健康 | 网络与时间 |
+| ![ESP32 RLCD Firmware 设备健康页效果图](docs/assets/device-health.svg) | ![ESP32 RLCD Firmware 网络与时间页效果图](docs/assets/network-time.svg) |
+| Wi-Fi 维护 | 关于与更新 |
+| ![ESP32 RLCD Firmware Wi-Fi 维护页效果图](docs/assets/wifi-maintenance.svg) | ![ESP32 RLCD Firmware 关于与更新页效果图](docs/assets/about-update.svg) |
 
 效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
 
@@ -22,7 +22,7 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新版本 | [v0.5.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新版本 | [v0.6.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 发布方式 | GitHub Releases 保留最新固件，`dist/` 保存各正式版本 |
@@ -35,14 +35,14 @@
 - 首次启动提供 WPA2 临时热点、配网页面和 Wi-Fi 加入二维码；
 - Wi-Fi 凭据保存在 NVS，断电重启后可自动联网并通过 SNTP 恢复时间；
 - 校时成功后关闭 Wi-Fi，每 24 小时重新同步；
-- 短按板载 `BOOT` 在首屏、当月月历和固件信息页之间循环，次级页面 30 秒后自动返回；
-- 固件信息页提供最新 GitHub Release 二维码，长按 `BOOT` 2 秒可立即联网校时；
-- 短按板载 `KEY` 查看固件、RTC、传感器、电池、网络和最近校时状态；
-- 长按 `KEY` 5 秒可清除本项目保存的 Wi-Fi 凭据并重新进入配网；
+- `BOOT` 用于首屏与当月月历，`KEY` 用于设备健康、网络与时间、Wi-Fi 维护、关于与更新；
+- 系统中心按职责分开硬件状态、联网校时、重新配网和版本更新，次级页面 30 秒后返回首屏；
+- “网络与时间”页长按 `KEY` 2 秒可立即校时，“Wi-Fi 维护”页长按 5 秒才会清除网络配置；
+- “关于与更新”页显示固件与 ESP-IDF 版本、USB 烧录步骤和最新 Release 二维码；
 - USB 命令支持查询状态、手动校时和重置网络配置。
 
 暂未提供联网天气、语音交互、蓝牙和 OTA。界面与联网行为的详细说明见
-[界面与按键设计](docs/home-screen.md)和[自动配网与网络校时](docs/network-time.md)。
+[界面与按键](docs/home-screen.md)和[自动配网与网络校时](docs/network-time.md)。
 
 ## 安装使用
 
@@ -55,11 +55,11 @@
 2. 在仓库根目录执行：
 
    ```bash
-   cd dist/v0.5.0
+   cd dist/v0.6.0
    sha256sum --check SHA256SUMS
    cd ../..
    ./scripts/flash.sh --port COM5 \
-     --firmware dist/v0.5.0/esp32-rlcd-firmware-v0.5.0.bin \
+     --firmware dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin \
      --confirm
    ```
 
@@ -115,7 +115,8 @@
 
 - [发布固件安装指南](docs/user-install.md)：下载、校验、烧录、首次配网和故障排查；
 - [自动配网与网络校时](docs/network-time.md)：热点、二维码、NVS、SNTP 与安全边界；
-- [界面与按键设计](docs/home-screen.md)：首屏、月历、固件信息、状态页和按键行为；
+- [界面与按键](docs/home-screen.md)：首屏、月历、系统中心和实体按键行为；
+- [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉风格与交互原则；
 - [开发与发布指南](docs/development.md)：依赖、测试、版本和 Release 流程；
 - [实机验证记录](docs/bringup-log.md)：硬件事实、构建哈希和验收结果；
 - [版本变更记录](CHANGELOG.md)：各正式版本的功能变化。

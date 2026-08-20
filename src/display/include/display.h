@@ -37,6 +37,8 @@ typedef struct {
 
 typedef struct {
     const char *firmware_version;
+    const char *idf_version;
+    uint32_t psram_kib;
     bool rtc_ready;
     bool time_valid;
     uint16_t year;
@@ -61,16 +63,18 @@ typedef struct {
     uint8_t last_sync_day;
     uint8_t last_sync_hour;
     uint8_t last_sync_minute;
-} display_device_status_t;
+} display_system_status_t;
 
 esp_err_t display_init(void);
 void display_show_status(const char *title, const char *detail);
 void display_show_network_setup(const char *ssid, const char *password, const char *url);
 void display_show_dashboard(const display_dashboard_t *dashboard);
 void display_show_calendar(const display_dashboard_t *dashboard);
-void display_show_firmware_info(const char *firmware_version,
-                                const char *release_url);
-void display_show_device_status(const display_device_status_t *status);
+void display_show_device_health(const display_system_status_t *status);
+void display_show_network_time(const display_system_status_t *status);
+void display_show_wifi_maintenance(const display_system_status_t *status);
+void display_show_about_update(const display_system_status_t *status,
+                               const char *release_url);
 
 #ifdef __cplusplus
 }

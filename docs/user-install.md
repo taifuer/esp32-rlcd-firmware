@@ -8,7 +8,7 @@
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.5.0/esp32-rlcd-firmware-v0.5.0.bin`](../dist/v0.5.0/esp32-rlcd-firmware-v0.5.0.bin)。
+[`dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin`](../dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
 每个正式版本目录都应同时包含完整 `.bin`、`SHA256SUMS` 和版本说明。
 从 v0.2.0 开始，版本目录还包含对应的界面效果图。
@@ -24,7 +24,7 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 | 固件类型 | Bootloader、分区表和应用组成的完整合并镜像 |
 | 烧录地址 | `0x0` |
 | Flash 参数 | DIO、80 MHz、16 MB |
-| SHA-256 | 见 [`dist/v0.5.0/SHA256SUMS`](../dist/v0.5.0/SHA256SUMS) |
+| SHA-256 | 见 [`dist/v0.6.0/SHA256SUMS`](../dist/v0.6.0/SHA256SUMS) |
 
 不要把仅包含应用的 `rlcd_firmware.bin` 写到 `0x0`。合并镜像也不是 BIOS：ESP32-S3
 芯片内置的 ROM 下载程序不会被这个文件替换。
@@ -40,7 +40,7 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.5.0
+cd dist/v0.6.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -48,14 +48,14 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.5.0/esp32-rlcd-firmware-v0.5.0.bin
+shasum -a 256 dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.5.0\esp32-rlcd-firmware-v0.5.0.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.5.0\SHA256SUMS
+(Get-FileHash .\dist\v0.6.0\esp32-rlcd-firmware-v0.6.0.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.6.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -76,7 +76,7 @@ Windows 或 WSL。
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.5.0/esp32-rlcd-firmware-v0.5.0.bin \
+  --firmware dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin \
   --confirm
 ```
 
@@ -117,7 +117,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.5.0\esp32-rlcd-firmware-v0.5.0.bin
+  0x0 .\dist\v0.6.0\esp32-rlcd-firmware-v0.6.0.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -135,7 +135,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.5.0/esp32-rlcd-firmware-v0.5.0.bin
+  0x0 dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin
 ```
 
 ## 烧录后启动
@@ -187,18 +187,17 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 
 | 按键 | 正常运行时的用途 |
 | --- | --- |
-| `BOOT` | 短按切换首屏、月历和固件信息页；长按 2 秒立即联网校时 |
-| `KEY` | 短按查看设备状态；再次短按返回，或等待 15 秒自动返回 |
-| `KEY` 长按 | 1 秒后显示倒计时；持续满 5 秒清除本项目 Wi-Fi 并重启配网 |
+| `BOOT` | 日常页面中短按切换首屏和月历；系统中心中短按返回首屏；运行时长按无操作 |
+| `KEY` | 日常页面中短按进入系统中心；系统中心中短按切换设备健康、网络与时间、Wi-Fi 维护、关于与更新 |
+| `KEY` 长按 | “网络与时间”页按住 2 秒立即校时；“Wi-Fi 维护”页按住 5 秒清除网络配置；其他页面无操作 |
 | `PWR` | 开机或长按关机 |
 
-次级主页面停留 30 秒会自动回到首屏；固件信息页二维码指向项目最新 Release。设备状态页
-显示固件、RTC、温湿度传感器、电池、网络和本次启动最近校时。长按 `KEY` 倒计时结束前
-松开会取消，不会修改 Wi-Fi；确认清除后需要按屏幕重新配网。该操作只清除本项目的网络
-凭据，不是全片擦除。
+月历和系统页停留 30 秒会自动回到首屏。“关于与更新”页二维码指向项目最新 Release；
+设备健康与网络状态分别显示在对应页面。Wi-Fi 重置倒计时结束前松开会取消，不会修改
+配置；确认清除后需要按屏幕重新配网。该操作只清除本项目的网络凭据，不是全片擦除。
 
 `BOOT` 在开机时和正常运行时具有不同含义：关机后按住它再按 `PWR` 会选择 ROM 下载
-模式；固件已经正常运行后，短按或长按由本项目处理。
+模式；固件正常运行后只处理短按页面导航，长按不执行操作。
 
 ## 常见问题
 

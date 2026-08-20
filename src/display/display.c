@@ -42,15 +42,14 @@ enum {
     SETUP_QR_AREA_SIZE = 170,
     SETUP_QR_QUIET_MODULES = 4,
     SETUP_QR_MAX_SCALE = 5,
-    DEVICE_SIDE_MARGIN = 12,
-    DEVICE_TITLE_BASELINE_Y = 32,
-    DEVICE_DIVIDER_Y = 44,
-    DEVICE_LABEL_X = 18,
-    DEVICE_VALUE_X = 116,
-    DEVICE_FIRST_ROW_Y = 75,
-    DEVICE_ROW_GAP = 30,
-    DEVICE_FOOTER_DIVIDER_Y = 244,
-    DEVICE_FOOTER_BASELINE_Y = 274,
+    SYSTEM_PAGE_COUNT = 4,
+    SYSTEM_SIDE_MARGIN = 12,
+    SYSTEM_TITLE_BASELINE_Y = 32,
+    SYSTEM_DIVIDER_Y = 44,
+    SYSTEM_LABEL_X = 18,
+    SYSTEM_VALUE_X = 116,
+    SYSTEM_FOOTER_DIVIDER_Y = 250,
+    SYSTEM_FOOTER_BASELINE_Y = 280,
     CALENDAR_SIDE_MARGIN = 11,
     CALENDAR_HEADER_BASELINE_Y = 30,
     CALENDAR_HEADER_DIVIDER_Y = 43,
@@ -61,14 +60,9 @@ enum {
     CALENDAR_COLUMN_WIDTH = 54,
     CALENDAR_FOOTER_DIVIDER_Y = 250,
     CALENDAR_FOOTER_BASELINE_Y = 280,
-    FIRMWARE_SIDE_MARGIN = 12,
-    FIRMWARE_TITLE_BASELINE_Y = 33,
-    FIRMWARE_DIVIDER_Y = 44,
-    FIRMWARE_QR_LEFT = 216,
-    FIRMWARE_QR_TOP = 55,
-    FIRMWARE_QR_SIZE = 172,
-    FIRMWARE_FOOTER_DIVIDER_Y = 250,
-    FIRMWARE_FOOTER_BASELINE_Y = 280,
+    ABOUT_QR_LEFT = 216,
+    ABOUT_QR_TOP = 55,
+    ABOUT_QR_SIZE = 172,
 };
 
 /*
@@ -122,12 +116,39 @@ static void draw_setup_line(int baseline_y, const char *text)
     draw_centered(baseline_y, text);
 }
 
-static void draw_device_row(int baseline_y, const char *label, const char *value)
+static void draw_system_row(int baseline_y, const char *label,
+                            const char *value)
 {
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    u8g2_DrawStr(s_u8g2, DEVICE_LABEL_X, baseline_y, label);
+    u8g2_DrawStr(s_u8g2, SYSTEM_LABEL_X, baseline_y, label);
     u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
-    u8g2_DrawStr(s_u8g2, DEVICE_VALUE_X, baseline_y, value);
+    u8g2_DrawStr(s_u8g2, SYSTEM_VALUE_X, baseline_y, value);
+}
+
+static void draw_system_header(const char *title, uint8_t page)
+{
+    char position[8];
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    draw_centered(SYSTEM_TITLE_BASELINE_Y, title);
+    snprintf(position, sizeof(position), "%u/%u", page, SYSTEM_PAGE_COUNT);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    u8g2_DrawStr(s_u8g2,
+                 BOARD_DISPLAY_WIDTH - SYSTEM_SIDE_MARGIN -
+                     (int)u8g2_GetStrWidth(s_u8g2, position),
+                 SYSTEM_TITLE_BASELINE_Y, position);
+    u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN, SYSTEM_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
+}
+
+static void draw_system_footer(const char *text)
+{
+    u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN,
+                   SYSTEM_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(SYSTEM_FOOTER_BASELINE_Y, text);
 }
 
 typedef struct {
@@ -539,97 +560,18 @@ void display_show_calendar(const display_dashboard_t *dashboard)
                    BOARD_DISPLAY_WIDTH - 2 * CALENDAR_SIDE_MARGIN);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(CALENDAR_FOOTER_BASELINE_Y,
-                  "BOOT: NEXT | HOLD 2s: SYNC | KEY: STATUS");
+                  "BOOT: PAGE | KEY: SYSTEM");
     u8g2_SendBuffer(s_u8g2);
 }
 
-void display_show_firmware_info(const char *firmware_version,
-                                const char *release_url)
-{
-    if (s_u8g2 == NULL) {
-        return;
-    }
-
-    char version_text[40];
-    snprintf(version_text, sizeof(version_text), "v%s",
-             firmware_version != NULL ? firmware_version : "-");
-
-    u8g2_ClearBuffer(s_u8g2);
-    u8g2_SetDrawColor(s_u8g2, 1);
-
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
-    draw_centered(FIRMWARE_TITLE_BASELINE_Y, "FIRMWARE INFO");
-    u8g2_DrawHLine(s_u8g2, FIRMWARE_SIDE_MARGIN, FIRMWARE_DIVIDER_Y,
-                   BOARD_DISPLAY_WIDTH - 2 * FIRMWARE_SIDE_MARGIN);
-
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
-    u8g2_DrawStr(s_u8g2, 18, 80, "ESP32 RLCD");
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
-    u8g2_DrawStr(s_u8g2, 18, 116, "FIRMWARE");
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB18_tf);
-    u8g2_DrawStr(s_u8g2, 18, 154, version_text);
-
-    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    u8g2_DrawStr(s_u8g2, 18, 188, "USB UPDATE");
-    u8g2_DrawStr(s_u8g2, 18, 210, "1. POWER OFF");
-    u8g2_DrawStr(s_u8g2, 18, 230, "2. HOLD BOOT + PWR");
-
-    display_qr_context_t context = {
-        .area_left = FIRMWARE_QR_LEFT,
-        .area_top = FIRMWARE_QR_TOP,
-        .area_size = FIRMWARE_QR_SIZE,
-        .quiet_modules = 4,
-        .max_scale = 5,
-        .standard_polarity = true,
-    };
-    const bool qr_rendered = draw_qr_payload(
-        release_url != NULL ? release_url : "https://github.com/taifuer/esp32-rlcd-firmware/releases/latest",
-        &context, ESP_QRCODE_ECC_MED);
-    if (!qr_rendered) {
-        u8g2_DrawFrame(s_u8g2, FIRMWARE_QR_LEFT, FIRMWARE_QR_TOP,
-                       FIRMWARE_QR_SIZE, FIRMWARE_QR_SIZE);
-        u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-        const int center_x = FIRMWARE_QR_LEFT + FIRMWARE_QR_SIZE / 2;
-        const char *message = "QR UNAVAILABLE";
-        u8g2_DrawStr(s_u8g2,
-                     center_x - (int)u8g2_GetStrWidth(s_u8g2, message) / 2,
-                     FIRMWARE_QR_TOP + FIRMWARE_QR_SIZE / 2, message);
-    }
-    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    const char *qr_label = "LATEST RELEASE";
-    u8g2_DrawStr(s_u8g2,
-                 FIRMWARE_QR_LEFT +
-                     (FIRMWARE_QR_SIZE -
-                      (int)u8g2_GetStrWidth(s_u8g2, qr_label)) /
-                         2,
-                 238, qr_label);
-
-    u8g2_DrawHLine(s_u8g2, FIRMWARE_SIDE_MARGIN,
-                   FIRMWARE_FOOTER_DIVIDER_Y,
-                   BOARD_DISPLAY_WIDTH - 2 * FIRMWARE_SIDE_MARGIN);
-    draw_centered(FIRMWARE_FOOTER_BASELINE_Y,
-                  "BOOT: NEXT | HOLD 2s: SYNC | KEY: STATUS");
-    u8g2_SendBuffer(s_u8g2);
-}
-
-void display_show_device_status(const display_device_status_t *status)
+void display_show_device_health(const display_system_status_t *status)
 {
     if (s_u8g2 == NULL || status == NULL) {
         return;
     }
 
     char value[64];
-    u8g2_ClearBuffer(s_u8g2);
-    u8g2_SetDrawColor(s_u8g2, 1);
-
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
-    draw_centered(DEVICE_TITLE_BASELINE_Y, "DEVICE STATUS");
-    u8g2_DrawHLine(s_u8g2, DEVICE_SIDE_MARGIN, DEVICE_DIVIDER_Y,
-                   BOARD_DISPLAY_WIDTH - 2 * DEVICE_SIDE_MARGIN);
-
-    snprintf(value, sizeof(value), "v%s",
-             status->firmware_version != NULL ? status->firmware_version : "-");
-    draw_device_row(DEVICE_FIRST_ROW_Y, "FIRMWARE", value);
+    draw_system_header("DEVICE HEALTH", 1U);
 
     if (!status->rtc_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");
@@ -640,28 +582,45 @@ void display_show_device_status(const display_device_status_t *status)
                  status->year, status->month, status->day,
                  status->hour, status->minute);
     }
-    draw_device_row(DEVICE_FIRST_ROW_Y + DEVICE_ROW_GAP, "RTC", value);
+    draw_system_row(86, "RTC", value);
 
     if (!status->sensor_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");
     } else if (!status->environment_valid) {
         snprintf(value, sizeof(value), "READ ERROR");
     } else {
-        snprintf(value, sizeof(value), "%.1f C | %.0f %%",
+        snprintf(value, sizeof(value), "OK | %.1f C | %.0f %%",
                  (double)status->temperature_c,
                  (double)status->humidity_percent);
     }
-    draw_device_row(DEVICE_FIRST_ROW_Y + 2 * DEVICE_ROW_GAP, "SENSOR", value);
+    draw_system_row(132, "SENSOR", value);
 
     if (!status->battery_ready) {
         snprintf(value, sizeof(value), "NOT READY");
     } else if (!status->battery_valid) {
         snprintf(value, sizeof(value), "READ ERROR");
     } else {
-        snprintf(value, sizeof(value), "%u %% | %u mV",
+        snprintf(value, sizeof(value), "OK | %u %% | %u mV",
                  status->battery_percent, status->battery_voltage_mv);
     }
-    draw_device_row(DEVICE_FIRST_ROW_Y + 3 * DEVICE_ROW_GAP, "BATTERY", value);
+    draw_system_row(178, "BATTERY", value);
+
+    snprintf(value, sizeof(value), "%u KiB | OK",
+             (unsigned)status->psram_kib);
+    draw_system_row(224, "PSRAM", value);
+
+    draw_system_footer("BOOT: HOME | KEY: NEXT");
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_network_time(const display_system_status_t *status)
+{
+    if (s_u8g2 == NULL || status == NULL) {
+        return;
+    }
+
+    char value[64];
+    draw_system_header("NETWORK & TIME", 2U);
 
     if (!status->network_ready) {
         snprintf(value, sizeof(value), "NOT READY");
@@ -669,9 +628,21 @@ void display_show_device_status(const display_device_status_t *status)
         snprintf(value, sizeof(value), "NOT CONFIGURED");
     } else {
         snprintf(value, sizeof(value), "%s",
-                 status->network_state != NULL ? status->network_state : "UNKNOWN");
+                 status->network_state != NULL ? status->network_state
+                                               : "UNKNOWN");
     }
-    draw_device_row(DEVICE_FIRST_ROW_Y + 4 * DEVICE_ROW_GAP, "NETWORK", value);
+    draw_system_row(82, "WI-FI", value);
+
+    if (!status->rtc_ready) {
+        snprintf(value, sizeof(value), "NOT FOUND");
+    } else if (!status->time_valid) {
+        snprintf(value, sizeof(value), "INVALID TIME");
+    } else {
+        snprintf(value, sizeof(value), "%04u-%02u-%02u %02u:%02u",
+                 status->year, status->month, status->day,
+                 status->hour, status->minute);
+    }
+    draw_system_row(126, "RTC", value);
 
     if (status->last_sync_valid) {
         snprintf(value, sizeof(value), "%04u-%02u-%02u %02u:%02u",
@@ -681,12 +652,101 @@ void display_show_device_status(const display_device_status_t *status)
     } else {
         snprintf(value, sizeof(value), "--");
     }
-    draw_device_row(DEVICE_FIRST_ROW_Y + 5 * DEVICE_ROW_GAP, "LAST SYNC", value);
+    draw_system_row(170, "LAST SYNC", value);
+    draw_system_row(214, "AUTO SYNC", "EVERY 24 HOURS");
 
-    u8g2_DrawHLine(s_u8g2, DEVICE_SIDE_MARGIN, DEVICE_FOOTER_DIVIDER_Y,
-                   BOARD_DISPLAY_WIDTH - 2 * DEVICE_SIDE_MARGIN);
+    draw_system_footer(
+        "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: SYNC");
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_wifi_maintenance(const display_system_status_t *status)
+{
+    if (s_u8g2 == NULL || status == NULL) {
+        return;
+    }
+
+    draw_system_header("WI-FI MAINTENANCE", 3U);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    if (!status->network_ready) {
+        draw_centered(105, "NOT READY");
+    } else if (status->network_configured) {
+        draw_centered(105, "CONFIGURED");
+    } else {
+        draw_centered(105, "NOT CONFIGURED");
+    }
+
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    if (status->network_configured) {
+        draw_centered(155, "Saved home Wi-Fi is available");
+        draw_centered(190, "Hold KEY for 5 seconds to clear it");
+        draw_centered(218, "Device restarts in setup mode");
+    } else {
+        draw_centered(155, "No saved network settings");
+        draw_centered(190, "Follow the setup QR after restart");
+    }
+
+    draw_system_footer(
+        "BOOT: HOME | KEY: NEXT | HOLD KEY 5s: RESET");
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_about_update(const display_system_status_t *status,
+                               const char *release_url)
+{
+    if (s_u8g2 == NULL || status == NULL) {
+        return;
+    }
+
+    char version_text[40];
+    char idf_text[48];
+    snprintf(version_text, sizeof(version_text), "v%s",
+             status->firmware_version != NULL ? status->firmware_version : "-");
+    snprintf(idf_text, sizeof(idf_text), "ESP-IDF %s",
+             status->idf_version != NULL ? status->idf_version : "-");
+
+    draw_system_header("ABOUT & UPDATE", 4U);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    u8g2_DrawStr(s_u8g2, 18, 78, "ESP32 RLCD");
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB18_tf);
+    u8g2_DrawStr(s_u8g2, 18, 118, version_text);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    draw_centered(DEVICE_FOOTER_BASELINE_Y,
-                  "BOOT: NEXT | KEY: BACK | HOLD KEY 5s: RESET WI-FI");
+    u8g2_DrawStr(s_u8g2, 18, 152, idf_text);
+    u8g2_DrawStr(s_u8g2, 18, 174, "USB FLASH");
+    u8g2_DrawStr(s_u8g2, 18, 194, "POWER OFF FIRST");
+    u8g2_DrawStr(s_u8g2, 18, 214, "HOLD BOOT");
+    u8g2_DrawStr(s_u8g2, 18, 234, "PRESS PWR");
+
+    display_qr_context_t context = {
+        .area_left = ABOUT_QR_LEFT,
+        .area_top = ABOUT_QR_TOP,
+        .area_size = ABOUT_QR_SIZE,
+        .quiet_modules = 4,
+        .max_scale = 5,
+        .standard_polarity = true,
+    };
+    const bool qr_rendered = draw_qr_payload(
+        release_url != NULL ? release_url : "https://github.com/taifuer/esp32-rlcd-firmware/releases/latest",
+        &context, ESP_QRCODE_ECC_MED);
+    if (!qr_rendered) {
+        u8g2_DrawFrame(s_u8g2, ABOUT_QR_LEFT, ABOUT_QR_TOP,
+                       ABOUT_QR_SIZE, ABOUT_QR_SIZE);
+        u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+        const int center_x = ABOUT_QR_LEFT + ABOUT_QR_SIZE / 2;
+        const char *message = "QR UNAVAILABLE";
+        u8g2_DrawStr(s_u8g2,
+                     center_x - (int)u8g2_GetStrWidth(s_u8g2, message) / 2,
+                     ABOUT_QR_TOP + ABOUT_QR_SIZE / 2, message);
+    }
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    const char *qr_label = "LATEST RELEASE";
+    u8g2_DrawStr(s_u8g2,
+                 ABOUT_QR_LEFT +
+                     (ABOUT_QR_SIZE -
+                      (int)u8g2_GetStrWidth(s_u8g2, qr_label)) /
+                         2,
+                 238, qr_label);
+
+    draw_system_footer("BOOT: HOME | KEY: NEXT");
     u8g2_SendBuffer(s_u8g2);
 }
