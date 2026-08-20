@@ -22,10 +22,10 @@ if git ls-files | grep -E "${disallowed_paths_pattern}" >/dev/null; then
 fi
 
 if git grep -n -I -E '(/root/|/home/[^/]+/|[A-Za-z]:\\Users\\)' -- . \
-    ':!LICENSES/**' >/dev/null; then
+    ':!LICENSES/**' ':!scripts/check-repository.sh' >/dev/null; then
     echo "跟踪文件包含本机绝对路径:" >&2
     git grep -n -I -E '(/root/|/home/[^/]+/|[A-Za-z]:\\Users\\)' -- . \
-        ':!LICENSES/**' >&2
+        ':!LICENSES/**' ':!scripts/check-repository.sh' >&2
     exit 1
 fi
 

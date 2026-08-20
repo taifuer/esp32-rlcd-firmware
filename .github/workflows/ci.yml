@@ -18,8 +18,6 @@ jobs:
     name: Repository and host tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      RLCD_DEPS_DIR: ${{ runner.temp }}/esp32-rlcd-firmware-deps
 
     steps:
       - name: Check out repository
@@ -30,6 +28,8 @@ jobs:
 
       - name: Prepare pinned QR test dependency
         shell: bash
+        env:
+          RLCD_DEPS_DIR: ${{ runner.temp }}/esp32-rlcd-firmware-deps
         run: |
           source ./tool-versions.env
           component_root="${RLCD_DEPS_DIR}/sources/espressif/idf-extra-components"
@@ -45,4 +45,6 @@ jobs:
             "${IDF_EXTRA_COMPONENTS_COMMIT}"
 
       - name: Run host tests
+        env:
+          RLCD_DEPS_DIR: ${{ runner.temp }}/esp32-rlcd-firmware-deps
         run: ./scripts/test.sh
