@@ -12,6 +12,7 @@
 
 ```bash
 ./scripts/bootstrap.sh
+./scripts/check-repository.sh
 ./scripts/check-licenses.sh
 ./scripts/test.sh
 ./scripts/build.sh

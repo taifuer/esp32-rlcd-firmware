@@ -47,6 +47,7 @@
 ```bash
 ./scripts/bootstrap.sh --check
 ./scripts/configure.sh
+./scripts/check-repository.sh
 ./scripts/check-licenses.sh
 ./scripts/test.sh
 ./scripts/build.sh
@@ -70,26 +71,27 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 1. 在 `CMakeLists.txt` 更新 `PROJECT_VER`。
 2. 在 `CHANGELOG.md` 把变化写入对应版本。
 3. 执行 `./scripts/bootstrap.sh --check`。
-4. 执行 `./scripts/check-licenses.sh`；新增或升级组件、字体时先更新 `NOTICE.md`、
+4. 执行 `./scripts/check-repository.sh`，确认仓库边界、文档链接和历史发布哈希正常。
+5. 执行 `./scripts/check-licenses.sh`；新增或升级组件、字体时先更新 `NOTICE.md`、
    `LICENSES/` 和检查脚本。
-5. 执行 `./scripts/test.sh`，确认纯逻辑测试通过。
-6. 执行 `./scripts/build.sh`，确认无编译错误。
-7. 核对 `build/SHA256SUMS`。
-8. 按[开发烧录指南](flashing.md)烧录到实机。
-9. 验证屏幕、RTC、农历、温湿度、电池 ADC、PSRAM 和串口日志。
-   含联网功能的版本还必须验证首次配网、错误密码恢复、自动 SNTP、RTC 写后回读、断电
-   重连、`GET_NETWORK` 和 `RESET_WIFI`，并确认日志不包含家庭 SSID 或密码。
-10. 只有实机通过后，才把合并镜像复制到 `dist/vX.Y.Z/`，并保存大小、SHA-256、
+6. 执行 `./scripts/test.sh`，确认纯逻辑测试通过。
+7. 执行 `./scripts/build.sh`，确认无编译错误。
+8. 核对 `build/SHA256SUMS`。
+9. 按[开发烧录指南](flashing.md)烧录到实机。
+10. 验证屏幕、RTC、农历、温湿度、电池 ADC、PSRAM 和串口日志。
+    含联网功能的版本还必须验证首次配网、错误密码恢复、自动 SNTP、RTC 写后回读、断电
+    重连、`GET_NETWORK` 和 `RESET_WIFI`，并确认日志不包含家庭 SSID 或密码。
+11. 只有实机通过后，才把合并镜像复制到 `dist/vX.Y.Z/`，并保存大小、SHA-256、
     构建依赖和验收记录。
-11. 按[发布固件安装指南](user-install.md)重新执行发布路径，确认普通用户命令和文件名一致。
-12. 执行 `./scripts/package-release.sh vX.Y.Z`，检查 `build/release/vX.Y.Z/` 中的全部附件
+12. 按[发布固件安装指南](user-install.md)重新执行发布路径，确认普通用户命令和文件名一致。
+13. 执行 `./scripts/package-release.sh vX.Y.Z`，检查 `build/release/vX.Y.Z/` 中的全部附件
     和 `RELEASE_SHA256SUMS`。
-13. 检查 Git 暂存内容，确保没有第三方源码、`build/`、`sdkconfig`、密码或外部固件。
-14. 提交并创建 `vX.Y.Z` 标签。
-15. 创建 GitHub Release，上传打包目录中的完整固件、校验文件、效果图、`LICENSE`、
+14. 检查 Git 暂存内容，确保没有第三方源码、`build/`、`sdkconfig`、密码或外部固件。
+15. 提交并创建 `vX.Y.Z` 标签。
+16. 创建 GitHub Release，上传打包目录中的完整固件、校验文件、效果图、`LICENSE`、
     `NOTICE.md` 和许可文本压缩包。
-16. GitHub Releases 只保留最新正式版本；删除旧 Release 条目时保留 `dist/` 历史文件。
-17. 仓库可见性是独立的人工决定；构建、打包和发布脚本均不得自动切换 Public/Private。
+17. GitHub Releases 只保留最新正式版本；删除旧 Release 条目时保留 `dist/` 历史文件。
+18. 仓库可见性是独立的人工决定；构建、打包和发布脚本均不得自动切换 Public/Private。
 
 ## Git 身份和 Agent 提交规则
 

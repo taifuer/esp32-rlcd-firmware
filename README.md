@@ -69,6 +69,7 @@
 
 ```text
 .
+├── .github/             # GitHub Actions 自动检查
 ├── src/                 # ESP-IDF 组件与项目源码
 │   ├── app/             # 应用入口与 USB 命令
 │   ├── board/           # 板级总线和引脚
@@ -90,6 +91,7 @@
 ```bash
 ./scripts/bootstrap.sh
 ./scripts/bootstrap.sh --check
+./scripts/check-repository.sh
 ./scripts/test.sh
 ./scripts/build.sh
 ```

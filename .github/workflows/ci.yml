@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-tests:
+    name: Repository and host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RLCD_DEPS_DIR: ${{ runner.temp }}/esp32-rlcd-firmware-deps
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Check repository
+        run: ./scripts/check-repository.sh
+
+      - name: Prepare pinned QR test dependency
+        shell: bash
+        run: |
+          source ./tool-versions.env
+          component_root="${RLCD_DEPS_DIR}/sources/espressif/idf-extra-components"
+          mkdir -p "$(dirname -- "${component_root}")"
+          git clone --filter=blob:none --no-checkout \
+            "${IDF_EXTRA_COMPONENTS_REPOSITORY_URL}" "${component_root}"
+          git -C "${component_root}" sparse-checkout init --cone
+          git -C "${component_root}" sparse-checkout set \
+            "${QRCODE_COMPONENT_RELATIVE_PATH}"
+          git -C "${component_root}" checkout --detach \
+            "${IDF_EXTRA_COMPONENTS_COMMIT}"
+          test "$(git -C "${component_root}" rev-parse HEAD)" = \
+            "${IDF_EXTRA_COMPONENTS_COMMIT}"
+
+      - name: Run host tests
+        run: ./scripts/test.sh
