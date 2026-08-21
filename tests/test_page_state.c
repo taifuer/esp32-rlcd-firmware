@@ -14,6 +14,7 @@ int main(void)
     assert(!app_page_is_daily(APP_PAGE_DEVICE_HEALTH));
     assert(app_page_is_system(APP_PAGE_DEVICE_HEALTH));
     assert(app_page_is_system(APP_PAGE_NETWORK_TIME));
+    assert(app_page_is_system(APP_PAGE_AUDIO));
     assert(app_page_is_system(APP_PAGE_WIFI_MAINTENANCE));
     assert(app_page_is_system(APP_PAGE_ABOUT_UPDATE));
     assert(!app_page_is_system(APP_PAGE_HOME));
@@ -26,6 +27,10 @@ int main(void)
            APP_PAGE_ACTION_SYNC_TIME);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_NETWORK_TIME) ==
            APP_PAGE_MANUAL_SYNC_HOLD_MS);
+    assert(app_page_key_hold_action(APP_PAGE_AUDIO) ==
+           APP_PAGE_ACTION_TEST_AUDIO);
+    assert(app_page_key_hold_threshold_ms(APP_PAGE_AUDIO) ==
+           APP_PAGE_AUDIO_TEST_HOLD_MS);
     assert(app_page_key_hold_action(APP_PAGE_WIFI_MAINTENANCE) ==
            APP_PAGE_ACTION_RESET_WIFI);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_WIFI_MAINTENANCE) ==
@@ -54,6 +59,8 @@ int main(void)
     assert(app_page_state_current(&state) == APP_PAGE_DEVICE_HEALTH);
     app_page_state_key_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_NETWORK_TIME);
+    app_page_state_key_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_AUDIO);
     app_page_state_key_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_WIFI_MAINTENANCE);
     app_page_state_key_short_press(&state);

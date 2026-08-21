@@ -45,11 +45,17 @@ require_command python3
 
 if [[ "${check_only}" == true ]]; then
     verify_checkout "${RLCD_IDF_DIR}" "${ESP_IDF_COMMIT}" "ESP-IDF v${ESP_IDF_VERSION}"
-    verify_checkout "${RLCD_WAVESHARE_DIR}" "${WAVESHARE_COMMIT}" "Waveshare display source"
+    verify_checkout "${RLCD_WAVESHARE_DIR}" "${WAVESHARE_COMMIT}" "Waveshare board sources"
     verify_checkout "${RLCD_IDF_EXTRA_COMPONENTS_DIR}" \
         "${IDF_EXTRA_COMPONENTS_COMMIT}" "Espressif QR Code component"
     if [[ ! -f "${RLCD_QRCODE_COMPONENT_DIR}/include/qrcode.h" ]]; then
         echo "二维码组件不完整: ${RLCD_QRCODE_COMPONENT_DIR}" >&2
+        exit 1
+    fi
+    if [[ ! -f "${RLCD_WAVESHARE_AUDIO_CODEC_DIR}/include/esp_codec_dev.h" ||
+          ! -f "${RLCD_WAVESHARE_AUDIO_CODEC_DIR}/device/include/es8311_codec.h" ||
+          ! -f "${RLCD_WAVESHARE_AUDIO_CODEC_DIR}/device/include/es7210_adc.h" ]]; then
+        echo "音频 codec 组件不完整: ${RLCD_WAVESHARE_AUDIO_CODEC_DIR}" >&2
         exit 1
     fi
     if [[ ! -f "${RLCD_IDF_TOOLS_DIR}/idf-env.json" ]]; then
@@ -77,10 +83,21 @@ if [[ ! -d "${RLCD_WAVESHARE_DIR}/.git" ]]; then
     git -C "${RLCD_WAVESHARE_DIR}" sparse-checkout init --cone
     git -C "${RLCD_WAVESHARE_DIR}" sparse-checkout set \
         "${WAVESHARE_COMPONENTS_RELATIVE_PATH}/u8g2" \
-        "${WAVESHARE_COMPONENTS_RELATIVE_PATH}/u8g2_st7305"
+        "${WAVESHARE_COMPONENTS_RELATIVE_PATH}/u8g2_st7305" \
+        "${WAVESHARE_AUDIO_CODEC_RELATIVE_PATH}"
     git -C "${RLCD_WAVESHARE_DIR}" checkout --detach "${WAVESHARE_COMMIT}"
 fi
-verify_checkout "${RLCD_WAVESHARE_DIR}" "${WAVESHARE_COMMIT}" "Waveshare display source"
+verify_checkout "${RLCD_WAVESHARE_DIR}" "${WAVESHARE_COMMIT}" "Waveshare board sources"
+
+if [[ "$(git -C "${RLCD_WAVESHARE_DIR}" config --bool core.sparseCheckout || true)" == true ]]; then
+    git -C "${RLCD_WAVESHARE_DIR}" sparse-checkout add \
+        "${WAVESHARE_AUDIO_CODEC_RELATIVE_PATH}"
+fi
+
+if [[ ! -f "${RLCD_WAVESHARE_AUDIO_CODEC_DIR}/include/esp_codec_dev.h" ]]; then
+    echo "未找到音频 codec 依赖: ${RLCD_WAVESHARE_AUDIO_CODEC_DIR}" >&2
+    exit 1
+fi
 
 if [[ ! -d "${RLCD_IDF_EXTRA_COMPONENTS_DIR}/.git" ]]; then
     git clone --filter=blob:none --no-checkout \

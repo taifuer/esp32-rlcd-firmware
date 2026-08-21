@@ -22,6 +22,7 @@ Copyright 2026 taifu
 | wpa_supplicant | ESP-IDF 内含 2.10 | WPA2/WPA3 客户端认证 | BSD-3-Clause；见 [`LICENSES/WPA-Supplicant.txt`](LICENSES/WPA-Supplicant.txt) 和 [`LICENSES/WPA-Supplicant-COPYING.txt`](LICENSES/WPA-Supplicant-COPYING.txt) |
 | HTTP Parser | ESP-IDF 内含 2.7.0 | 本地配网页面的 HTTP 请求解析 | MIT；见 [`LICENSES/HTTP-Parser.txt`](LICENSES/HTTP-Parser.txt) |
 | Espressif QR Code | v0.2.0，`3117b1e6806738c0271bbd18df17f6d74ec66452` | 在配网页面显示标准 Wi-Fi 加入二维码 | Espressif 包装层为 Apache-2.0，见 [`LICENSE`](LICENSE)；内含 Nayuki QR Code Generator，MIT，见 [`LICENSES/Nayuki-QR-Code-Generator.txt`](LICENSES/Nayuki-QR-Code-Generator.txt) |
+| Espressif `esp_codec_dev` | v1.3.5，ESP-ADF `9b35bca1a6db3d989936f228d6e28f33089fa9e7`，随微雪固定提交提供 | ES8311 扬声器与 ES7210 双麦克风控制 | Apache-2.0；见 [`LICENSE`](LICENSE) |
 | newlib | Espressif Xtensa 工具链 `esp-14.2.0_20251107` | C 标准库 | 多个宽松许可证；见 [`LICENSES/Newlib.txt`](LICENSES/Newlib.txt) |
 | GCC runtime（`libgcc`、`libstdc++`） | GCC 14.2.0，Espressif Xtensa 工具链 | 编译器运行时和 C++ 运行库 | GPL-3.0-or-later WITH GCC-exception-3.1；见 [`GPL-3.0-or-later.txt`](LICENSES/GPL-3.0-or-later.txt) 和 [`GCC-Runtime-Library-Exception-3.1.txt`](LICENSES/GCC-Runtime-Library-Exception-3.1.txt) |
 | TLSF | ESP-IDF 内含 `2867f6883a12920b1969ff9624c0ab0e4185c2ce` | 堆内存分配器 | BSD-3-Clause；见 [`LICENSES/TLSF-BSD-3-Clause.txt`](LICENSES/TLSF-BSD-3-Clause.txt) |
@@ -44,6 +45,7 @@ Release 同时附带该版本打包时的本文件与完整许可文本。
   修改；
 - Espressif QR Code：Copyright 2015-2021 Espressif Systems (Shanghai) CO LTD；底层
   QR Code Generator：Copyright (c) Project Nayuki；
+- `esp_codec_dev`：Copyright 2023 Espressif Systems (Shanghai) CO LTD；
 - U8g2：Copyright (c) 2016, olikraus@gmail.com；
 - `u8g2_st7305`：Copyright 2026 Waveshare；
 - TLSF、Cadence/Tensilica、newlib、GCC runtime 和各字体的完整版权声明，保留在上表链接的

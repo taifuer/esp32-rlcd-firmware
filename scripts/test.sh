@@ -62,6 +62,16 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   src/rtc/rtc_backup_policy.c tests/test_rtc_backup_policy.c \
   -o "${RLCD_TEST_TMP}/test_rtc_backup_policy"
 
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/audio/include \
+  src/audio/audio_level.c tests/test_audio_level.c \
+  -o "${RLCD_TEST_TMP}/test_audio_level"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/audio/include \
+  src/audio/audio_session_state.c tests/test_audio_session_state.c \
+  -o "${RLCD_TEST_TMP}/test_audio_session_state"
+
 "${RLCD_TEST_TMP}/test_chinese_lunar"
 "${RLCD_TEST_TMP}/test_calendar_month"
 "${RLCD_TEST_TMP}/test_battery_level"
@@ -71,3 +81,5 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_page_state"
 "${RLCD_TEST_TMP}/test_firmware_update_policy"
 "${RLCD_TEST_TMP}/test_rtc_backup_policy"
+"${RLCD_TEST_TMP}/test_audio_level"
+"${RLCD_TEST_TMP}/test_audio_session_state"

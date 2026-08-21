@@ -83,6 +83,8 @@ compare_file "${RLCD_PROJECT_DIR}/LICENSES/WPA-Supplicant-COPYING.txt" \
     "${RLCD_IDF_DIR}/components/wpa_supplicant/COPYING" "wpa_supplicant COPYING"
 compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
     "${RLCD_QRCODE_COMPONENT_DIR}/LICENSE" "Espressif QR Code"
+compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
+    "${RLCD_WAVESHARE_AUDIO_CODEC_DIR}/LICENSE" "Espressif esp_codec_dev"
 
 xtensa_license_dir="$(find "${RLCD_IDF_TOOLS_DIR}/tools/xtensa-esp-elf" -type d \
     -path '*/xtensa-esp-elf/share/licenses' -print -quit)"
@@ -124,6 +126,11 @@ notice_entries=(
     "Copyright 2026 Waveshare"
     "Copyright (c) Project Nayuki"
     "${IDF_EXTRA_COMPONENTS_COMMIT}"
+    "esp_codec_dev"
+    "1.3.5"
+    "9b35bca1a6db3d989936f228d6e28f33089fa9e7"
+    "ES8311"
+    "ES7210"
 )
 for notice_entry in "${notice_entries[@]}"; do
     require_notice_entry "${notice_entry}"

@@ -19,6 +19,8 @@ static app_page_t next_system_page(app_page_t page)
     case APP_PAGE_DEVICE_HEALTH:
         return APP_PAGE_NETWORK_TIME;
     case APP_PAGE_NETWORK_TIME:
+        return APP_PAGE_AUDIO;
+    case APP_PAGE_AUDIO:
         return APP_PAGE_WIFI_MAINTENANCE;
     case APP_PAGE_WIFI_MAINTENANCE:
         return APP_PAGE_ABOUT_UPDATE;
@@ -57,6 +59,9 @@ app_page_action_t app_page_key_hold_action(app_page_t page)
     if (page == APP_PAGE_NETWORK_TIME) {
         return APP_PAGE_ACTION_SYNC_TIME;
     }
+    if (page == APP_PAGE_AUDIO) {
+        return APP_PAGE_ACTION_TEST_AUDIO;
+    }
     if (page == APP_PAGE_WIFI_MAINTENANCE) {
         return APP_PAGE_ACTION_RESET_WIFI;
     }
@@ -71,6 +76,8 @@ uint32_t app_page_key_hold_threshold_ms(app_page_t page)
     switch (app_page_key_hold_action(page)) {
     case APP_PAGE_ACTION_SYNC_TIME:
         return APP_PAGE_MANUAL_SYNC_HOLD_MS;
+    case APP_PAGE_ACTION_TEST_AUDIO:
+        return APP_PAGE_AUDIO_TEST_HOLD_MS;
     case APP_PAGE_ACTION_RESET_WIFI:
         return APP_PAGE_WIFI_RESET_HOLD_MS;
     case APP_PAGE_ACTION_START_UPDATE:

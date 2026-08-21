@@ -17,6 +17,12 @@ if [[ ! -f "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/CMakeLists.txt" ||
   exit 1
 fi
 
+if [[ ! -f "${RLCD_WAVESHARE_AUDIO_CODEC_DIR}/CMakeLists.txt" ]]; then
+  echo "未找到外部音频 codec 依赖: ${RLCD_WAVESHARE_AUDIO_CODEC_DIR}" >&2
+  echo "请先执行: ./scripts/bootstrap.sh" >&2
+  exit 1
+fi
+
 export IDF_TOOLS_PATH="${RLCD_IDF_TOOLS_DIR}"
 # ESP-IDF's export script prepares the pinned compiler and Python environment.
 # shellcheck disable=SC1091

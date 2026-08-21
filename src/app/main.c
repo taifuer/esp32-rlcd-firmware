@@ -2,6 +2,7 @@
 #include <stdio.h>
 
 #include "app_storage.h"
+#include "audio_diagnostics.h"
 #include "battery.h"
 #include "board_buttons.h"
 #include "board_i2c.h"
@@ -41,6 +42,7 @@ typedef enum {
     APP_DISPLAY_CALENDAR,
     APP_DISPLAY_DEVICE_HEALTH,
     APP_DISPLAY_NETWORK_TIME,
+    APP_DISPLAY_AUDIO,
     APP_DISPLAY_WIFI_MAINTENANCE,
     APP_DISPLAY_ABOUT_UPDATE,
     APP_DISPLAY_MANUAL_SYNC,
@@ -78,6 +80,8 @@ static const char *page_name(app_page_t page)
         return "device health";
     case APP_PAGE_NETWORK_TIME:
         return "network and time";
+    case APP_PAGE_AUDIO:
+        return "audio";
     case APP_PAGE_WIFI_MAINTENANCE:
         return "Wi-Fi maintenance";
     case APP_PAGE_ABOUT_UPDATE:
@@ -117,6 +121,32 @@ static const char *firmware_update_error_detail(esp_err_t error)
         return "Upload connection timed out";
     default:
         return esp_err_to_name(error);
+    }
+}
+
+static display_audio_state_t display_audio_state(
+    audio_session_state_t state)
+{
+    switch (state) {
+    case AUDIO_SESSION_STATE_PLAYING_TONE:
+        return DISPLAY_AUDIO_STATE_PLAYING_TONE;
+    case AUDIO_SESSION_STATE_PREPARING_RECORDING:
+        return DISPLAY_AUDIO_STATE_PREPARING_RECORDING;
+    case AUDIO_SESSION_STATE_RECORDING:
+        return DISPLAY_AUDIO_STATE_RECORDING;
+    case AUDIO_SESSION_STATE_ANALYZING:
+        return DISPLAY_AUDIO_STATE_ANALYZING;
+    case AUDIO_SESSION_STATE_PLAYBACK:
+        return DISPLAY_AUDIO_STATE_PLAYBACK;
+    case AUDIO_SESSION_STATE_COMPLETED:
+        return DISPLAY_AUDIO_STATE_COMPLETED;
+    case AUDIO_SESSION_STATE_CANCELLED:
+        return DISPLAY_AUDIO_STATE_CANCELLED;
+    case AUDIO_SESSION_STATE_FAILED:
+        return DISPLAY_AUDIO_STATE_FAILED;
+    case AUDIO_SESSION_STATE_IDLE:
+    default:
+        return DISPLAY_AUDIO_STATE_IDLE;
     }
 }
 
@@ -278,6 +308,21 @@ void app_main(void)
         }
     }
 
+    const esp_err_t audio_init_error =
+        i2c_ready ? audio_diagnostics_init(board_i2c_bus())
+                  : ESP_ERR_INVALID_STATE;
+    audio_diagnostics_status_t audio_status = {0};
+    audio_diagnostics_get_status(&audio_status);
+    if (audio_init_error == ESP_OK) {
+        ESP_LOGI(TAG, "audio diagnostics ready: ES8311 speaker and ES7210 microphones");
+    } else {
+        ESP_LOGW(TAG,
+                 "audio diagnostics partially unavailable: speaker=%d microphones=%d error=%s",
+                 audio_status.speaker_ready,
+                 audio_status.microphones_ready,
+                 esp_err_to_name(audio_init_error));
+    }
+
     bool rtc_backup_monitor_ready = false;
     if (storage_error == ESP_OK) {
         const esp_reset_reason_t reset_reason = esp_reset_reason();
@@ -393,6 +438,13 @@ void app_main(void)
         bool device_health_data_changed = false;
         bool network_time_data_changed = false;
         bool wifi_maintenance_data_changed = false;
+        audio_diagnostics_status_t latest_audio_status = {0};
+        audio_diagnostics_get_status(&latest_audio_status);
+        const bool audio_data_changed =
+            latest_audio_status.revision != audio_status.revision;
+        audio_status = latest_audio_status;
+        const bool audio_session_active =
+            audio_session_state_is_active(audio_status.state);
 
         (void)firmware_update_get_status(&firmware_update_status);
         if (firmware_update_status.state != previous_update_state ||
@@ -432,6 +484,38 @@ void app_main(void)
                 &key_button_state, key_pressed, button_elapsed_ms);
             boot_event = button_state_update(
                 &boot_button_state, boot_pressed, button_elapsed_ms);
+        }
+        if (audio_session_active) {
+            audio_session_input_t audio_input = AUDIO_SESSION_INPUT_NONE;
+            if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
+                audio_input = AUDIO_SESSION_INPUT_BOOT_SHORT_PRESS;
+            } else if (key_event == BUTTON_EVENT_SHORT_PRESS) {
+                audio_input = AUDIO_SESSION_INPUT_KEY_SHORT_PRESS;
+            }
+            const audio_session_action_t audio_action =
+                audio_session_input_action(audio_status.state, audio_input);
+            if (audio_action == AUDIO_SESSION_ACTION_CANCEL) {
+                const esp_err_t cancel_error = audio_diagnostics_cancel();
+                if (cancel_error == ESP_OK) {
+                    ESP_LOGI(TAG,
+                             "BOOT short press: cancelling temporary audio");
+                }
+                render_requested = true;
+            } else if (audio_action == AUDIO_SESSION_ACTION_STOP) {
+                const esp_err_t stop_error =
+                    audio_diagnostics_request_stop();
+                if (stop_error == ESP_OK) {
+                    ESP_LOGI(TAG, "KEY short press: stopping %s",
+                             audio_session_state_name(audio_status.state));
+                }
+                render_requested = true;
+            }
+            if (key_event != BUTTON_EVENT_NONE ||
+                boot_event != BUTTON_EVENT_NONE) {
+                app_page_state_note_activity(&page_state);
+            }
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
         }
         if (key_event == BUTTON_EVENT_SHORT_PRESS) {
             if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
@@ -502,6 +586,20 @@ void app_main(void)
                 vTaskDelay(pdMS_TO_TICKS(1500U));
                 render_requested = true;
                 previous_display_mode = APP_DISPLAY_NONE;
+            } else if (key_action == APP_PAGE_ACTION_TEST_AUDIO &&
+                       manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+                       !firmware_update_ui_active) {
+                const esp_err_t start_error = audio_diagnostics_start();
+                if (start_error == ESP_OK) {
+                    ESP_LOGI(TAG,
+                             "KEY long press: temporary audio loopback started");
+                } else {
+                    ESP_LOGW(TAG,
+                             "temporary audio loopback could not start: %s",
+                             esp_err_to_name(start_error));
+                }
+                previous_display_mode = APP_DISPLAY_NONE;
+                render_requested = true;
             } else if (key_action == APP_PAGE_ACTION_START_UPDATE &&
                        manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                        !firmware_update_ui_active) {
@@ -590,7 +688,7 @@ void app_main(void)
         }
         if (manual_sync_ui == MANUAL_SYNC_UI_NONE && !reset_prompt_active &&
             !firmware_update_prompt_active && !firmware_update_ui_active &&
-            !button_interaction_active &&
+            !audio_session_active && !button_interaction_active &&
             app_page_state_tick(&page_state, button_elapsed_ms)) {
             render_requested = true;
             ESP_LOGI(TAG, "page timeout: returning home");
@@ -918,6 +1016,8 @@ void app_main(void)
             app_display_mode_t system_display_mode = APP_DISPLAY_DEVICE_HEALTH;
             if (active_page == APP_PAGE_NETWORK_TIME) {
                 system_display_mode = APP_DISPLAY_NETWORK_TIME;
+            } else if (active_page == APP_PAGE_AUDIO) {
+                system_display_mode = APP_DISPLAY_AUDIO;
             } else if (active_page == APP_PAGE_WIFI_MAINTENANCE) {
                 system_display_mode = APP_DISPLAY_WIFI_MAINTENANCE;
             } else if (active_page == APP_PAGE_ABOUT_UPDATE) {
@@ -928,6 +1028,8 @@ void app_main(void)
                  device_health_data_changed) ||
                 (active_page == APP_PAGE_NETWORK_TIME &&
                  network_time_data_changed) ||
+                (active_page == APP_PAGE_AUDIO &&
+                 audio_data_changed) ||
                 (active_page == APP_PAGE_WIFI_MAINTENANCE &&
                  wifi_maintenance_data_changed);
             if (render_requested ||
@@ -972,6 +1074,43 @@ void app_main(void)
                     display_show_device_health(&system_status);
                 } else if (active_page == APP_PAGE_NETWORK_TIME) {
                     display_show_network_time(&system_status);
+                } else if (active_page == APP_PAGE_AUDIO) {
+                    audio_diagnostics_get_status(&audio_status);
+                    const display_audio_status_t display_audio_status = {
+                        .initialized = audio_status.initialized,
+                        .speaker_ready = audio_status.speaker_ready,
+                        .microphones_ready =
+                            audio_status.microphones_ready,
+                        .test_completed = audio_status.test_completed,
+                        .tone_played = audio_status.tone_played,
+                        .microphone_capture_completed =
+                            audio_status.microphone_capture_completed,
+                        .voice_played = audio_status.voice_played,
+                        .playback_stopped =
+                            audio_status.playback_stopped,
+                        .microphone_1_level_percent =
+                            audio_status.microphone_1_level_percent,
+                        .microphone_2_level_percent =
+                            audio_status.microphone_2_level_percent,
+                        .playback_microphone =
+                            audio_status.playback_microphone,
+                        .recording_elapsed_ms =
+                            audio_status.recording_elapsed_ms,
+                        .recording_duration_ms =
+                            audio_status.recording_duration_ms,
+                        .playback_elapsed_ms =
+                            audio_status.playback_elapsed_ms,
+                        .max_recording_ms =
+                            AUDIO_DIAGNOSTICS_MAX_RECORDING_MS,
+                        .sample_rate_hz =
+                            AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ,
+                        .bits_per_sample =
+                            AUDIO_DIAGNOSTICS_BITS_PER_SAMPLE,
+                        .state = display_audio_state(audio_status.state),
+                        .result = audio_diagnostics_result_name(
+                            audio_status.result),
+                    };
+                    display_show_audio(&display_audio_status);
                 } else if (active_page == APP_PAGE_WIFI_MAINTENANCE) {
                     display_show_wifi_maintenance(&system_status);
                 } else {
@@ -985,6 +1124,7 @@ void app_main(void)
                    (periodic_update || render_requested ||
                     previous_display_mode == APP_DISPLAY_DEVICE_HEALTH ||
                     previous_display_mode == APP_DISPLAY_NETWORK_TIME ||
+                    previous_display_mode == APP_DISPLAY_AUDIO ||
                     previous_display_mode == APP_DISPLAY_WIFI_MAINTENANCE ||
                     previous_display_mode == APP_DISPLAY_ABOUT_UPDATE ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC ||

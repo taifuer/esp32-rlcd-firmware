@@ -42,7 +42,7 @@ enum {
     SETUP_QR_AREA_SIZE = 170,
     SETUP_QR_QUIET_MODULES = 4,
     SETUP_QR_MAX_SCALE = 5,
-    SYSTEM_PAGE_COUNT = 4,
+    SYSTEM_PAGE_COUNT = 5,
     SYSTEM_SIDE_MARGIN = 12,
     SYSTEM_TITLE_BASELINE_Y = 32,
     SYSTEM_DIVIDER_Y = 44,
@@ -149,6 +149,36 @@ static void draw_system_footer(const char *text)
                    BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(SYSTEM_FOOTER_BASELINE_Y, text);
+}
+
+static void draw_audio_meter(int baseline_y, const char *label,
+                             uint8_t percent)
+{
+    enum {
+        METER_LEFT = 76,
+        METER_TOP_OFFSET = 13,
+        METER_WIDTH = 246,
+        METER_HEIGHT = 14,
+        METER_INNER_WIDTH = METER_WIDTH - 4,
+        PERCENT_RIGHT = 382,
+    };
+    char percent_text[8];
+    snprintf(percent_text, sizeof(percent_text), "%u %%", percent);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    u8g2_DrawStr(s_u8g2, SYSTEM_LABEL_X, baseline_y, label);
+    u8g2_DrawFrame(s_u8g2, METER_LEFT, baseline_y - METER_TOP_OFFSET,
+                   METER_WIDTH, METER_HEIGHT);
+    const int fill_width = (int)percent * METER_INNER_WIDTH / 100;
+    if (fill_width > 0) {
+        u8g2_DrawBox(s_u8g2, METER_LEFT + 2,
+                     baseline_y - METER_TOP_OFFSET + 2,
+                     fill_width, METER_HEIGHT - 4);
+    }
+    u8g2_DrawStr(s_u8g2,
+                 PERCENT_RIGHT -
+                     (int)u8g2_GetStrWidth(s_u8g2, percent_text),
+                 baseline_y, percent_text);
 }
 
 typedef struct {
@@ -724,13 +754,132 @@ void display_show_network_time(const display_system_status_t *status)
     u8g2_SendBuffer(s_u8g2);
 }
 
+void display_show_audio(const display_audio_status_t *status)
+{
+    if (s_u8g2 == NULL || status == NULL) {
+        return;
+    }
+
+    char value[80];
+    draw_system_header("AUDIO", 3U);
+
+    if (status->state == DISPLAY_AUDIO_STATE_PLAYING_TONE) {
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+        draw_centered(105, "SPEAKER TEST");
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+        draw_centered(160, "Listen for two short tones");
+        draw_centered(205, "Recording starts next");
+        draw_system_footer("BOOT: CANCEL");
+    } else if (status->state ==
+               DISPLAY_AUDIO_STATE_PREPARING_RECORDING) {
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+        draw_centered(112, "GET READY");
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+        draw_centered(165, "Speak when RECORDING appears");
+        draw_centered(207, "Maximum 5 seconds");
+        draw_system_footer("BOOT: CANCEL");
+    } else if (status->state == DISPLAY_AUDIO_STATE_RECORDING) {
+        snprintf(value, sizeof(value), "RECORDING %02u/%02us",
+                 (unsigned)((status->recording_elapsed_ms + 999U) / 1000U),
+                 (unsigned)(status->max_recording_ms / 1000U));
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+        draw_centered(86, value);
+        draw_audio_meter(132, "MIC 1",
+                         status->microphone_1_level_percent);
+        draw_audio_meter(178, "MIC 2",
+                         status->microphone_2_level_percent);
+        u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+        draw_centered(222, "Speak clearly; audio stays in memory");
+        draw_system_footer("KEY: STOP | BOOT: CANCEL");
+    } else if (status->state == DISPLAY_AUDIO_STATE_ANALYZING) {
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+        draw_centered(112, "ANALYZING");
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+        draw_centered(165, "Checking both microphones");
+        draw_centered(207, "Preparing temporary playback");
+        draw_system_footer("BOOT: CANCEL");
+    } else if (status->state == DISPLAY_AUDIO_STATE_PLAYBACK) {
+        snprintf(value, sizeof(value), "PLAYBACK %02u/%02us",
+                 (unsigned)((status->playback_elapsed_ms + 999U) / 1000U),
+                 (unsigned)((status->recording_duration_ms + 999U) / 1000U));
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+        draw_centered(86, value);
+        snprintf(value, sizeof(value), "SOURCE  MIC %u",
+                 status->playback_microphone);
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+        draw_centered(132, value);
+        draw_audio_meter(174, "MIC 1",
+                         status->microphone_1_level_percent);
+        draw_audio_meter(214, "MIC 2",
+                         status->microphone_2_level_percent);
+        draw_system_footer("KEY: STOP | BOOT: CANCEL");
+    } else if (status->state == DISPLAY_AUDIO_STATE_CANCELLED) {
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+        draw_centered(112, "CANCELLED");
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+        draw_centered(165, "Temporary audio cleared");
+        draw_centered(207, "Hold KEY 2s to try again");
+        draw_system_footer("BOOT: HOME | KEY: NEXT");
+    } else if (status->state == DISPLAY_AUDIO_STATE_FAILED) {
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+        draw_centered(112, "TEST FAILED");
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+        draw_centered(165, "Check the USB diagnostic log");
+        draw_centered(207, "Hold KEY 2s to try again");
+        draw_system_footer("BOOT: HOME | KEY: NEXT");
+    } else if (status->state == DISPLAY_AUDIO_STATE_COMPLETED ||
+               status->test_completed) {
+        draw_system_row(72, "SPEAKER",
+                        status->tone_played ? "TONE PLAYED" : "FAILED");
+        if (status->microphone_capture_completed) {
+            snprintf(value, sizeof(value), "%u %%",
+                     status->microphone_1_level_percent);
+            draw_system_row(108, "MIC 1", value);
+            snprintf(value, sizeof(value), "%u %%",
+                     status->microphone_2_level_percent);
+            draw_system_row(144, "MIC 2", value);
+        } else {
+            draw_system_row(108, "MIC 1", "READ FAILED");
+            draw_system_row(144, "MIC 2", "READ FAILED");
+        }
+        if (status->voice_played) {
+            snprintf(value, sizeof(value), "VOICE PLAYED | MIC %u",
+                     status->playback_microphone);
+        } else if (status->playback_stopped) {
+            snprintf(value, sizeof(value), "STOPPED | MIC %u",
+                     status->playback_microphone);
+        } else {
+            snprintf(value, sizeof(value), "NOT PLAYED");
+        }
+        draw_system_row(180, "LOOPBACK", value);
+        draw_system_row(216, "RESULT",
+                        status->result != NULL ? status->result : "FAILED");
+        draw_system_footer(
+            "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: TEST");
+    } else {
+        draw_system_row(82, "SPEAKER",
+                        status->speaker_ready ? "READY" : "NOT FOUND");
+        draw_system_row(126, "DUAL MICS",
+                        status->microphones_ready ? "READY" : "NOT FOUND");
+        snprintf(value, sizeof(value), "%u kHz | %u-bit",
+                 (unsigned)(status->sample_rate_hz / 1000U),
+                 status->bits_per_sample);
+        draw_system_row(170, "FORMAT", value);
+        draw_system_row(214, "LAST TEST",
+                        status->initialized ? "NOT RUN" : "NOT READY");
+        draw_system_footer(
+            "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: TEST");
+    }
+    u8g2_SendBuffer(s_u8g2);
+}
+
 void display_show_wifi_maintenance(const display_system_status_t *status)
 {
     if (s_u8g2 == NULL || status == NULL) {
         return;
     }
 
-    draw_system_header("WI-FI MAINTENANCE", 3U);
+    draw_system_header("WI-FI MAINTENANCE", 4U);
     u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
     if (!status->network_ready) {
         draw_centered(105, "NOT READY");
@@ -769,7 +918,7 @@ void display_show_about_update(const display_system_status_t *status,
     snprintf(idf_text, sizeof(idf_text), "ESP-IDF %s",
              status->idf_version != NULL ? status->idf_version : "-");
 
-    draw_system_header("ABOUT & UPDATE", 4U);
+    draw_system_header("ABOUT & UPDATE", 5U);
     u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
     u8g2_DrawStr(s_u8g2, 18, 78, "ESP32 RLCD");
     u8g2_SetFont(s_u8g2, u8g2_font_helvB18_tf);

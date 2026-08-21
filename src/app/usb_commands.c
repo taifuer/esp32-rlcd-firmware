@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "audio_diagnostics.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_log.h"
@@ -90,7 +91,30 @@ static void log_datetime(const char *prefix, const pcf85063_datetime_t *datetime
 static void process_line(const char *line, bool rtc_available)
 {
     if (strcmp(line, "HELP") == 0) {
-        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | RESET_WIFI | HELP");
+        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | GET_AUDIO | RESET_WIFI | HELP");
+        return;
+    }
+
+    if (strcmp(line, "GET_AUDIO") == 0) {
+        audio_diagnostics_status_t status = {0};
+        audio_diagnostics_get_status(&status);
+        ESP_LOGI(TAG,
+                 "AUDIO state=%s initialized=%s speaker=%s microphones=%s tested=%s tone=%s mic1=%u%% mic2=%u%% duration_ms=%u loopback=%s source=MIC%u result=%s last_error=%s",
+                 audio_session_state_name(status.state),
+                 status.initialized ? "yes" : "no",
+                 status.speaker_ready ? "ready" : "not_ready",
+                 status.microphones_ready ? "ready" : "not_ready",
+                 status.test_completed ? "yes" : "no",
+                 status.tone_played ? "played" : "not_played",
+                 status.microphone_1_level_percent,
+                 status.microphone_2_level_percent,
+                 (unsigned)status.recording_duration_ms,
+                 status.voice_played
+                     ? "played"
+                     : (status.playback_stopped ? "stopped" : "not_played"),
+                 status.playback_microphone,
+                 audio_diagnostics_result_name(status.result),
+                 esp_err_to_name(status.last_error));
         return;
     }
 

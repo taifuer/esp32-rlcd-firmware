@@ -150,10 +150,13 @@ HELP
 GET_TIME
 SET_TIME YYYY-MM-DD HH:MM:SS
 GET_NETWORK
+GET_AUDIO
 RESET_WIFI
 ```
 
 - `GET_NETWORK` 只返回状态、是否已配置及最近错误，不输出家庭 Wi-Fi 名称或密码；
+- `GET_AUDIO` 返回 codec 就绪、测试阶段、录制时长、回放来源和两路强度百分比，不输出
+  原始音频；
 - `RESET_WIFI` 只清除本项目的网络凭据命名空间，然后重启进入配网模式；
 - `SET_TIME` 继续使用现有日期校验、星期计算和写后回读流程。
 
