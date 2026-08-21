@@ -7,6 +7,8 @@
 - 项目源码按 ESP-IDF 组件拆分在 `src/`，应用入口位于 `src/app/`。
 - 网络功能独立位于 `src/network/`，使用 ESP-IDF Wi-Fi、HTTP Server、NVS 与
   ESP-NETIF SNTP API。
+- 固件升级独立位于 `src/update/`，使用双 OTA 分区、ESP-IDF OTA API 和受实体按键控制的
+  临时本地网页。
 - U8g2、微雪 ST7305 适配器和 Espressif QR Code 作为外部构建依赖使用。
 
 固定版本见 `tool-versions.env`。如果需要升级依赖，必须同时更新版本/提交哈希、重新完整
@@ -56,6 +58,7 @@
 ./scripts/build.sh
 ./scripts/package-release.sh vX.Y.Z
 ./scripts/flash.sh --port COM5 --confirm
+./scripts/update-app.sh --port COM5 --confirm
 ./scripts/set-rtc.sh --port COM5
 ```
 
@@ -80,20 +83,21 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 6. 执行 `./scripts/test.sh`，确认纯逻辑测试通过。
 7. 执行 `./scripts/build.sh`，确认无编译错误。
 8. 核对 `build/SHA256SUMS`。
-9. 按[开发烧录指南](flashing.md)烧录到实机。
+9. 首次迁移使用 Factory 镜像完整烧录；后续同时验证本地网页 OTA 和保留 NVS 的串行应用
+   更新，具体步骤见[开发烧录指南](flashing.md)和[固件安装与本地升级](firmware-update.md)。
 10. 验证屏幕、RTC、农历、温湿度、电池 ADC、PSRAM 和串口日志。
     含联网功能的版本还必须验证首次配网、错误密码恢复、自动 SNTP、RTC 写后回读、断电
     重连、`GET_NETWORK`、USB `RESET_WIFI`、系统中心页面和上下文长按操作，并确认日志
     不包含家庭 SSID 或密码。
-11. 只有实机通过后，才把合并镜像复制到 `dist/vX.Y.Z/`，并保存大小、SHA-256、
-    构建依赖和验收记录。
+11. 只有实机通过后，才把 Factory 与 OTA 两个镜像复制到 `dist/vX.Y.Z/`，并保存各自
+    大小、SHA-256、构建依赖和验收记录。
 12. 按[发布固件安装指南](user-install.md)重新执行发布路径，确认普通用户命令和文件名一致。
 13. 执行 `./scripts/package-release.sh vX.Y.Z`，检查 `build/release/vX.Y.Z/` 中的全部附件
     和 `RELEASE_SHA256SUMS`。
 14. 检查 Git 暂存内容，确保没有第三方源码、`build/`、`sdkconfig`、密码或外部固件。
 15. 提交并创建 `vX.Y.Z` 标签。
-16. 创建 GitHub Release，上传打包目录中的完整固件、校验文件、效果图、`LICENSE`、
-    `NOTICE.md` 和许可文本压缩包。
+16. 创建 GitHub Release，上传打包目录中的 Factory/OTA 固件、校验文件、效果图、
+    `LICENSE`、`NOTICE.md` 和许可文本压缩包。
 17. GitHub Releases 只保留最新正式版本；删除旧 Release 条目时保留 `dist/` 历史文件。
 18. 仓库可见性是独立的人工决定；构建、打包和发布脚本均不得自动切换 Public/Private。
 
@@ -141,7 +145,9 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
 3. 手机连接临时热点，提交开放网络和 WPA2/WPA3 Personal 凭据的正常/错误边界；
 4. 正确凭据下取得 DHCP 地址，SNTP 获取 UTC+8 时间，PCF85063 写入后秒数持续增加；
 5. 家庭 Wi-Fi 凭据错误或热点离线时，5 分钟修正窗口和后续重试符合文档；
-6. 无 RTC 备用电池彻底断电后，NVS 凭据保留且开机能自动恢复时间；
+6. 新判定记录首次显示 `RTC BACKUP: UNTESTED`；安装 RTC 备用电池并真实断电后，在任何
+   NTP 操作前显示 `VERIFIED`，移除或耗尽备用电池后的真实断电显示 `FAILED`；两种情况
+   都保留 NVS 网络凭据并按需自动恢复时间；
 7. USB `RESET_WIFI` 与“Wi-Fi 维护”页长按 `KEY` 5 秒都只清除项目网络命名空间，重启后
    回到首次配网；5 秒前松开必须取消，且一次长按只能触发一次；
 8. `BOOT` 只在首屏与月历之间切换，并能从任意系统页返回首屏；`KEY` 可进入并循环四个
@@ -149,9 +155,13 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
 9. 只有“网络与时间”页长按 `KEY` 2 秒触发即时校时，只有“Wi-Fi 维护”页长按 5 秒触发
    重置；其他页面长按 `KEY` 或运行时长按 `BOOT` 均无操作且不会误判为短按；
 10. “关于与更新”页二维码能由 Android 和 iOS 扫描并打开项目最新 Release，关机后按住
-    `BOOT` 再按 `PWR` 仍能正常进入 ROM 下载模式；
-11. 标准完整镜像重新烧录后 NVS 被清空，并能重新完成首次配网；
-12. 串口和构建产物的字符串检查不包含实机家庭 SSID、家庭密码或二维码中的临时热点密码。
+    `BOOT` 再按 `PWR` 仍能正常进入 ROM 下载模式；长按 `KEY` 3 秒能开启升级热点，短按
+    `BOOT` 能在等待上传时安全取消；
+11. 上传错误文件和中断传输不会改变当前启动槽；正确 OTA 镜像显示实际进度、校验后重启，
+    版本更新且 NVS/Wi-Fi 保留；故意不确认的新镜像能由 Bootloader 回滚；
+12. Factory 镜像重新烧录后 NVS 被清空并能重新完成首次配网；`update-app.sh` 串行更新后
+    NVS 和家庭 Wi-Fi 保留；
+13. 串口和构建产物的字符串检查不包含实机家庭 SSID、家庭密码或二维码中的临时热点密码。
 
 纯逻辑表单测试由 `./scripts/test.sh` 执行。网络驱动、DHCP、HTTP、SNTP、NVS 和 RTC
 联动无法由 WSL 主机测试替代，必须在目标开发板上验收。

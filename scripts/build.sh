@@ -24,8 +24,19 @@ source "${RLCD_IDF_DIR}/export.sh"
 
 cd "${RLCD_PROJECT_DIR}"
 # merge-bin depends on the normal build target, so this performs one build and
-# then creates a single image without invoking any serial-port action.
-idf.py -B build merge-bin --output rlcd_firmware_merged.bin
+# then creates the complete first-install/recovery image without touching a
+# serial port. The standalone application image is the browser OTA artifact.
+idf.py -B build merge-bin --output rlcd_firmware_factory.bin
+install -m 0644 build/rlcd_firmware.bin build/rlcd_firmware_ota.bin
+
+partition_summary="$(python "${RLCD_IDF_DIR}/components/partition_table/gen_esp32part.py" \
+  build/partition_table/partition-table.bin)"
+for required_partition in 'otadata' 'ota_0' 'ota_1'; do
+  if ! grep -q -- "${required_partition}" <<<"${partition_summary}"; then
+    echo "构建分区表缺少 ${required_partition}，拒绝生成可发布固件" >&2
+    exit 1
+  fi
+done
 
 RLCD_QRCODE_ARCHIVE="${RLCD_PROJECT_DIR}/build/esp-idf/qrcode/libqrcode.a"
 if [[ ! -f "${RLCD_QRCODE_ARCHIVE}" ]]; then
@@ -43,6 +54,7 @@ fi
     bootloader/bootloader.bin \
     partition_table/partition-table.bin \
     rlcd_firmware.bin \
-    rlcd_firmware_merged.bin \
+    rlcd_firmware_factory.bin \
+    rlcd_firmware_ota.bin \
     > SHA256SUMS
 )

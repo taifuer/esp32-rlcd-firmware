@@ -11,9 +11,12 @@ if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 version_dir="${RLCD_PROJECT_DIR}/dist/${version}"
-firmware_name="esp32-rlcd-firmware-${version}.bin"
-firmware_path="${version_dir}/${firmware_name}"
-if [[ ! -f "${firmware_path}" || ! -f "${version_dir}/SHA256SUMS" ]]; then
+factory_name="esp32-rlcd-firmware-${version}-factory.bin"
+ota_name="esp32-rlcd-firmware-${version}-ota.bin"
+factory_path="${version_dir}/${factory_name}"
+ota_path="${version_dir}/${ota_name}"
+if [[ ! -f "${factory_path}" || ! -f "${ota_path}" ||
+      ! -f "${version_dir}/SHA256SUMS" ]]; then
     echo "发布目录不完整: ${version_dir}" >&2
     exit 1
 fi
@@ -27,13 +30,15 @@ fi
 release_dir="${RLCD_PROJECT_DIR}/build/release/${version}"
 rm -rf -- "${release_dir}"
 install -d -m 0755 "${release_dir}"
-install -m 0644 "${firmware_path}" "${release_dir}/${firmware_name}"
+install -m 0644 "${factory_path}" "${release_dir}/${factory_name}"
+install -m 0644 "${ota_path}" "${release_dir}/${ota_name}"
 install -m 0644 "${version_dir}/SHA256SUMS" "${release_dir}/SHA256SUMS"
 install -m 0644 "${RLCD_PROJECT_DIR}/LICENSE" "${release_dir}/LICENSE"
 install -m 0644 "${RLCD_PROJECT_DIR}/NOTICE.md" "${release_dir}/NOTICE.md"
 for preview_name in \
     home-screen.svg calendar-screen.svg \
     device-health.svg network-time.svg wifi-maintenance.svg about-update.svg \
+    firmware-update.svg update-progress.svg \
     firmware-info.svg device-status.svg; do
     if [[ -f "${version_dir}/${preview_name}" ]]; then
         install -m 0644 "${version_dir}/${preview_name}" \

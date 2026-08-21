@@ -409,6 +409,7 @@ void display_show_network_setup(const char *ssid, const char *password, const ch
                 .area_size = SETUP_QR_AREA_SIZE,
                 .quiet_modules = SETUP_QR_QUIET_MODULES,
                 .max_scale = SETUP_QR_MAX_SCALE,
+                .standard_polarity = true,
             };
             qr_rendered = draw_qr_payload(payload, &context,
                                           ESP_QRCODE_ECC_MED);
@@ -426,6 +427,59 @@ void display_show_network_setup(const char *ssid, const char *password, const ch
     if (!qr_rendered) {
         u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
         draw_centered(244, "Connect with a phone or computer");
+    }
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_firmware_update_ready(const char *ssid, const char *password,
+                                        const char *url)
+{
+    if (s_u8g2 == NULL) {
+        return;
+    }
+
+    char line[96];
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    u8g2_DrawFrame(s_u8g2, 3, 3, BOARD_DISPLAY_WIDTH - 6,
+                   BOARD_DISPLAY_HEIGHT - 6);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    draw_centered(SETUP_TITLE_BASELINE_Y, "FIRMWARE UPDATE");
+    u8g2_DrawHLine(s_u8g2, SETUP_SIDE_MARGIN, SETUP_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * SETUP_SIDE_MARGIN);
+
+    bool qr_rendered = false;
+    if (ssid != NULL && password != NULL) {
+        char payload[NETWORK_SETUP_QR_PAYLOAD_CAPACITY];
+        if (network_setup_wifi_qr_payload(ssid, password, payload,
+                                          sizeof(payload))) {
+            display_qr_context_t context = {
+                .area_left = (BOARD_DISPLAY_WIDTH - SETUP_QR_AREA_SIZE) / 2,
+                .area_top = SETUP_QR_AREA_TOP,
+                .area_size = SETUP_QR_AREA_SIZE,
+                .quiet_modules = SETUP_QR_QUIET_MODULES,
+                .max_scale = SETUP_QR_MAX_SCALE,
+                .standard_polarity = true,
+            };
+            qr_rendered = draw_qr_payload(payload, &context,
+                                          ESP_QRCODE_ECC_MED);
+        }
+        memset(payload, 0, sizeof(payload));
+    }
+
+    snprintf(line, sizeof(line), "SSID: %s", ssid != NULL ? ssid : "-");
+    draw_setup_line(qr_rendered ? 238 : 119, line);
+    snprintf(line, sizeof(line), "PASS: %s",
+             password != NULL ? password : "-");
+    draw_setup_line(qr_rendered ? 258 : 158, line);
+    snprintf(line, sizeof(line), "OPEN: %s | BOOT: CANCEL",
+             url != NULL ? url : "192.168.4.1");
+    draw_setup_line(qr_rendered ? 280 : 197, line);
+
+    if (!qr_rendered) {
+        u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+        draw_centered(244, "Connect and open the update page");
     }
     u8g2_SendBuffer(s_u8g2);
 }
@@ -582,7 +636,17 @@ void display_show_device_health(const display_system_status_t *status)
                  status->year, status->month, status->day,
                  status->hour, status->minute);
     }
-    draw_system_row(86, "RTC", value);
+    draw_system_row(76, "RTC", value);
+
+    if (!status->rtc_ready) {
+        snprintf(value, sizeof(value), "NOT AVAILABLE");
+    } else {
+        snprintf(value, sizeof(value), "%s",
+                 status->rtc_backup_state != NULL
+                     ? status->rtc_backup_state
+                     : "NOT READY");
+    }
+    draw_system_row(113, "RTC BACKUP", value);
 
     if (!status->sensor_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");
@@ -593,7 +657,7 @@ void display_show_device_health(const display_system_status_t *status)
                  (double)status->temperature_c,
                  (double)status->humidity_percent);
     }
-    draw_system_row(132, "SENSOR", value);
+    draw_system_row(150, "SENSOR", value);
 
     if (!status->battery_ready) {
         snprintf(value, sizeof(value), "NOT READY");
@@ -603,7 +667,7 @@ void display_show_device_health(const display_system_status_t *status)
         snprintf(value, sizeof(value), "OK | %u %% | %u mV",
                  status->battery_percent, status->battery_voltage_mv);
     }
-    draw_system_row(178, "BATTERY", value);
+    draw_system_row(187, "BATTERY", value);
 
     snprintf(value, sizeof(value), "%u KiB | OK",
              (unsigned)status->psram_kib);
@@ -712,10 +776,10 @@ void display_show_about_update(const display_system_status_t *status,
     u8g2_DrawStr(s_u8g2, 18, 118, version_text);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     u8g2_DrawStr(s_u8g2, 18, 152, idf_text);
-    u8g2_DrawStr(s_u8g2, 18, 174, "USB FLASH");
-    u8g2_DrawStr(s_u8g2, 18, 194, "POWER OFF FIRST");
-    u8g2_DrawStr(s_u8g2, 18, 214, "HOLD BOOT");
-    u8g2_DrawStr(s_u8g2, 18, 234, "PRESS PWR");
+    u8g2_DrawStr(s_u8g2, 18, 174, "LOCAL UPDATE");
+    u8g2_DrawStr(s_u8g2, 18, 194, "HOLD KEY 3s");
+    u8g2_DrawStr(s_u8g2, 18, 214, "WI-FI + BROWSER");
+    u8g2_DrawStr(s_u8g2, 18, 234, "USB: RECOVERY");
 
     display_qr_context_t context = {
         .area_left = ABOUT_QR_LEFT,
@@ -747,6 +811,6 @@ void display_show_about_update(const display_system_status_t *status,
                          2,
                  238, qr_label);
 
-    draw_system_footer("BOOT: HOME | KEY: NEXT");
+    draw_system_footer("BOOT: HOME | KEY: NEXT | HOLD KEY 3s: UPDATE");
     u8g2_SendBuffer(s_u8g2);
 }

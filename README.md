@@ -15,6 +15,8 @@
 | ![ESP32 RLCD Firmware 设备健康页效果图](docs/assets/device-health.svg) | ![ESP32 RLCD Firmware 网络与时间页效果图](docs/assets/network-time.svg) |
 | Wi-Fi 维护 | 关于与更新 |
 | ![ESP32 RLCD Firmware Wi-Fi 维护页效果图](docs/assets/wifi-maintenance.svg) | ![ESP32 RLCD Firmware 关于与更新页效果图](docs/assets/about-update.svg) |
+| 本地升级入口 | 升级进度 |
+| ![ESP32 RLCD Firmware 本地升级入口效果图](docs/assets/firmware-update.svg) | ![ESP32 RLCD Firmware 升级进度效果图](docs/assets/update-progress.svg) |
 
 效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
 
@@ -22,7 +24,7 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新版本 | [v0.6.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新版本 | [v0.7.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 发布方式 | GitHub Releases 保留最新固件，`dist/` 保存各正式版本 |
@@ -32,34 +34,40 @@
 - 三段式首屏：公历日期、农历、星期、时间、温湿度、电量和 Wi-Fi 状态；
 - `HH:MM:SS` 等大显示，适配 400 × 300 ST7305 黑底白字界面；
 - 支持 PCF85063 RTC、SHTC3 温湿度、GPIO4 电池采样和 8 MB Octal PSRAM；
+- 设备健康页在网络启动前检查 RTC 停振标志，并在一次真实断电后显示备用电池保持状态；
 - 首次启动提供 WPA2 临时热点、配网页面和 Wi-Fi 加入二维码；
 - Wi-Fi 凭据保存在 NVS，断电重启后可自动联网并通过 SNTP 恢复时间；
 - 校时成功后关闭 Wi-Fi，每 24 小时重新同步；
 - `BOOT` 用于首屏与当月月历，`KEY` 用于设备健康、网络与时间、Wi-Fi 维护、关于与更新；
 - 系统中心按职责分开硬件状态、联网校时、重新配网和版本更新，次级页面 30 秒后返回首屏；
 - “网络与时间”页长按 `KEY` 2 秒可立即校时，“Wi-Fi 维护”页长按 5 秒才会清除网络配置；
-- “关于与更新”页显示固件与 ESP-IDF 版本、USB 烧录步骤和最新 Release 二维码；
+- “关于与更新”页显示固件与 ESP-IDF 版本；长按 `KEY` 3 秒开启随机密码保护的本地升级
+  热点，可在浏览器上传 OTA 固件并查看屏幕实时进度；
+- 双 OTA 应用槽在镜像完整校验后才切换，支持新版本启动确认和失败回滚；正常升级保留
+  NVS 中的 Wi-Fi 配置；
 - USB 命令支持查询状态、手动校时和重置网络配置。
 
-暂未提供联网天气、语音交互、蓝牙和 OTA。界面与联网行为的详细说明见
-[界面与按键](docs/home-screen.md)和[自动配网与网络校时](docs/network-time.md)。
+暂未提供联网天气、语音交互和蓝牙。界面、联网与升级行为的详细说明见
+[界面与按键](docs/home-screen.md)、[自动配网与网络校时](docs/network-time.md)和
+[固件安装与本地升级](docs/firmware-update.md)。
 
 ## 安装使用
 
-普通用户可直接烧录 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest)
-中的完整合并固件，无需安装 ESP-IDF。以下为已验证的 Windows + WSL 流程，示例端口为
-`COM5`；其他平台、完整校验步骤和故障排查见[发布固件安装指南](docs/user-install.md)。
+普通用户无需安装 ESP-IDF。从 v0.6.0 或更早版本迁移、首次安装和故障恢复使用 Release
+中的 `-factory.bin`；已经安装 v0.7.0 或更新版本后，日常升级使用 `-ota.bin` 和设备本地
+网页。以下为已验证的 Windows + WSL 首次安装流程，示例端口为 `COM5`；其他平台、OTA、
+完整校验步骤和故障排查见[发布固件安装指南](docs/user-install.md)。
 
 1. 保持 Type-C 连接，长按 `PWR` 关机；按住 `BOOT`，短按 `PWR`，约 2 秒后松开
    `BOOT`。
 2. 在仓库根目录执行：
 
    ```bash
-   cd dist/v0.6.0
+   cd dist/v0.7.0
    sha256sum --check SHA256SUMS
    cd ../..
    ./scripts/flash.sh --port COM5 \
-     --firmware dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin \
+     --firmware dist/v0.7.0/esp32-rlcd-firmware-v0.7.0-factory.bin \
      --confirm
    ```
 
@@ -88,8 +96,10 @@
 │   ├── input/           # BOOT、KEY 驱动与按键状态机
 │   ├── network/         # 配网、NVS 与 SNTP
 │   ├── power/           # 电池采样与估算
-│   ├── rtc/             # PCF85063 驱动
-│   └── sensors/         # SHTC3 驱动
+│   ├── rtc/             # PCF85063 与备用电池保持判定
+│   ├── sensors/         # SHTC3 驱动
+│   ├── storage/         # 项目持久化存储初始化
+│   └── update/          # 双分区 OTA 与本地升级服务
 ├── tests/               # 主机端逻辑测试
 ├── scripts/             # 准备、测试、构建、烧录与校时脚本
 ├── docs/                # 使用、设计与开发文档
@@ -115,6 +125,7 @@
 
 - [发布固件安装指南](docs/user-install.md)：下载、校验、烧录、首次配网和故障排查；
 - [自动配网与网络校时](docs/network-time.md)：热点、二维码、NVS、SNTP 与安全边界；
+- [固件安装与本地升级](docs/firmware-update.md)：Factory/OTA 文件、本地升级与失败恢复；
 - [界面与按键](docs/home-screen.md)：首屏、月历、系统中心和实体按键行为；
 - [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉风格与交互原则；
 - [开发与发布指南](docs/development.md)：依赖、测试、版本和 Release 流程；

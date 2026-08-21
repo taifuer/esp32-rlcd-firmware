@@ -47,7 +47,14 @@ $RLCD_DEPS_DIR/toolchains/esptool-windows-v5.3.1/
 确认输出包含：
 
 ```text
-Wrote ... rlcd_firmware_merged.bin, ready to flash to offset 0x0
+Wrote ... rlcd_firmware_factory.bin, ready to flash to offset 0x0
+```
+
+构建目录同时生成：
+
+```text
+rlcd_firmware_factory.bin  # 首次安装、分区迁移与恢复
+rlcd_firmware_ota.bin      # 网页 OTA 或保留配置的串行更新
 ```
 
 ### 2. 进入 ROM 下载模式
@@ -60,7 +67,7 @@ Wrote ... rlcd_firmware_merged.bin, ready to flash to offset 0x0
 
 不需要进入电脑 BIOS，也不需要重启 Windows 或 WSL。
 
-### 3. 烧录
+### 3. 首次安装、分区迁移或恢复
 
 ```bash
 ./scripts/flash.sh --port COM5 --confirm
@@ -79,8 +86,8 @@ before: no-reset
 after: no-reset
 ```
 
-只允许使用 `rlcd_firmware_merged.bin` 写入 `0x0`。单独的
-`rlcd_firmware.bin` 是应用镜像，其正确地址是 `0x10000`，不能拿它写 `0x0`。
+只允许使用 `rlcd_firmware_factory.bin` 写入 `0x0`。单独的
+`rlcd_firmware_ota.bin` 是 OTA 应用镜像，不能拿它写 `0x0`。`flash.sh` 会拒绝这种混用。
 
 写入完成的成功标志：
 
@@ -90,11 +97,27 @@ Hash of data verified.
 
 脚本不会执行全片擦除，只擦除合并镜像覆盖的启动、分区和应用区域。
 
-完整合并镜像是带 `0xFF` 填充的 raw 文件，覆盖范围包含默认位于 `0x9000` 的 NVS
+Factory 镜像是带 `0xFF` 填充的 raw 文件，覆盖范围包含位于 `0x9000` 的 NVS
 分区。因此含联网功能的版本在按本流程烧录后会清除已保存的 Wi-Fi 凭据，首次启动需要
 重新配网。它不会清除映像覆盖范围以外的整片 Flash，也不等同于 `erase-flash`。
 
-### 4. 正常启动
+### 4. 保留 Wi-Fi 的串行应用更新
+
+仅当设备已经完整安装 v0.7.0 或更新版本的双 OTA 分区表，而且本次没有修改 Bootloader
+或 `partitions.csv` 时使用：
+
+```bash
+./scripts/update-app.sh --port COM5 --confirm
+```
+
+脚本先把 `rlcd_firmware_ota.bin` 写入固定的 `ota_0` 地址 `0x10000` 并完成哈希校验，再只
+清除 `0xd000` 起的 8 KiB OTA 选择数据，使 Bootloader 下次选择 `ota_0`。它不会触碰
+`0x9000` 的 NVS，所以家庭 Wi-Fi 配置保持不变。此流程仍需手动进入 ROM 下载模式。
+
+普通用户和日常开发优先使用设备“关于与更新”页提供的本地网页 OTA，无需数据线和 ROM
+下载模式。完整步骤见[固件安装与本地升级](firmware-update.md)。
+
+### 5. 正常启动
 
 烧录脚本有意让芯片留在下载模式，避免 USB 控制线导致“看起来复位了，实际仍在
 Bootloader”的歧义。
@@ -103,7 +126,7 @@ Bootloader”的歧义。
 2. 不要触碰 `BOOT`。
 3. 短按 `PWR` 正常开机。
 
-### 5. 校时与验收
+### 6. 校时与验收
 
 烧录含自动网络校时的版本时，先按屏幕完成配网并确认 SNTP 能自动写入 RTC，不要先用
 USB 手动校时掩盖联网问题。烧录旧的离线版本，或需要后备恢复时，执行：
@@ -120,6 +143,8 @@ USB 手动校时掩盖联网问题。烧录旧的离线版本，或需要后备�
 - 串口出现 `RTC_SET_OK`；
 - 后续 RTC 秒数继续增加；
 - PCF85063 与 SHTC3 读取正常；
+- 设备健康页首次显示 `RTC BACKUP: UNTESTED`，一次真实断电后按实际结果变为
+  `VERIFIED` 或 `FAILED`；
 - 串口中的电池电压处于合理范围，屏幕电量百分比能够显示。
 
 含自动网络校时的版本还应按[自动配网与网络校时](network-time.md)完成首次配网、SNTP、
@@ -128,7 +153,7 @@ RTC 写后回读和错误密码恢复；验证 `BOOT` 的日常页面路径、`K
 清除项目配置。不要把家庭 SSID、密码或配网页面请求正文复制到验收记录、截图或提交中。
 
 未连接独立的可充电 RTC 备用电池时，长按 PWR 关机后 RTC 丢失时间属于预期硬件行为；
-这不影响本次开机后的显示验收。
+下一次开机会先记录 `RTC BACKUP: FAILED`，随后才允许网络重新校时。
 
 ## 常见问题
 

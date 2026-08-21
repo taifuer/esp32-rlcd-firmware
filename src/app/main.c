@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include "app_storage.h"
 #include "battery.h"
 #include "board_buttons.h"
 #include "board_i2c.h"
@@ -12,12 +13,15 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "firmware_update.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "network_time.h"
 #include "page_state.h"
 #include "pcf85063.h"
+#include "rtc_backup.h"
 #include "shtc3.h"
 #include "usb_commands.h"
 
@@ -42,6 +46,12 @@ typedef enum {
     APP_DISPLAY_MANUAL_SYNC,
     APP_DISPLAY_MANUAL_SYNC_RESULT,
     APP_DISPLAY_WIFI_RESET_PROMPT,
+    APP_DISPLAY_FIRMWARE_UPDATE_PROMPT,
+    APP_DISPLAY_FIRMWARE_UPDATE_STARTING,
+    APP_DISPLAY_FIRMWARE_UPDATE_READY,
+    APP_DISPLAY_FIRMWARE_UPDATE_RECEIVING,
+    APP_DISPLAY_FIRMWARE_UPDATE_VERIFYING,
+    APP_DISPLAY_FIRMWARE_UPDATE_RESULT,
 } app_display_mode_t;
 
 typedef enum {
@@ -56,6 +66,7 @@ enum {
     APP_LOOP_INTERVAL_MS = 50,
     APP_PERIODIC_UPDATE_MS = 1000,
     APP_MANUAL_SYNC_RESULT_MS = 2000,
+    APP_FIRMWARE_UPDATE_RESULT_MS = 2500,
 };
 
 static const char *page_name(app_page_t page)
@@ -88,6 +99,24 @@ static const char *manual_sync_detail(network_time_state_t state)
         return "Waiting for NTP";
     default:
         return "Request accepted";
+    }
+}
+
+static const char *firmware_update_error_detail(esp_err_t error)
+{
+    switch (error) {
+    case ESP_ERR_INVALID_STATE:
+        return "Wait for network task";
+    case ESP_ERR_NOT_SUPPORTED:
+        return "OTA partitions unavailable";
+    case ESP_ERR_INVALID_SIZE:
+        return "Wrong firmware size";
+    case ESP_ERR_OTA_VALIDATE_FAILED:
+        return "Invalid OTA firmware";
+    case ESP_ERR_TIMEOUT:
+        return "Upload connection timed out";
+    default:
+        return esp_err_to_name(error);
     }
 }
 
@@ -139,7 +168,9 @@ static void configure_key_timing(button_state_t *state, app_page_t page)
 {
     const uint32_t action_threshold_ms =
         app_page_key_hold_threshold_ms(page);
-    if (app_page_key_hold_action(page) == APP_PAGE_ACTION_RESET_WIFI) {
+    const app_page_action_t action = app_page_key_hold_action(page);
+    if (action == APP_PAGE_ACTION_RESET_WIFI ||
+        action == APP_PAGE_ACTION_START_UPDATE) {
         (void)button_state_set_timing(state, BUTTON_HOLD_PROMPT_MS,
                                       action_threshold_ms);
     } else if (action_threshold_ms > 0U) {
@@ -198,6 +229,12 @@ void app_main(void)
         ESP_LOGE(TAG, "ST7305 display initialization failed");
     }
 
+    const esp_err_t storage_error = app_storage_init();
+    if (storage_error != ESP_OK) {
+        ESP_LOGE(TAG, "persistent storage initialization failed: %s",
+                 esp_err_to_name(storage_error));
+    }
+
     const esp_err_t i2c_error = board_i2c_init();
     const bool i2c_ready = i2c_error == ESP_OK;
     if (!i2c_ready) {
@@ -205,8 +242,10 @@ void app_main(void)
     }
 
     bool rtc_driver_ready = false;
+    bool startup_rtc_readable = false;
     bool sensor_driver_ready = false;
     uint16_t sensor_id = 0;
+    pcf85063_datetime_t startup_datetime = {0};
 
     if (i2c_ready) {
         esp_err_t error = board_i2c_probe(PCF85063_I2C_ADDRESS, 100);
@@ -216,6 +255,12 @@ void app_main(void)
         rtc_driver_ready = error == ESP_OK;
         if (rtc_driver_ready) {
             ESP_LOGI(TAG, "PCF85063 detected at I2C address 0x%02X", PCF85063_I2C_ADDRESS);
+            error = pcf85063_read(&startup_datetime);
+            startup_rtc_readable = error == ESP_OK;
+            if (!startup_rtc_readable) {
+                ESP_LOGW(TAG, "initial RTC read failed: %s",
+                         esp_err_to_name(error));
+            }
         } else {
             ESP_LOGW(TAG, "PCF85063 not ready: %s", esp_err_to_name(error));
         }
@@ -230,6 +275,23 @@ void app_main(void)
                      SHTC3_I2C_ADDRESS, sensor_id);
         } else {
             ESP_LOGW(TAG, "SHTC3 not ready: %s", esp_err_to_name(error));
+        }
+    }
+
+    bool rtc_backup_monitor_ready = false;
+    if (storage_error == ESP_OK) {
+        const esp_reset_reason_t reset_reason = esp_reset_reason();
+        const esp_err_t error = rtc_backup_monitor_init(
+            reset_reason == ESP_RST_POWERON, startup_rtc_readable,
+            startup_rtc_readable ? &startup_datetime : NULL);
+        rtc_backup_monitor_ready = error == ESP_OK;
+        if (rtc_backup_monitor_ready) {
+            ESP_LOGI(TAG, "RTC backup status: %s (reset reason %d)",
+                     rtc_backup_status_name(rtc_backup_monitor_status()),
+                     (int)reset_reason);
+        } else {
+            ESP_LOGW(TAG, "RTC backup monitor unavailable: %s",
+                     esp_err_to_name(error));
         }
     }
 
@@ -263,6 +325,19 @@ void app_main(void)
                  esp_err_to_name(usb_commands_error));
     }
 
+    const esp_err_t firmware_update_error = firmware_update_init();
+    if (firmware_update_error != ESP_OK) {
+        ESP_LOGW(TAG, "firmware update service unavailable: %s",
+                 esp_err_to_name(firmware_update_error));
+    } else if (display_ready && buttons_ready && network_error == ESP_OK) {
+        const esp_err_t confirm_error =
+            firmware_update_confirm_running_image();
+        if (confirm_error != ESP_OK) {
+            ESP_LOGE(TAG, "could not confirm running OTA image: %s",
+                     esp_err_to_name(confirm_error));
+        }
+    }
+
     display_dashboard_t dashboard = {
         .lunar_text = NULL,
     };
@@ -274,6 +349,8 @@ void app_main(void)
     network_time_status_t network_status = {0};
     network_time_datetime_t last_sync_time = {0};
     bool last_sync_valid = false;
+    firmware_update_status_t firmware_update_status = {0};
+    (void)firmware_update_get_status(&firmware_update_status);
     button_state_t key_button_state;
     button_state_t boot_button_state;
     button_state_init_custom(&key_button_state,
@@ -290,6 +367,7 @@ void app_main(void)
     TickType_t last_button_update = initial_tick;
     TickType_t last_periodic_update = initial_tick;
     TickType_t manual_sync_ui_started = initial_tick;
+    TickType_t firmware_update_result_started = initial_tick;
     network_time_state_t previous_network_state = NETWORK_TIME_STATE_UNINITIALIZED;
     network_time_state_t previous_manual_sync_network_state =
         NETWORK_TIME_STATE_UNINITIALIZED;
@@ -299,6 +377,10 @@ void app_main(void)
     esp_err_t manual_sync_error = ESP_OK;
     bool first_periodic_update = true;
     uint8_t previous_reset_seconds = 0U;
+    uint8_t previous_update_seconds = 0U;
+    uint8_t previous_update_percent = 0U;
+    firmware_update_state_t previous_update_state =
+        FIRMWARE_UPDATE_STATE_IDLE;
     uint32_t cycle = 0;
 
     while (true) {
@@ -311,6 +393,31 @@ void app_main(void)
         bool device_health_data_changed = false;
         bool network_time_data_changed = false;
         bool wifi_maintenance_data_changed = false;
+
+        (void)firmware_update_get_status(&firmware_update_status);
+        if (firmware_update_status.state != previous_update_state ||
+            firmware_update_status.percent != previous_update_percent) {
+            if (firmware_update_status.state != previous_update_state &&
+                firmware_update_state_is_dismissible(
+                    firmware_update_status.state)) {
+                firmware_update_result_started = now;
+            }
+            previous_update_state = firmware_update_status.state;
+            previous_update_percent = firmware_update_status.percent;
+            render_requested = true;
+        }
+        if (firmware_update_state_is_dismissible(
+                firmware_update_status.state) &&
+            now - firmware_update_result_started >=
+                pdMS_TO_TICKS(APP_FIRMWARE_UPDATE_RESULT_MS)) {
+            (void)firmware_update_dismiss_result();
+            (void)firmware_update_get_status(&firmware_update_status);
+            previous_update_state = firmware_update_status.state;
+            previous_update_percent = firmware_update_status.percent;
+            render_requested = true;
+        }
+        bool firmware_update_ui_active =
+            firmware_update_status.state != FIRMWARE_UPDATE_STATE_IDLE;
 
         button_event_t key_event = BUTTON_EVENT_NONE;
         button_event_t boot_event = BUTTON_EVENT_NONE;
@@ -327,7 +434,8 @@ void app_main(void)
                 &boot_button_state, boot_pressed, button_elapsed_ms);
         }
         if (key_event == BUTTON_EVENT_SHORT_PRESS) {
-            if (manual_sync_ui == MANUAL_SYNC_UI_NONE) {
+            if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+                !firmware_update_ui_active) {
                 app_page_state_key_short_press(&page_state);
                 render_requested = true;
                 ESP_LOGI(TAG, "KEY short press: showing %s page",
@@ -339,6 +447,9 @@ void app_main(void)
             if (input_page == APP_PAGE_WIFI_MAINTENANCE) {
                 ESP_LOGI(TAG,
                          "KEY hold cancelled; Wi-Fi settings unchanged");
+            } else if (input_page == APP_PAGE_ABOUT_UPDATE) {
+                ESP_LOGI(TAG,
+                         "KEY hold cancelled; firmware update not started");
             } else {
                 ESP_LOGI(TAG, "KEY hold released without an action");
             }
@@ -391,11 +502,41 @@ void app_main(void)
                 vTaskDelay(pdMS_TO_TICKS(1500U));
                 render_requested = true;
                 previous_display_mode = APP_DISPLAY_NONE;
+            } else if (key_action == APP_PAGE_ACTION_START_UPDATE &&
+                       manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+                       !firmware_update_ui_active) {
+                const esp_err_t start_error = firmware_update_start();
+                if (start_error != ESP_OK) {
+                    ESP_LOGW(TAG, "could not start firmware update: %s",
+                             esp_err_to_name(start_error));
+                } else {
+                    ESP_LOGI(TAG,
+                             "KEY long press: local firmware update started");
+                }
+                (void)firmware_update_get_status(&firmware_update_status);
+                firmware_update_ui_active =
+                    firmware_update_status.state !=
+                    FIRMWARE_UPDATE_STATE_IDLE;
+                previous_update_state = firmware_update_status.state;
+                previous_update_percent = firmware_update_status.percent;
+                render_requested = true;
             }
         }
 
         if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
-            if (manual_sync_ui == MANUAL_SYNC_UI_ACTIVE) {
+            if (firmware_update_status.state ==
+                    FIRMWARE_UPDATE_STATE_STARTING ||
+                firmware_update_status.state ==
+                    FIRMWARE_UPDATE_STATE_READY) {
+                const esp_err_t cancel_error = firmware_update_cancel();
+                if (cancel_error == ESP_OK) {
+                    ESP_LOGI(TAG, "BOOT short press: closing update mode");
+                }
+                render_requested = true;
+            } else if (firmware_update_ui_active) {
+                ESP_LOGI(TAG,
+                         "BOOT short press ignored while firmware update is active");
+            } else if (manual_sync_ui == MANUAL_SYNC_UI_ACTIVE) {
                 ESP_LOGI(TAG, "BOOT short press ignored while time sync is active");
             } else {
                 manual_sync_ui = MANUAL_SYNC_UI_NONE;
@@ -413,10 +554,22 @@ void app_main(void)
             manual_sync_ui == MANUAL_SYNC_UI_NONE &&
             button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
             button_hold_ms < APP_PAGE_WIFI_RESET_HOLD_MS;
+        const bool firmware_update_prompt_active =
+            buttons_ready && input_page == APP_PAGE_ABOUT_UPDATE &&
+            manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+            !firmware_update_ui_active &&
+            button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
+            button_hold_ms < APP_PAGE_FIRMWARE_UPDATE_HOLD_MS;
         uint8_t reset_seconds_remaining = 0U;
         if (reset_prompt_active) {
             reset_seconds_remaining = (uint8_t)(
                 (APP_PAGE_WIFI_RESET_HOLD_MS - button_hold_ms + 999U) /
+                1000U);
+        }
+        uint8_t update_seconds_remaining = 0U;
+        if (firmware_update_prompt_active) {
+            update_seconds_remaining = (uint8_t)(
+                (APP_PAGE_FIRMWARE_UPDATE_HOLD_MS - button_hold_ms + 999U) /
                 1000U);
         }
 
@@ -436,6 +589,7 @@ void app_main(void)
             render_requested = true;
         }
         if (manual_sync_ui == MANUAL_SYNC_UI_NONE && !reset_prompt_active &&
+            !firmware_update_prompt_active && !firmware_update_ui_active &&
             !button_interaction_active &&
             app_page_state_tick(&page_state, button_elapsed_ms)) {
             render_requested = true;
@@ -507,6 +661,16 @@ void app_main(void)
                                              sizeof(lunar_text));
                     dashboard.lunar_text =
                         dashboard.lunar_valid ? lunar_text : NULL;
+                    if (rtc_backup_monitor_ready &&
+                        datetime.clock_integrity) {
+                        const esp_err_t arm_error =
+                            rtc_backup_monitor_arm(&datetime);
+                        if (arm_error != ESP_OK && (cycle % 10U) == 0U) {
+                            ESP_LOGW(TAG,
+                                     "could not arm RTC backup monitor: %s",
+                                     esp_err_to_name(arm_error));
+                        }
+                    }
                     if (rtc_display_changed) {
                         calendar_data_changed = true;
                         device_health_data_changed = true;
@@ -623,7 +787,88 @@ void app_main(void)
         }
 
         const app_page_t active_page = app_page_state_current(&page_state);
-        if (display_ready && reset_prompt_active) {
+        if (display_ready && firmware_update_prompt_active) {
+            if (previous_display_mode !=
+                    APP_DISPLAY_FIRMWARE_UPDATE_PROMPT ||
+                update_seconds_remaining != previous_update_seconds) {
+                char detail[40];
+                snprintf(detail, sizeof(detail), "Keep holding: %us",
+                         update_seconds_remaining);
+                display_show_status("START UPDATE", detail);
+            }
+            previous_display_mode = APP_DISPLAY_FIRMWARE_UPDATE_PROMPT;
+            previous_update_seconds = update_seconds_remaining;
+        } else if (display_ready && firmware_update_ui_active) {
+            app_display_mode_t update_display_mode =
+                APP_DISPLAY_FIRMWARE_UPDATE_RESULT;
+            if (firmware_update_status.state ==
+                FIRMWARE_UPDATE_STATE_STARTING) {
+                update_display_mode =
+                    APP_DISPLAY_FIRMWARE_UPDATE_STARTING;
+            } else if (firmware_update_status.state ==
+                       FIRMWARE_UPDATE_STATE_READY) {
+                update_display_mode = APP_DISPLAY_FIRMWARE_UPDATE_READY;
+            } else if (firmware_update_status.state ==
+                       FIRMWARE_UPDATE_STATE_RECEIVING) {
+                update_display_mode =
+                    APP_DISPLAY_FIRMWARE_UPDATE_RECEIVING;
+            } else if (firmware_update_status.state ==
+                       FIRMWARE_UPDATE_STATE_VERIFYING) {
+                update_display_mode =
+                    APP_DISPLAY_FIRMWARE_UPDATE_VERIFYING;
+            }
+
+            if (render_requested ||
+                previous_display_mode != update_display_mode) {
+                if (firmware_update_status.state ==
+                    FIRMWARE_UPDATE_STATE_STARTING) {
+                    display_show_status("STARTING UPDATE",
+                                        "Opening temporary Wi-Fi");
+                } else if (firmware_update_status.state ==
+                           FIRMWARE_UPDATE_STATE_READY) {
+                    display_show_firmware_update_ready(
+                        firmware_update_status.access_point_ssid,
+                        firmware_update_status.access_point_password,
+                        firmware_update_status.access_url);
+                } else if (firmware_update_status.state ==
+                           FIRMWARE_UPDATE_STATE_RECEIVING) {
+                    char detail[64];
+                    snprintf(
+                        detail, sizeof(detail), "%u%% | %u / %u KiB",
+                        firmware_update_status.percent,
+                        (unsigned)(firmware_update_status.received_bytes /
+                                   1024U),
+                        (unsigned)((firmware_update_status.total_bytes +
+                                    1023U) /
+                                   1024U));
+                    display_show_status("RECEIVING UPDATE", detail);
+                } else if (firmware_update_status.state ==
+                           FIRMWARE_UPDATE_STATE_VERIFYING) {
+                    display_show_status("VERIFYING UPDATE",
+                                        "Checking firmware image");
+                } else if (firmware_update_status.state ==
+                           FIRMWARE_UPDATE_STATE_SUCCESS) {
+                    display_show_status("UPDATE COMPLETE",
+                                        "Restarting safely");
+                } else if (firmware_update_status.state ==
+                           FIRMWARE_UPDATE_STATE_EXPIRED) {
+                    display_show_status("UPDATE CLOSED",
+                                        "No firmware received");
+                } else if (firmware_update_status.state ==
+                           FIRMWARE_UPDATE_STATE_CANCELLED) {
+                    display_show_status("UPDATE CLOSED",
+                                        "No changes made");
+                } else {
+                    display_show_status(
+                        "UPDATE FAILED",
+                        firmware_update_error_detail(
+                            firmware_update_status.last_error));
+                }
+            }
+            previous_display_mode = update_display_mode;
+            previous_reset_seconds = 0U;
+            previous_update_seconds = 0U;
+        } else if (display_ready && reset_prompt_active) {
             if (previous_display_mode != APP_DISPLAY_WIFI_RESET_PROMPT ||
                 reset_seconds_remaining != previous_reset_seconds) {
                 char detail[40];
@@ -633,6 +878,7 @@ void app_main(void)
             }
             previous_display_mode = APP_DISPLAY_WIFI_RESET_PROMPT;
             previous_reset_seconds = reset_seconds_remaining;
+            previous_update_seconds = 0U;
         } else if (display_ready && manual_sync_ui != MANUAL_SYNC_UI_NONE) {
             if (manual_sync_ui == MANUAL_SYNC_UI_ACTIVE) {
                 if (previous_display_mode != APP_DISPLAY_MANUAL_SYNC ||
@@ -693,6 +939,11 @@ void app_main(void)
                     .psram_kib = (uint32_t)(psram_bytes / 1024U),
                     .rtc_ready = rtc_driver_ready,
                     .time_valid = dashboard.time_valid,
+                    .rtc_backup_state =
+                        rtc_backup_monitor_ready
+                            ? rtc_backup_status_name(
+                                  rtc_backup_monitor_status())
+                            : "NOT READY",
                     .year = dashboard.year,
                     .month = dashboard.month,
                     .day = dashboard.day,
@@ -729,6 +980,7 @@ void app_main(void)
             }
             previous_display_mode = system_display_mode;
             previous_reset_seconds = 0U;
+            previous_update_seconds = 0U;
         } else if (display_ready &&
                    (periodic_update || render_requested ||
                     previous_display_mode == APP_DISPLAY_DEVICE_HEALTH ||
@@ -794,6 +1046,7 @@ void app_main(void)
             }
             previous_display_mode = display_mode;
             previous_reset_seconds = 0U;
+            previous_update_seconds = 0U;
         }
 
         vTaskDelay(pdMS_TO_TICKS(APP_LOOP_INTERVAL_MS));

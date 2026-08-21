@@ -56,6 +56,20 @@ int main(void)
     assert(update_for(&state, true, 500U, 10U) == BUTTON_EVENT_NONE);
     assert(update_for(&state, false, 60U, 10U) == BUTTON_EVENT_NONE);
 
+    button_state_init_custom(&state, false, BUTTON_HOLD_PROMPT_MS, 3000U);
+    assert(update_for(&state, true, 1500U, 10U) == BUTTON_EVENT_NONE);
+    assert(update_for(&state, false, 60U, 10U) ==
+           BUTTON_EVENT_HOLD_CANCELLED);
+    unsigned update_long_events = 0U;
+    for (uint32_t elapsed = 0U; elapsed < 3400U; elapsed += 10U) {
+        if (button_state_update(&state, true, 10U) ==
+            BUTTON_EVENT_LONG_PRESS) {
+            ++update_long_events;
+        }
+    }
+    assert(update_long_events == 1U);
+    assert(update_for(&state, false, 60U, 10U) == BUTTON_EVENT_NONE);
+
     button_state_init(&state, true);
     assert(update_for(&state, true, 5100U, 10U) == BUTTON_EVENT_LONG_PRESS);
 

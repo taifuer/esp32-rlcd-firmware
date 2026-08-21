@@ -6,15 +6,16 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/common.sh"
 
 port="COM5"
 baud="460800"
-firmware_path="${RLCD_PROJECT_DIR}/build/rlcd_firmware_factory.bin"
+firmware_path="${RLCD_PROJECT_DIR}/build/rlcd_firmware_ota.bin"
 confirmed=false
 
 usage() {
     cat <<'EOF'
-用法: ./scripts/flash.sh [--port COM5] [--baud 460800] [--firmware FILE] --confirm
+用法: ./scripts/update-app.sh [--port COM5] [--baud 460800] [--firmware FILE] --confirm
 
-前提：开发板已手动进入 BOOT 下载模式。脚本会核对 Windows VID:PID 303a:1001，
-校验固件与工具，然后把完整安装/恢复固件写到 Flash 地址 0x0。
+前提：开发板已手动进入 BOOT 下载模式。脚本只更新 ota_0 应用槽并重置 OTA 选择数据，
+不会覆盖位于 0x9000 的 NVS，因此保留 Wi-Fi 配置。仅适用于已经安装 v0.7.0 或更新版本
+分区表的设备；首次迁移或恢复必须使用 scripts/flash.sh。
 EOF
 }
 
@@ -49,7 +50,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ "${confirmed}" != true ]]; then
-    echo "拒绝烧录：必须显式添加 --confirm。" >&2
+    echo "拒绝更新：必须显式添加 --confirm。" >&2
     usage >&2
     exit 2
 fi
@@ -62,7 +63,7 @@ if [[ ! "${baud}" =~ ^[0-9]+$ ]]; then
     exit 2
 fi
 if [[ ! -f "${firmware_path}" ]]; then
-    echo "找不到固件: ${firmware_path}" >&2
+    echo "找不到 OTA 固件: ${firmware_path}" >&2
     echo "请先执行: ./scripts/build.sh" >&2
     exit 1
 fi
@@ -78,13 +79,14 @@ firmware_name="$(basename -- "${firmware_path}")"
 firmware_path="${firmware_dir}/${firmware_name}"
 case "${firmware_name}" in
     rlcd_firmware.bin|rlcd_firmware_ota.bin|*-ota.bin)
-        echo "拒绝把 OTA 应用镜像写入 0x0: ${firmware_name}" >&2
-        echo "首次安装请使用 factory 镜像；已安装 v0.7.0+ 可使用 update-app.sh。" >&2
+        ;;
+    *)
+        echo "拒绝把非 OTA 文件作为应用镜像写入: ${firmware_name}" >&2
         exit 2
         ;;
 esac
 if [[ ! -f "${firmware_dir}/SHA256SUMS" ]]; then
-    echo "固件目录缺少 SHA256SUMS，拒绝烧录: ${firmware_dir}" >&2
+    echo "固件目录缺少 SHA256SUMS，拒绝更新: ${firmware_dir}" >&2
     exit 1
 fi
 (cd "${firmware_dir}" && sha256sum --check SHA256SUMS)
@@ -93,7 +95,7 @@ fi
 esptool_exe="${RLCD_ESPTOOL_WINDOWS_DIR}/esptool.exe"
 port_check_script="$(wslpath -w "${RLCD_SCRIPT_DIR}/check-esp32-port-windows.ps1")"
 windows_firmware_path="$(wslpath -w "${firmware_path}")"
-firmware_sha256="$(sha256sum "${firmware_dir}/${firmware_name}" | awk '{print $1}')"
+firmware_sha256="$(sha256sum "${firmware_path}" | awk '{print $1}')"
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass \
     -File "${port_check_script}" -Port "${port}"
@@ -102,17 +104,20 @@ echo "芯片连接测试：${port}"
 "${esptool_exe}" --chip esp32s3 --port "${port}" --baud 115200 \
     --before no-reset --after no-reset chip-id
 
-echo "即将烧录: ${windows_firmware_path}"
+echo "即将串行更新 OTA 应用: ${windows_firmware_path}"
 echo "SHA-256: ${firmware_sha256}"
 "${esptool_exe}" --chip esp32s3 --port "${port}" --baud "${baud}" \
     --before no-reset --after no-reset write-flash \
     --flash-mode dio --flash-freq 80m --flash-size 16MB \
-    0x0 "${windows_firmware_path}"
+    0x10000 "${windows_firmware_path}"
+
+# ota_0 has been verified by esptool at this point. Clearing only otadata makes
+# the ESP-IDF bootloader select ota_0 without touching the NVS credentials.
+"${esptool_exe}" --chip esp32s3 --port "${port}" --baud "${baud}" \
+    --before no-reset --after no-reset erase-region 0xd000 0x2000
 
 cat <<EOF
-烧录及写后哈希验证完成。芯片仍停在下载模式，请：
+应用镜像写入及校验完成，NVS/Wi-Fi 配置保持不变。芯片仍停在下载模式，请：
   1. 长按 PWR 关机；
-  2. 不要按 BOOT，短按 PWR 正常开机；
-  3. 支持自动校时的版本按屏幕完成配网；需要手动校时时执行:
-     ./scripts/set-rtc.sh --port ${port}
+  2. 不要按 BOOT，短按 PWR 正常开机。
 EOF

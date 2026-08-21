@@ -40,7 +40,7 @@ if(NOT EXISTS "${QRCODE_COMPONENT_DIR}/CMakeLists.txt")
 endif()
 list(APPEND EXTRA_COMPONENT_DIRS "${QRCODE_COMPONENT_DIR}")
 
-set(PROJECT_VER "0.6.0")
+set(PROJECT_VER "0.7.0")
 set(COMPONENTS app)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(rlcd_firmware)

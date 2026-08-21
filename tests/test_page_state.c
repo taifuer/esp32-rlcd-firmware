@@ -31,7 +31,9 @@ int main(void)
     assert(app_page_key_hold_threshold_ms(APP_PAGE_WIFI_MAINTENANCE) ==
            APP_PAGE_WIFI_RESET_HOLD_MS);
     assert(app_page_key_hold_action(APP_PAGE_ABOUT_UPDATE) ==
-           APP_PAGE_ACTION_NONE);
+           APP_PAGE_ACTION_START_UPDATE);
+    assert(app_page_key_hold_threshold_ms(APP_PAGE_ABOUT_UPDATE) ==
+           APP_PAGE_FIRMWARE_UPDATE_HOLD_MS);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_HOME) == 0U);
 
     app_page_state_boot_short_press(&state);

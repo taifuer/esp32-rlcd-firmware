@@ -8,9 +8,9 @@
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin`](../dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin)。
+[`dist/v0.7.0/`](../dist/v0.7.0/)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
-每个正式版本目录都应同时包含完整 `.bin`、`SHA256SUMS` 和版本说明。
+v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明。
 从 v0.2.0 开始，版本目录还包含对应的界面效果图。
 下文命令假定终端当前位于仓库根目录，安装其他版本时同步替换目录和文件名。
 
@@ -18,16 +18,18 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 `RELEASE_SHA256SUMS`。烧录设备时主要使用 `.bin` 与 `SHA256SUMS`；如果复制或再分发
 固件，必须同时保留 Release 中的许可材料。
 
-| 项目 | 值 |
-| --- | --- |
-| 目标硬件 | Waveshare ESP32-S3-RLCD-4.2 |
-| 固件类型 | Bootloader、分区表和应用组成的完整合并镜像 |
-| 烧录地址 | `0x0` |
-| Flash 参数 | DIO、80 MHz、16 MB |
-| SHA-256 | 见 [`dist/v0.6.0/SHA256SUMS`](../dist/v0.6.0/SHA256SUMS) |
+| 文件 | 用途 | 安装方式 |
+| --- | --- | --- |
+| `esp32-rlcd-firmware-v0.7.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
+| `esp32-rlcd-firmware-v0.7.0-ota.bin` | 已安装 v0.7.0+ 后的日常升级 | 设备本地升级网页，保留 NVS |
 
-不要把仅包含应用的 `rlcd_firmware.bin` 写到 `0x0`。合并镜像也不是 BIOS：ESP32-S3
-芯片内置的 ROM 下载程序不会被这个文件替换。
+目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
+参数；两类文件的 SHA-256 见
+[`dist/v0.7.0/SHA256SUMS`](../dist/v0.7.0/SHA256SUMS)。
+
+不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
+镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
+[固件安装与本地升级](firmware-update.md)。
 
 ## 烧录前检查
 
@@ -40,7 +42,7 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.6.0
+cd dist/v0.7.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -48,14 +50,16 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin
+shasum -a 256 dist/v0.7.0/esp32-rlcd-firmware-v0.7.0-factory.bin
+shasum -a 256 dist/v0.7.0/esp32-rlcd-firmware-v0.7.0-ota.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.6.0\esp32-rlcd-firmware-v0.6.0.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.6.0\SHA256SUMS
+(Get-FileHash .\dist\v0.7.0\esp32-rlcd-firmware-v0.7.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.7.0\esp32-rlcd-firmware-v0.7.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.7.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -76,7 +80,7 @@ Windows 或 WSL。
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin \
+  --firmware dist/v0.7.0/esp32-rlcd-firmware-v0.7.0-factory.bin \
   --confirm
 ```
 
@@ -117,7 +121,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.6.0\esp32-rlcd-firmware-v0.6.0.bin
+  0x0 .\dist\v0.7.0\esp32-rlcd-firmware-v0.7.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -135,7 +139,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.6.0/esp32-rlcd-firmware-v0.6.0.bin
+  0x0 dist/v0.7.0/esp32-rlcd-firmware-v0.7.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -164,6 +168,11 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
 断电会使 RTC 时间失效，但下次开机会用已保存的网络配置自动恢复时间。重新烧录完整镜像
 或执行 USB `RESET_WIFI` 后才需要重新配网。
 
+安装 RTC 备用电池后，设备健康页的 `RTC BACKUP` 首先显示 `UNTESTED`。保持 RTC 已校时，
+拔掉 Type-C 后长按 `PWR` 关机，等待至少一分钟，再在不按 `BOOT` 的情况下短按 `PWR`
+开机；固件会在联网前自动判断并显示 `VERIFIED` 或 `FAILED`。该状态不等同于电池电量，
+只表示最近一次断电是否保持了 RTC。
+
 USB 手动校时保留为无法联网时的后备方式，可从 WSL 执行：
 
 ```bash
@@ -189,7 +198,7 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 | --- | --- |
 | `BOOT` | 日常页面中短按切换首屏和月历；系统中心中短按返回首屏；运行时长按无操作 |
 | `KEY` | 日常页面中短按进入系统中心；系统中心中短按切换设备健康、网络与时间、Wi-Fi 维护、关于与更新 |
-| `KEY` 长按 | “网络与时间”页按住 2 秒立即校时；“Wi-Fi 维护”页按住 5 秒清除网络配置；其他页面无操作 |
+| `KEY` 长按 | “网络与时间”页按住 2 秒立即校时；“Wi-Fi 维护”页按住 5 秒清除网络配置；“关于与更新”页按住 3 秒开启本地升级；其他页面无操作 |
 | `PWR` | 开机或长按关机 |
 
 月历和系统页停留 30 秒会自动回到首屏。“关于与更新”页二维码指向项目最新 Release；
@@ -221,7 +230,8 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 
 首次启动请按屏幕完成配网；已有网络配置时等待设备自动连接并校时。网络不可用时再使用
 USB 校时脚本。若希望关机仍保持时间，应按微雪产品文档使用 PH1.0 接口的兼容可充电 RTC
-电池，不要接入不可充电纽扣电池。
+电池，不要接入不可充电纽扣电池。安装后按“首次配网与自动校时”的断电步骤检查设备健康
+页；`UNTESTED` 表示尚未完成一次有效断电测试，不是故障。
 
 ## 参考资料
 

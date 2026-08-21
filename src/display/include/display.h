@@ -41,6 +41,7 @@ typedef struct {
     uint32_t psram_kib;
     bool rtc_ready;
     bool time_valid;
+    const char *rtc_backup_state;
     uint16_t year;
     uint8_t month;
     uint8_t day;
@@ -68,6 +69,8 @@ typedef struct {
 esp_err_t display_init(void);
 void display_show_status(const char *title, const char *detail);
 void display_show_network_setup(const char *ssid, const char *password, const char *url);
+void display_show_firmware_update_ready(const char *ssid, const char *password,
+                                        const char *url);
 void display_show_dashboard(const display_dashboard_t *dashboard);
 void display_show_calendar(const display_dashboard_t *dashboard);
 void display_show_device_health(const display_system_status_t *status);

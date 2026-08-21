@@ -60,6 +60,9 @@ app_page_action_t app_page_key_hold_action(app_page_t page)
     if (page == APP_PAGE_WIFI_MAINTENANCE) {
         return APP_PAGE_ACTION_RESET_WIFI;
     }
+    if (page == APP_PAGE_ABOUT_UPDATE) {
+        return APP_PAGE_ACTION_START_UPDATE;
+    }
     return APP_PAGE_ACTION_NONE;
 }
 
@@ -70,6 +73,8 @@ uint32_t app_page_key_hold_threshold_ms(app_page_t page)
         return APP_PAGE_MANUAL_SYNC_HOLD_MS;
     case APP_PAGE_ACTION_RESET_WIFI:
         return APP_PAGE_WIFI_RESET_HOLD_MS;
+    case APP_PAGE_ACTION_START_UPDATE:
+        return APP_PAGE_FIRMWARE_UPDATE_HOLD_MS;
     case APP_PAGE_ACTION_NONE:
     default:
         return 0U;

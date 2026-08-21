@@ -10,6 +10,7 @@ extern "C" {
 #define APP_PAGE_SECONDARY_TIMEOUT_MS 30000U
 #define APP_PAGE_MANUAL_SYNC_HOLD_MS 2000U
 #define APP_PAGE_WIFI_RESET_HOLD_MS 5000U
+#define APP_PAGE_FIRMWARE_UPDATE_HOLD_MS 3000U
 
 typedef enum {
     APP_PAGE_HOME = 0,
@@ -24,6 +25,7 @@ typedef enum {
     APP_PAGE_ACTION_NONE = 0,
     APP_PAGE_ACTION_SYNC_TIME,
     APP_PAGE_ACTION_RESET_WIFI,
+    APP_PAGE_ACTION_START_UPDATE,
 } app_page_action_t;
 
 typedef struct {

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "app_storage.h"
 #include "sdkconfig.h"
 #include "esp_event.h"
 #include "esp_http_server.h"
@@ -20,7 +21,6 @@
 #include "freertos/task.h"
 #include "network_credentials.h"
 #include "nvs.h"
-#include "nvs_flash.h"
 
 #define NETWORK_NAMESPACE "rlcd_net"
 #define NETWORK_SSID_KEY "ssid"
@@ -30,6 +30,7 @@
 #define NETWORK_EVENT_FAILED BIT1
 #define NETWORK_EVENT_CREDENTIALS_SAVED BIT2
 #define NETWORK_EVENT_SYNC_REQUEST BIT3
+#define NETWORK_EVENT_MAINTENANCE_CHANGED BIT4
 
 #define NETWORK_STATION_MAX_RETRIES 5U
 #define NETWORK_STATION_TIMEOUT_MS 40000U
@@ -83,6 +84,7 @@ static esp_netif_t *s_station_netif;
 static httpd_handle_t s_http_server;
 static bool s_initialized;
 static bool s_storage_ready;
+static bool s_maintenance_active;
 static volatile bool s_station_active;
 static volatile uint32_t s_station_retries;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -90,6 +92,8 @@ static network_time_status_t s_status = {
     .state = NETWORK_TIME_STATE_UNINITIALIZED,
     .last_error = ESP_OK,
 };
+
+static bool maintenance_active(void);
 
 static void set_status(network_time_state_t state, bool configured, esp_err_t error)
 {
@@ -159,7 +163,7 @@ esp_err_t network_time_request_sync(void)
 
     network_time_status_t status = {0};
     (void)network_time_get_status(&status);
-    if (!status.configured ||
+    if (!status.configured || maintenance_active() ||
         status.state != NETWORK_TIME_STATE_SYNCHRONIZED) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -170,20 +174,51 @@ esp_err_t network_time_request_sync(void)
     return ESP_OK;
 }
 
-static esp_err_t initialize_storage(void)
+esp_err_t network_time_begin_maintenance(void)
 {
-    esp_err_t error = nvs_flash_init();
-    if (error == ESP_ERR_NVS_NO_FREE_PAGES || error == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_LOGW(TAG, "NVS requires reinitialization; stored network settings will be cleared");
-        error = nvs_flash_erase();
-        if (error == ESP_OK) {
-            error = nvs_flash_init();
-        }
+    if (!s_initialized || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
     }
-    if (error == ESP_OK) {
-        s_storage_ready = true;
+
+    bool accepted = false;
+    portENTER_CRITICAL(&s_status_lock);
+    if (!s_maintenance_active && !s_station_active && s_http_server == NULL &&
+        s_status.configured &&
+        (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
+         s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
+        s_maintenance_active = true;
+        accepted = true;
     }
-    return error;
+    portEXIT_CRITICAL(&s_status_lock);
+    if (!accepted) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xEventGroupSetBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
+    ESP_LOGI(TAG, "network maintenance window acquired");
+    return ESP_OK;
+}
+
+void network_time_end_maintenance(void)
+{
+    if (!s_initialized || s_events == NULL) {
+        return;
+    }
+
+    portENTER_CRITICAL(&s_status_lock);
+    s_maintenance_active = false;
+    portEXIT_CRITICAL(&s_status_lock);
+    xEventGroupSetBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
+    ESP_LOGI(TAG, "network maintenance window released");
+}
+
+static bool maintenance_active(void)
+{
+    bool active;
+    portENTER_CRITICAL(&s_status_lock);
+    active = s_maintenance_active;
+    portEXIT_CRITICAL(&s_status_lock);
+    return active;
 }
 
 static esp_err_t load_credentials(network_credentials_t *credentials)
@@ -665,8 +700,18 @@ static esp_err_t connect_and_synchronize(const network_credentials_t *credential
 static bool wait_for_sync_request(TickType_t timeout)
 {
     const EventBits_t bits = xEventGroupWaitBits(
-        s_events, NETWORK_EVENT_SYNC_REQUEST, pdTRUE, pdFALSE, timeout);
+        s_events, NETWORK_EVENT_SYNC_REQUEST |
+                      NETWORK_EVENT_MAINTENANCE_CHANGED,
+        pdTRUE, pdFALSE, timeout);
     return (bits & NETWORK_EVENT_SYNC_REQUEST) != 0U;
+}
+
+static void wait_for_maintenance_end(void)
+{
+    while (maintenance_active()) {
+        vTaskDelay(pdMS_TO_TICKS(100U));
+    }
+    xEventGroupClearBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
 }
 
 static void network_task(void *argument)
@@ -676,6 +721,7 @@ static void network_task(void *argument)
     bool user_requested_sync = false;
 
     while (true) {
+        wait_for_maintenance_end();
         esp_err_t error = load_credentials(&credentials);
         if (error != ESP_OK) {
             if (error != ESP_ERR_NVS_NOT_FOUND) {
@@ -740,11 +786,12 @@ esp_err_t network_time_init(void)
     }
     set_status(NETWORK_TIME_STATE_STARTING, false, ESP_OK);
 
-    esp_err_t error = initialize_storage();
+    esp_err_t error = app_storage_init();
     if (error != ESP_OK) {
         set_status(NETWORK_TIME_STATE_ERROR, false, error);
         return error;
     }
+    s_storage_ready = true;
     if (setenv("TZ", "CST-8", 1) != 0) {
         set_status(NETWORK_TIME_STATE_ERROR, false, ESP_FAIL);
         return ESP_FAIL;
