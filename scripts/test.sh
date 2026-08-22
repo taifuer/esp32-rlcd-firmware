@@ -14,6 +14,14 @@ if [[ ! -f "${RLCD_QRCODE_COMPONENT_DIR}/qrcodegen.c" ]]; then
   exit 1
 fi
 
+RLCD_CJSON_DIR="${RLCD_IDF_DIR}/components/json/cJSON"
+if [[ ! -f "${RLCD_CJSON_DIR}/cJSON.c" || \
+      ! -f "${RLCD_CJSON_DIR}/cJSON.h" ]]; then
+  echo "未找到 cJSON 测试依赖（需要 cJSON.c 和 cJSON.h）: ${RLCD_CJSON_DIR}" >&2
+  echo "请先执行 ./scripts/bootstrap.sh 准备锁定版本的 ESP-IDF，或检查 RLCD_DEPS_DIR。" >&2
+  exit 1
+fi
+
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/calendar/include \
   src/calendar/chinese_lunar.c tests/test_chinese_lunar.c \
@@ -73,13 +81,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_firmware_update_policy"
 
 cc -std=c17 -w \
-  -I"${RLCD_IDF_DIR}/components/json/cJSON" \
-  -c "${RLCD_IDF_DIR}/components/json/cJSON/cJSON.c" \
+  -I"${RLCD_CJSON_DIR}" \
+  -c "${RLCD_CJSON_DIR}/cJSON.c" \
   -o "${RLCD_TEST_TMP}/cJSON.o"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/update/include \
-  -I"${RLCD_IDF_DIR}/components/json/cJSON" \
+  -I"${RLCD_CJSON_DIR}" \
   src/update/online_update_manifest.c \
   src/update/online_update_policy.c \
   tests/test_online_update_policy.c \
