@@ -451,7 +451,8 @@ void display_show_network_setup(const char *ssid, const char *password, const ch
     draw_setup_line(qr_rendered ? 238 : 119, line);
     snprintf(line, sizeof(line), "PASS: %s", password != NULL ? password : "-");
     draw_setup_line(qr_rendered ? 258 : 158, line);
-    snprintf(line, sizeof(line), "OPEN: %s", url != NULL ? url : "192.168.4.1");
+    snprintf(line, sizeof(line), "OPEN: %s | BOOT: OFFLINE",
+             url != NULL ? url : "192.168.4.1");
     draw_setup_line(qr_rendered ? 280 : 197, line);
 
     if (!qr_rendered) {
@@ -725,7 +726,7 @@ void display_show_network_time(const display_system_status_t *status)
                  status->network_state != NULL ? status->network_state
                                                : "UNKNOWN");
     }
-    draw_system_row(82, "WI-FI", value);
+    draw_system_row(82, "NETWORK", value);
 
     if (!status->rtc_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");

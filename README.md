@@ -24,7 +24,7 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新版本 | [v0.8.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新版本 | [v0.9.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 发布方式 | GitHub Releases 保留最新固件，`dist/` 保存各正式版本 |
@@ -38,6 +38,8 @@
 - 首次启动提供 WPA2 临时热点、配网页面和 Wi-Fi 加入二维码；
 - Wi-Fi 凭据保存在 NVS，断电重启后可自动联网并通过 SNTP 恢复时间；
 - 校时成功后关闭 Wi-Fi，每 24 小时重新同步；
+- 网络不可用时保持 RTC 首屏和全部本地功能，后台按 1、5、15、60 分钟退避重试，不自动
+  清除凭据或反复弹出配网页；
 - `BOOT` 用于首屏与当月月历，`KEY` 用于设备健康、网络与时间、音频、Wi-Fi 维护、关于与更新；
 - 系统中心按职责分开硬件、联网校时、音频诊断、重新配网和版本更新，次级页面 30 秒后返回首屏；
 - “网络与时间”页长按 `KEY` 2 秒可立即校时，“Wi-Fi 维护”页长按 5 秒才会清除网络配置；
@@ -67,11 +69,11 @@
 2. 在仓库根目录执行：
 
    ```bash
-   cd dist/v0.8.0
+   cd dist/v0.9.0
    sha256sum --check SHA256SUMS
    cd ../..
    ./scripts/flash.sh --port COM5 \
-     --firmware dist/v0.8.0/esp32-rlcd-firmware-v0.8.0-factory.bin \
+     --firmware dist/v0.9.0/esp32-rlcd-firmware-v0.9.0-factory.bin \
      --confirm
    ```
 

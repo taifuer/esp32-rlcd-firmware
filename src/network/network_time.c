@@ -20,6 +20,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "network_credentials.h"
+#include "network_retry_policy.h"
 #include "nvs.h"
 
 #define NETWORK_NAMESPACE "rlcd_net"
@@ -36,8 +37,7 @@
 #define NETWORK_STATION_TIMEOUT_MS 40000U
 #define NETWORK_SNTP_ATTEMPTS 5U
 #define NETWORK_SNTP_WAIT_MS 4000U
-#define NETWORK_RECONFIGURE_WINDOW_MS 300000U
-#define NETWORK_RETRY_DELAY_MS 300000U
+#define NETWORK_SETUP_WINDOW_MS 300000U
 #define NETWORK_RESYNC_INTERVAL_MS 86400000U
 #define NETWORK_FORM_MAX_LENGTH 384U
 
@@ -91,6 +91,7 @@ static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static network_time_status_t s_status = {
     .state = NETWORK_TIME_STATE_UNINITIALIZED,
     .last_error = ESP_OK,
+    .last_failure = NETWORK_TIME_FAILURE_NONE,
 };
 
 static bool maintenance_active(void);
@@ -101,6 +102,22 @@ static void set_status(network_time_state_t state, bool configured, esp_err_t er
     s_status.state = state;
     s_status.configured = configured;
     s_status.last_error = error;
+    s_status.last_failure = NETWORK_TIME_FAILURE_NONE;
+    memset(s_status.setup_ssid, 0, sizeof(s_status.setup_ssid));
+    memset(s_status.setup_password, 0, sizeof(s_status.setup_password));
+    memset(s_status.setup_url, 0, sizeof(s_status.setup_url));
+    portEXIT_CRITICAL(&s_status_lock);
+}
+
+static void set_failure_status(network_time_state_t state, bool configured,
+                               esp_err_t error,
+                               network_time_failure_t failure)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    s_status.state = state;
+    s_status.configured = configured;
+    s_status.last_error = error;
+    s_status.last_failure = failure;
     memset(s_status.setup_ssid, 0, sizeof(s_status.setup_ssid));
     memset(s_status.setup_password, 0, sizeof(s_status.setup_password));
     memset(s_status.setup_url, 0, sizeof(s_status.setup_url));
@@ -114,6 +131,7 @@ static void set_provisioning_status(bool configured, esp_err_t reason,
     s_status.state = NETWORK_TIME_STATE_PROVISIONING;
     s_status.configured = configured;
     s_status.last_error = reason;
+    s_status.last_failure = NETWORK_TIME_FAILURE_NONE;
     snprintf(s_status.setup_ssid, sizeof(s_status.setup_ssid), "%s", ssid);
     snprintf(s_status.setup_password, sizeof(s_status.setup_password), "%s", password);
     snprintf(s_status.setup_url, sizeof(s_status.setup_url), "%s", SETUP_URL);
@@ -144,6 +162,22 @@ const char *network_time_state_name(network_time_state_t state)
     }
 }
 
+const char *network_time_failure_name(network_time_failure_t failure)
+{
+    switch (failure) {
+    case NETWORK_TIME_FAILURE_NONE:
+        return "none";
+    case NETWORK_TIME_FAILURE_WIFI:
+        return "wifi";
+    case NETWORK_TIME_FAILURE_NTP:
+        return "ntp";
+    case NETWORK_TIME_FAILURE_SERVICE:
+        return "service";
+    default:
+        return "unknown";
+    }
+}
+
 esp_err_t network_time_get_status(network_time_status_t *status)
 {
     if (status == NULL) {
@@ -164,7 +198,8 @@ esp_err_t network_time_request_sync(void)
     network_time_status_t status = {0};
     (void)network_time_get_status(&status);
     if (!status.configured || maintenance_active() ||
-        status.state != NETWORK_TIME_STATE_SYNCHRONIZED) {
+        (status.state != NETWORK_TIME_STATE_SYNCHRONIZED &&
+         status.state != NETWORK_TIME_STATE_RETRY_WAIT)) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -183,7 +218,6 @@ esp_err_t network_time_begin_maintenance(void)
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
     if (!s_maintenance_active && !s_station_active && s_http_server == NULL &&
-        s_status.configured &&
         (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
          s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
         s_maintenance_active = true;
@@ -641,8 +675,13 @@ static esp_err_t synchronize_system_time(network_time_datetime_t *datetime)
     return ESP_OK;
 }
 
-static esp_err_t connect_and_synchronize(const network_credentials_t *credentials)
+static esp_err_t connect_and_synchronize(
+    const network_credentials_t *credentials,
+    network_time_failure_t *failure)
 {
+    if (failure != NULL) {
+        *failure = NETWORK_TIME_FAILURE_SERVICE;
+    }
     wifi_config_t wifi_config = {0};
     const size_t ssid_length = strlen(credentials->ssid);
     const size_t password_length = strlen(credentials->password);
@@ -677,11 +716,20 @@ static esp_err_t connect_and_synchronize(const network_credentials_t *credential
         pdTRUE, pdFALSE, pdMS_TO_TICKS(NETWORK_STATION_TIMEOUT_MS));
     if ((bits & NETWORK_EVENT_CONNECTED) == 0U) {
         error = ESP_ERR_TIMEOUT;
+        if (failure != NULL) {
+            *failure = NETWORK_TIME_FAILURE_WIFI;
+        }
     } else {
         set_status(NETWORK_TIME_STATE_SYNCHRONIZING, true, ESP_OK);
         network_time_datetime_t datetime = {0};
         error = synchronize_system_time(&datetime);
+        if (error != ESP_OK && failure != NULL) {
+            *failure = NETWORK_TIME_FAILURE_NTP;
+        }
         if (error == ESP_OK) {
+            if (failure != NULL) {
+                *failure = NETWORK_TIME_FAILURE_NONE;
+            }
             xQueueOverwrite(s_datetime_queue, &datetime);
             ESP_LOGI(TAG, "SNTP time %04u-%02u-%02u %02u:%02u:%02u (UTC+8)",
                      datetime.year, datetime.month, datetime.day, datetime.hour,
@@ -692,6 +740,9 @@ static esp_err_t connect_and_synchronize(const network_credentials_t *credential
     const esp_err_t stop_error = stop_wifi();
     if (error == ESP_OK && stop_error != ESP_OK) {
         error = stop_error;
+        if (failure != NULL) {
+            *failure = NETWORK_TIME_FAILURE_SERVICE;
+        }
     }
     memset(&wifi_config, 0, sizeof(wifi_config));
     return error;
@@ -719,31 +770,53 @@ static void network_task(void *argument)
     (void)argument;
     network_credentials_t credentials = {0};
     bool user_requested_sync = false;
+    bool setup_window_completed = false;
+    uint32_t consecutive_failures = 0U;
 
     while (true) {
         wait_for_maintenance_end();
         esp_err_t error = load_credentials(&credentials);
         if (error != ESP_OK) {
+            if (setup_window_completed && error == ESP_ERR_NVS_NOT_FOUND) {
+                set_status(NETWORK_TIME_STATE_RETRY_WAIT, false,
+                           ESP_ERR_TIMEOUT);
+                (void)wait_for_sync_request(portMAX_DELAY);
+                continue;
+            }
             if (error != ESP_ERR_NVS_NOT_FOUND) {
                 ESP_LOGW(TAG, "stored network configuration is unusable: %s",
                          esp_err_to_name(error));
                 (void)network_time_clear_credentials();
             }
-            error = run_provisioning(portMAX_DELAY, false, ESP_OK);
+            error = run_provisioning(
+                pdMS_TO_TICKS(NETWORK_SETUP_WINDOW_MS), false, ESP_OK);
+            if (error == ESP_ERR_TIMEOUT) {
+                setup_window_completed = true;
+                set_status(NETWORK_TIME_STATE_RETRY_WAIT, false, error);
+                ESP_LOGI(TAG,
+                         "setup window closed; local features remain available until restart");
+                (void)wait_for_sync_request(portMAX_DELAY);
+                continue;
+            }
             if (error != ESP_OK) {
                 set_status(NETWORK_TIME_STATE_ERROR, false, error);
                 ESP_LOGE(TAG, "network setup failed: %s", esp_err_to_name(error));
                 vTaskDelay(pdMS_TO_TICKS(60000U));
             }
+            setup_window_completed = false;
+            consecutive_failures = 0U;
             continue;
         }
 
+        setup_window_completed = false;
         if (wait_for_sync_request(0U)) {
             user_requested_sync = true;
         }
-        error = connect_and_synchronize(&credentials);
+        network_time_failure_t failure = NETWORK_TIME_FAILURE_NONE;
+        error = connect_and_synchronize(&credentials, &failure);
         memset(&credentials, 0, sizeof(credentials));
         if (error == ESP_OK) {
+            consecutive_failures = 0U;
             set_status(NETWORK_TIME_STATE_SYNCHRONIZED, true, ESP_OK);
             user_requested_sync = wait_for_sync_request(
                 pdMS_TO_TICKS(NETWORK_RESYNC_INTERVAL_MS));
@@ -754,28 +827,21 @@ static void network_task(void *argument)
         ESP_LOGW(TAG, "%s time synchronization failed: %s",
                  user_requested_sync ? "manual" : "automatic",
                  esp_err_to_name(synchronization_error));
-        set_status(NETWORK_TIME_STATE_RETRY_WAIT, true, synchronization_error);
+        set_failure_status(NETWORK_TIME_STATE_RETRY_WAIT, true,
+                           synchronization_error, failure);
+        if (consecutive_failures < UINT32_MAX) {
+            ++consecutive_failures;
+        }
+        const uint32_t retry_delay_ms =
+            network_retry_delay_ms(consecutive_failures);
+        ESP_LOGW(TAG, "%s unavailable; retrying in %u seconds",
+                 network_time_failure_name(failure),
+                 (unsigned)(retry_delay_ms / 1000U));
         if (user_requested_sync) {
             ESP_LOGW(TAG, "manual time synchronization did not complete");
-            user_requested_sync = wait_for_sync_request(
-                pdMS_TO_TICKS(NETWORK_RETRY_DELAY_MS));
-            continue;
         }
-        const esp_err_t provisioning_error = run_provisioning(
-            pdMS_TO_TICKS(NETWORK_RECONFIGURE_WINDOW_MS), true,
-            synchronization_error);
-        if (provisioning_error == ESP_OK) {
-            continue;
-        }
-        if (provisioning_error != ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "temporary setup access point failed: %s",
-                     esp_err_to_name(provisioning_error));
-        }
-        set_status(NETWORK_TIME_STATE_RETRY_WAIT, true,
-                   provisioning_error == ESP_ERR_TIMEOUT ? synchronization_error
-                                                         : provisioning_error);
         user_requested_sync = wait_for_sync_request(
-            pdMS_TO_TICKS(NETWORK_RETRY_DELAY_MS));
+            pdMS_TO_TICKS(retry_delay_ms));
     }
 }
 

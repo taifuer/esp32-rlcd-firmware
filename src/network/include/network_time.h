@@ -20,6 +20,13 @@ typedef enum {
     NETWORK_TIME_STATE_ERROR,
 } network_time_state_t;
 
+typedef enum {
+    NETWORK_TIME_FAILURE_NONE = 0,
+    NETWORK_TIME_FAILURE_WIFI,
+    NETWORK_TIME_FAILURE_NTP,
+    NETWORK_TIME_FAILURE_SERVICE,
+} network_time_failure_t;
+
 typedef struct {
     uint16_t year;
     uint8_t month;
@@ -34,6 +41,7 @@ typedef struct {
     network_time_state_t state;
     bool configured;
     esp_err_t last_error;
+    network_time_failure_t last_failure;
     char setup_ssid[33];
     char setup_password[64];
     char setup_url[24];
@@ -47,6 +55,7 @@ esp_err_t network_time_clear_credentials(void);
 esp_err_t network_time_begin_maintenance(void);
 void network_time_end_maintenance(void);
 const char *network_time_state_name(network_time_state_t state);
+const char *network_time_failure_name(network_time_failure_t failure);
 
 #ifdef __cplusplus
 }

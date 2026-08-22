@@ -8,7 +8,7 @@
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.8.0/`](../dist/v0.8.0/)。
+[`dist/v0.9.0/`](../dist/v0.9.0/)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
 v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明。
 从 v0.2.0 开始，版本目录还包含对应的界面效果图。
@@ -20,12 +20,12 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 
 | 文件 | 用途 | 安装方式 |
 | --- | --- | --- |
-| `esp32-rlcd-firmware-v0.8.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
-| `esp32-rlcd-firmware-v0.8.0-ota.bin` | 已安装 v0.7.0+ 后的日常升级 | 设备本地升级网页，保留 NVS |
+| `esp32-rlcd-firmware-v0.9.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
+| `esp32-rlcd-firmware-v0.9.0-ota.bin` | 已安装 v0.7.0+ 后的日常升级 | 设备本地升级网页，保留 NVS |
 
 目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
 参数；两类文件的 SHA-256 见
-[`dist/v0.8.0/SHA256SUMS`](../dist/v0.8.0/SHA256SUMS)。
+[`dist/v0.9.0/SHA256SUMS`](../dist/v0.9.0/SHA256SUMS)。
 
 不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
 镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
@@ -42,7 +42,7 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.8.0
+cd dist/v0.9.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -50,16 +50,16 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.8.0/esp32-rlcd-firmware-v0.8.0-factory.bin
-shasum -a 256 dist/v0.8.0/esp32-rlcd-firmware-v0.8.0-ota.bin
+shasum -a 256 dist/v0.9.0/esp32-rlcd-firmware-v0.9.0-factory.bin
+shasum -a 256 dist/v0.9.0/esp32-rlcd-firmware-v0.9.0-ota.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.8.0\esp32-rlcd-firmware-v0.8.0-factory.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.8.0\esp32-rlcd-firmware-v0.8.0-ota.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.8.0\SHA256SUMS
+(Get-FileHash .\dist\v0.9.0\esp32-rlcd-firmware-v0.9.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.9.0\esp32-rlcd-firmware-v0.9.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.9.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -80,7 +80,7 @@ Windows 或 WSL。
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.8.0/esp32-rlcd-firmware-v0.8.0-factory.bin \
+  --firmware dist/v0.9.0/esp32-rlcd-firmware-v0.9.0-factory.bin \
   --confirm
 ```
 
@@ -121,7 +121,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.8.0\esp32-rlcd-firmware-v0.8.0-factory.bin
+  0x0 .\dist\v0.9.0\esp32-rlcd-firmware-v0.9.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -139,7 +139,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.8.0/esp32-rlcd-firmware-v0.8.0-factory.bin
+  0x0 dist/v0.9.0/esp32-rlcd-firmware-v0.9.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -167,6 +167,12 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
 家庭 Wi-Fi 凭据保存在设备 NVS，日常只需配置一次。未连接独立可充电 RTC 电池时，彻底
 断电会使 RTC 时间失效，但下次开机会用已保存的网络配置自动恢复时间。重新烧录完整镜像
 或执行 USB `RESET_WIFI` 后才需要重新配网。
+
+配网热点最多开放 5 分钟，二维码显示 60 秒后设备会恢复首屏；没有网络时也可按屏幕上的
+`BOOT: OFFLINE` 立即使用本地功能。热点超时后需要配网可重新开机。
+已保存网络的设备在 Wi-Fi 或互联网不可用时不会卡在连接界面，也不会自动清除凭据或反复
+进入配网：RTC、月历、温湿度、电量和音频继续离线运行，网络在后台按逐步延长的间隔重试。
+RTC 同时无效且无法联网时，首屏显示 `--:--:--`，可使用下方 USB 后备流程校时。
 
 安装 RTC 备用电池后，设备健康页的 `RTC BACKUP` 首先显示 `UNTESTED`。保持 RTC 已校时，
 拔掉 Type-C 后长按 `PWR` 关机，等待至少一分钟，再在不按 `BOOT` 的情况下短按 `PWR`

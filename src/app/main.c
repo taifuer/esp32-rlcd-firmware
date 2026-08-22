@@ -20,6 +20,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "network_time.h"
+#include "network_screen_policy.h"
 #include "page_state.h"
 #include "pcf85063.h"
 #include "rtc_backup.h"
@@ -34,11 +35,6 @@ typedef enum {
     APP_DISPLAY_NONE = 0,
     APP_DISPLAY_DASHBOARD,
     APP_DISPLAY_NETWORK_SETUP,
-    APP_DISPLAY_NETWORK_STARTING,
-    APP_DISPLAY_NETWORK_CONNECTING,
-    APP_DISPLAY_NETWORK_SYNCHRONIZING,
-    APP_DISPLAY_NETWORK_RETRY,
-    APP_DISPLAY_NETWORK_ERROR,
     APP_DISPLAY_CALENDAR,
     APP_DISPLAY_DEVICE_HEALTH,
     APP_DISPLAY_NETWORK_TIME,
@@ -166,14 +162,17 @@ static display_network_state_t dashboard_network_state(
                                   : DISPLAY_NETWORK_UNCONFIGURED;
     case NETWORK_TIME_STATE_RETRY_WAIT:
     case NETWORK_TIME_STATE_ERROR:
+        return status->configured ? DISPLAY_NETWORK_ERROR
+                                  : DISPLAY_NETWORK_UNCONFIGURED;
     default:
         return DISPLAY_NETWORK_ERROR;
     }
 }
 
-static const char *device_network_state_name(network_time_state_t state)
+static const char *device_network_state_name(
+    const network_time_status_t *status)
 {
-    switch (state) {
+    switch (status->state) {
     case NETWORK_TIME_STATE_UNINITIALIZED:
         return "UNINITIALIZED";
     case NETWORK_TIME_STATE_STARTING:
@@ -187,7 +186,16 @@ static const char *device_network_state_name(network_time_state_t state)
     case NETWORK_TIME_STATE_SYNCHRONIZED:
         return "SYNCHRONIZED";
     case NETWORK_TIME_STATE_RETRY_WAIT:
-        return "RETRY WAIT";
+        if (status->last_failure == NETWORK_TIME_FAILURE_WIFI) {
+            return "WI-FI OFFLINE";
+        }
+        if (status->last_failure == NETWORK_TIME_FAILURE_NTP) {
+            return "NTP UNAVAILABLE";
+        }
+        if (status->last_failure == NETWORK_TIME_FAILURE_SERVICE) {
+            return "SERVICE ERROR";
+        }
+        return "OFFLINE";
     case NETWORK_TIME_STATE_ERROR:
     default:
         return "ERROR";
@@ -424,6 +432,7 @@ void app_main(void)
     uint8_t previous_reset_seconds = 0U;
     uint8_t previous_update_seconds = 0U;
     uint8_t previous_update_percent = 0U;
+    bool setup_screen_dismissed = false;
     firmware_update_state_t previous_update_state =
         FIRMWARE_UPDATE_STATE_IDLE;
     uint32_t cycle = 0;
@@ -520,6 +529,9 @@ void app_main(void)
         if (key_event == BUTTON_EVENT_SHORT_PRESS) {
             if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                 !firmware_update_ui_active) {
+                if (previous_display_mode == APP_DISPLAY_NETWORK_SETUP) {
+                    setup_screen_dismissed = true;
+                }
                 app_page_state_key_short_press(&page_state);
                 render_requested = true;
                 ESP_LOGI(TAG, "KEY short press: showing %s page",
@@ -636,6 +648,12 @@ void app_main(void)
                          "BOOT short press ignored while firmware update is active");
             } else if (manual_sync_ui == MANUAL_SYNC_UI_ACTIVE) {
                 ESP_LOGI(TAG, "BOOT short press ignored while time sync is active");
+            } else if (previous_display_mode == APP_DISPLAY_NETWORK_SETUP) {
+                setup_screen_dismissed = true;
+                app_page_state_init(&page_state);
+                render_requested = true;
+                ESP_LOGI(TAG,
+                         "BOOT short press: continuing with offline dashboard");
             } else {
                 manual_sync_ui = MANUAL_SYNC_UI_NONE;
                 app_page_state_boot_short_press(&page_state);
@@ -865,6 +883,7 @@ void app_main(void)
                 network_status.configured != previous_network_configured) {
                 if (network_status.state == NETWORK_TIME_STATE_PROVISIONING) {
                     provisioning_started = now;
+                    setup_screen_dismissed = false;
                 }
                 previous_network_state = network_status.state;
                 network_time_data_changed = true;
@@ -1062,7 +1081,7 @@ void app_main(void)
                     .network_ready = network_error == ESP_OK,
                     .network_configured = network_status.configured,
                     .network_state =
-                        device_network_state_name(network_status.state),
+                        device_network_state_name(&network_status),
                     .last_sync_valid = last_sync_valid,
                     .last_sync_year = last_sync_time.year,
                     .last_sync_month = last_sync_time.month,
@@ -1132,31 +1151,17 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_WIFI_RESET_PROMPT)) {
             const TickType_t provisioning_elapsed = now - provisioning_started;
             const bool show_setup =
-                network_status.state == NETWORK_TIME_STATE_PROVISIONING &&
-                (!dashboard.time_valid ||
-                 (provisioning_elapsed >= pdMS_TO_TICKS(3000U) &&
-                  provisioning_elapsed < pdMS_TO_TICKS(63000U)));
+                app_network_setup_should_overlay(
+                    network_status.state == NETWORK_TIME_STATE_PROVISIONING,
+                    network_status.configured,
+                    setup_screen_dismissed,
+                    (uint32_t)provisioning_elapsed * portTICK_PERIOD_MS);
             app_display_mode_t display_mode = APP_DISPLAY_DASHBOARD;
             if (active_page == APP_PAGE_CALENDAR) {
                 display_mode = APP_DISPLAY_CALENDAR;
             }
             if (show_setup) {
                 display_mode = APP_DISPLAY_NETWORK_SETUP;
-            } else if (!dashboard.time_valid &&
-                       network_status.state == NETWORK_TIME_STATE_STARTING) {
-                display_mode = APP_DISPLAY_NETWORK_STARTING;
-            } else if (!dashboard.time_valid &&
-                       network_status.state == NETWORK_TIME_STATE_CONNECTING) {
-                display_mode = APP_DISPLAY_NETWORK_CONNECTING;
-            } else if (!dashboard.time_valid &&
-                       network_status.state == NETWORK_TIME_STATE_SYNCHRONIZING) {
-                display_mode = APP_DISPLAY_NETWORK_SYNCHRONIZING;
-            } else if (!dashboard.time_valid &&
-                       network_status.state == NETWORK_TIME_STATE_RETRY_WAIT) {
-                display_mode = APP_DISPLAY_NETWORK_RETRY;
-            } else if (!dashboard.time_valid &&
-                       network_status.state == NETWORK_TIME_STATE_ERROR) {
-                display_mode = APP_DISPLAY_NETWORK_ERROR;
             }
 
             if (display_mode == APP_DISPLAY_DASHBOARD) {
@@ -1168,21 +1173,11 @@ void app_main(void)
                 }
             } else if (display_mode == previous_display_mode &&
                        !render_requested) {
-                /* Static network pages need no one-second redraw. */
+                /* The setup page is static and needs no one-second redraw. */
             } else if (display_mode == APP_DISPLAY_NETWORK_SETUP) {
                 display_show_network_setup(network_status.setup_ssid,
                                            network_status.setup_password,
                                            network_status.setup_url);
-            } else if (display_mode == APP_DISPLAY_NETWORK_STARTING) {
-                display_show_status("WI-FI", "Starting network");
-            } else if (display_mode == APP_DISPLAY_NETWORK_CONNECTING) {
-                display_show_status("WI-FI", "Connecting...");
-            } else if (display_mode == APP_DISPLAY_NETWORK_SYNCHRONIZING) {
-                display_show_status("SETTING TIME", "Waiting for NTP");
-            } else if (display_mode == APP_DISPLAY_NETWORK_RETRY) {
-                display_show_status("WI-FI RETRY", "Check setup details");
-            } else if (display_mode == APP_DISPLAY_NETWORK_ERROR) {
-                display_show_status("NETWORK ERROR", "Use USB SET_TIME");
             }
             previous_display_mode = display_mode;
             previous_reset_seconds = 0U;
