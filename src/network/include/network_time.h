@@ -54,6 +54,10 @@ esp_err_t network_time_request_sync(void);
 esp_err_t network_time_clear_credentials(void);
 esp_err_t network_time_begin_maintenance(void);
 void network_time_end_maintenance(void);
+/* Acquire an exclusive STA session and return only after IPv4 is ready. */
+esp_err_t network_time_begin_online_session(uint32_t timeout_ms);
+/* End a successful online session; calling it again after release is harmless. */
+esp_err_t network_time_end_online_session(void);
 const char *network_time_state_name(network_time_state_t state);
 const char *network_time_failure_name(network_time_failure_t failure);
 

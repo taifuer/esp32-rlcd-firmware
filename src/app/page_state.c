@@ -23,8 +23,10 @@ static app_page_t next_system_page(app_page_t page)
     case APP_PAGE_AUDIO:
         return APP_PAGE_WIFI_MAINTENANCE;
     case APP_PAGE_WIFI_MAINTENANCE:
-        return APP_PAGE_ABOUT_UPDATE;
-    case APP_PAGE_ABOUT_UPDATE:
+        return APP_PAGE_ONLINE_UPDATE;
+    case APP_PAGE_ONLINE_UPDATE:
+        return APP_PAGE_LOCAL_UPDATE;
+    case APP_PAGE_LOCAL_UPDATE:
     default:
         return APP_PAGE_DEVICE_HEALTH;
     }
@@ -51,7 +53,7 @@ bool app_page_is_daily(app_page_t page)
 
 bool app_page_is_system(app_page_t page)
 {
-    return page >= APP_PAGE_DEVICE_HEALTH && page <= APP_PAGE_ABOUT_UPDATE;
+    return page >= APP_PAGE_DEVICE_HEALTH && page <= APP_PAGE_LOCAL_UPDATE;
 }
 
 app_page_action_t app_page_key_hold_action(app_page_t page)
@@ -65,8 +67,11 @@ app_page_action_t app_page_key_hold_action(app_page_t page)
     if (page == APP_PAGE_WIFI_MAINTENANCE) {
         return APP_PAGE_ACTION_RESET_WIFI;
     }
-    if (page == APP_PAGE_ABOUT_UPDATE) {
-        return APP_PAGE_ACTION_START_UPDATE;
+    if (page == APP_PAGE_ONLINE_UPDATE) {
+        return APP_PAGE_ACTION_CHECK_ONLINE_UPDATE;
+    }
+    if (page == APP_PAGE_LOCAL_UPDATE) {
+        return APP_PAGE_ACTION_START_LOCAL_UPDATE;
     }
     return APP_PAGE_ACTION_NONE;
 }
@@ -80,8 +85,10 @@ uint32_t app_page_key_hold_threshold_ms(app_page_t page)
         return APP_PAGE_AUDIO_TEST_HOLD_MS;
     case APP_PAGE_ACTION_RESET_WIFI:
         return APP_PAGE_WIFI_RESET_HOLD_MS;
-    case APP_PAGE_ACTION_START_UPDATE:
-        return APP_PAGE_FIRMWARE_UPDATE_HOLD_MS;
+    case APP_PAGE_ACTION_CHECK_ONLINE_UPDATE:
+        return APP_PAGE_ONLINE_UPDATE_CHECK_HOLD_MS;
+    case APP_PAGE_ACTION_START_LOCAL_UPDATE:
+        return APP_PAGE_LOCAL_UPDATE_HOLD_MS;
     case APP_PAGE_ACTION_NONE:
     default:
         return 0U;

@@ -100,6 +100,30 @@ typedef struct {
     const char *result;
 } display_audio_status_t;
 
+typedef enum {
+    DISPLAY_ONLINE_UPDATE_STATE_NOT_CHECKED = 0,
+    DISPLAY_ONLINE_UPDATE_STATE_CHECKING,
+    DISPLAY_ONLINE_UPDATE_STATE_UP_TO_DATE,
+    DISPLAY_ONLINE_UPDATE_STATE_UPDATE_AVAILABLE,
+    DISPLAY_ONLINE_UPDATE_STATE_CONFIRM_INSTALL,
+    DISPLAY_ONLINE_UPDATE_STATE_CONNECTING,
+    DISPLAY_ONLINE_UPDATE_STATE_DOWNLOADING,
+    DISPLAY_ONLINE_UPDATE_STATE_VERIFYING,
+    DISPLAY_ONLINE_UPDATE_STATE_SUCCESS,
+    DISPLAY_ONLINE_UPDATE_STATE_FAILED,
+} display_online_update_state_t;
+
+typedef struct {
+    display_online_update_state_t state;
+    const char *current_version;
+    const char *latest_version;
+    const char *last_checked;
+    const char *detail;
+    uint32_t downloaded_bytes;
+    uint32_t total_bytes;
+    uint8_t progress_percent;
+} display_online_update_status_t;
+
 esp_err_t display_init(void);
 void display_show_status(const char *title, const char *detail);
 void display_show_network_setup(const char *ssid, const char *password, const char *url);
@@ -111,8 +135,8 @@ void display_show_device_health(const display_system_status_t *status);
 void display_show_network_time(const display_system_status_t *status);
 void display_show_audio(const display_audio_status_t *status);
 void display_show_wifi_maintenance(const display_system_status_t *status);
-void display_show_about_update(const display_system_status_t *status,
-                               const char *release_url);
+void display_show_online_update(const display_online_update_status_t *status);
+void display_show_local_update(const display_system_status_t *status);
 
 #ifdef __cplusplus
 }

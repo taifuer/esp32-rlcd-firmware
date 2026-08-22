@@ -40,7 +40,16 @@ if(NOT EXISTS "${QRCODE_COMPONENT_DIR}/CMakeLists.txt")
 endif()
 list(APPEND EXTRA_COMPONENT_DIRS "${QRCODE_COMPONENT_DIR}")
 
-set(PROJECT_VER "0.9.0")
+set(RLCD_PROJECT_VERSION "" CACHE STRING
+    "SemVer embedded in the firmware image; empty selects the development default")
+if(NOT "${RLCD_PROJECT_VERSION}" STREQUAL "")
+    set(PROJECT_VER "${RLCD_PROJECT_VERSION}")
+elseif(DEFINED ENV{RLCD_PROJECT_VERSION} AND
+       NOT "$ENV{RLCD_PROJECT_VERSION}" STREQUAL "")
+    set(PROJECT_VER "$ENV{RLCD_PROJECT_VERSION}")
+else()
+    set(PROJECT_VER "0.10.0")
+endif()
 set(COMPONENTS app)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(rlcd_firmware)

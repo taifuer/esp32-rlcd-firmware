@@ -40,6 +40,7 @@ required_files=(
     "LICENSE"
     "NOTICE.md"
     "LICENSES/Cadence-Xtensa-MIT.txt"
+    "LICENSES/cJSON.txt"
     "LICENSES/FreeRTOS.txt"
     "LICENSES/GCC-Runtime-Library-Exception-3.1.txt"
     "LICENSES/GPL-2.0-only.txt"
@@ -75,6 +76,8 @@ compare_file "${RLCD_PROJECT_DIR}/LICENSES/Mbed-TLS.txt" \
     "${RLCD_IDF_DIR}/components/mbedtls/mbedtls/LICENSE" "Mbed TLS"
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/HTTP-Parser.txt" \
     "${RLCD_IDF_DIR}/components/http_parser/LICENSE.txt" "HTTP Parser"
+compare_file "${RLCD_PROJECT_DIR}/LICENSES/cJSON.txt" \
+    "${RLCD_IDF_DIR}/components/json/cJSON/LICENSE" "cJSON"
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/lwIP.txt" \
     "${RLCD_IDF_DIR}/components/lwip/lwip/COPYING" "lwIP"
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/WPA-Supplicant.txt" \
@@ -107,6 +110,8 @@ notice_entries=(
     "${WAVESHARE_COMMIT}"
     "FreeRTOS Kernel"
     "HTTP Parser"
+    "cJSON"
+    "Copyright (c) 2009-2017 Dave Gamble and cJSON contributors"
     "Espressif QR Code"
     "Mbed TLS"
     "lwIP"

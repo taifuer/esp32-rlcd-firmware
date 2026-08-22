@@ -42,7 +42,7 @@ enum {
     SETUP_QR_AREA_SIZE = 170,
     SETUP_QR_QUIET_MODULES = 4,
     SETUP_QR_MAX_SCALE = 5,
-    SYSTEM_PAGE_COUNT = 5,
+    SYSTEM_PAGE_COUNT = 6,
     SYSTEM_SIDE_MARGIN = 12,
     SYSTEM_TITLE_BASELINE_Y = 32,
     SYSTEM_DIVIDER_Y = 44,
@@ -60,9 +60,6 @@ enum {
     CALENDAR_COLUMN_WIDTH = 54,
     CALENDAR_FOOTER_DIVIDER_Y = 250,
     CALENDAR_FOOTER_BASELINE_Y = 280,
-    ABOUT_QR_LEFT = 216,
-    ABOUT_QR_TOP = 55,
-    ABOUT_QR_SIZE = 172,
 };
 
 /*
@@ -149,6 +146,77 @@ static void draw_system_footer(const char *text)
                    BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(SYSTEM_FOOTER_BASELINE_Y, text);
+}
+
+static void format_version(char *buffer, size_t capacity,
+                           const char *version)
+{
+    if (buffer == NULL || capacity == 0U) {
+        return;
+    }
+    if (version == NULL || version[0] == '\0') {
+        snprintf(buffer, capacity, "--");
+    } else if (version[0] == 'v' || version[0] == 'V') {
+        snprintf(buffer, capacity, "%s", version);
+    } else {
+        snprintf(buffer, capacity, "v%s", version);
+    }
+}
+
+static void draw_online_update_modal(const char *heading,
+                                     const char *primary,
+                                     const char *secondary,
+                                     const char *footer)
+{
+    u8g2_DrawFrame(s_u8g2, 24, 64, BOARD_DISPLAY_WIDTH - 48, 164);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    draw_centered(108, heading);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    draw_centered(158, primary);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(199, secondary);
+    draw_system_footer(footer);
+}
+
+static void draw_online_update_progress(
+    const display_online_update_status_t *status)
+{
+    enum {
+        PROGRESS_LEFT = 40,
+        PROGRESS_TOP = 138,
+        PROGRESS_WIDTH = 320,
+        PROGRESS_HEIGHT = 22,
+        PROGRESS_INNER_WIDTH = PROGRESS_WIDTH - 4,
+    };
+    char text[48];
+    const uint8_t percent = status->progress_percent > 100U
+                                ? 100U
+                                : status->progress_percent;
+
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    snprintf(text, sizeof(text), "DOWNLOADING %u%%", percent);
+    draw_centered(105, text);
+    u8g2_DrawFrame(s_u8g2, PROGRESS_LEFT, PROGRESS_TOP,
+                   PROGRESS_WIDTH, PROGRESS_HEIGHT);
+    const int fill_width = (int)percent * PROGRESS_INNER_WIDTH / 100;
+    if (fill_width > 0) {
+        u8g2_DrawBox(s_u8g2, PROGRESS_LEFT + 2, PROGRESS_TOP + 2,
+                     fill_width, PROGRESS_HEIGHT - 4);
+    }
+
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    if (status->total_bytes > 0U) {
+        snprintf(text, sizeof(text), "%u / %u KiB",
+                 (unsigned)((status->downloaded_bytes + 1023U) / 1024U),
+                 (unsigned)((status->total_bytes + 1023U) / 1024U));
+    } else {
+        snprintf(text, sizeof(text), "%u KiB received",
+                 (unsigned)((status->downloaded_bytes + 1023U) / 1024U));
+    }
+    draw_centered(198, text);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(225, "Keep power connected");
+    draw_system_footer("DO NOT POWER OFF");
 }
 
 static void draw_audio_meter(int baseline_y, const char *label,
@@ -905,8 +973,97 @@ void display_show_wifi_maintenance(const display_system_status_t *status)
     u8g2_SendBuffer(s_u8g2);
 }
 
-void display_show_about_update(const display_system_status_t *status,
-                               const char *release_url)
+void display_show_online_update(const display_online_update_status_t *status)
+{
+    if (s_u8g2 == NULL || status == NULL) {
+        return;
+    }
+
+    char current_version[40];
+    char latest_version[40];
+    char detail[88];
+    format_version(current_version, sizeof(current_version),
+                   status->current_version);
+    format_version(latest_version, sizeof(latest_version),
+                   status->latest_version);
+
+    draw_system_header("ONLINE UPDATE", 5U);
+    switch (status->state) {
+    case DISPLAY_ONLINE_UPDATE_STATE_CHECKING:
+        draw_online_update_modal(
+            "CHECKING",
+            status->detail != NULL ? status->detail : "Connecting securely",
+            "Current firmware remains available", "BOOT: CANCEL");
+        break;
+    case DISPLAY_ONLINE_UPDATE_STATE_CONFIRM_INSTALL:
+        snprintf(detail, sizeof(detail), "%s  ->  %s", current_version,
+                 latest_version);
+        draw_online_update_modal("INSTALL UPDATE?", detail,
+                                 "Keep power connected",
+                                 "BOOT: CANCEL | HOLD KEY 3s: INSTALL");
+        break;
+    case DISPLAY_ONLINE_UPDATE_STATE_CONNECTING:
+        snprintf(detail, sizeof(detail), "Preparing %s", latest_version);
+        draw_online_update_modal(
+            "STARTING UPDATE", detail,
+            status->detail != NULL ? status->detail : "Connecting securely",
+            "BOOT: CANCEL");
+        break;
+    case DISPLAY_ONLINE_UPDATE_STATE_DOWNLOADING:
+        draw_online_update_progress(status);
+        break;
+    case DISPLAY_ONLINE_UPDATE_STATE_VERIFYING:
+        draw_online_update_modal(
+            "VERIFYING", latest_version,
+            status->detail != NULL ? status->detail : "Checking firmware image",
+            "DO NOT POWER OFF");
+        break;
+    case DISPLAY_ONLINE_UPDATE_STATE_SUCCESS:
+        snprintf(detail, sizeof(detail), "%s is ready", latest_version);
+        draw_online_update_modal(
+            "UPDATE READY", detail,
+            status->detail != NULL ? status->detail : "Restarting automatically",
+            "DO NOT POWER OFF");
+        break;
+    case DISPLAY_ONLINE_UPDATE_STATE_FAILED:
+        draw_online_update_modal(
+            "UPDATE FAILED",
+            status->detail != NULL ? status->detail : "Try again when online",
+            "Current firmware is unchanged",
+            "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: CHECK");
+        break;
+    case DISPLAY_ONLINE_UPDATE_STATE_NOT_CHECKED:
+    case DISPLAY_ONLINE_UPDATE_STATE_UP_TO_DATE:
+    case DISPLAY_ONLINE_UPDATE_STATE_UPDATE_AVAILABLE: {
+        const char *state_text = "NOT CHECKED";
+        const char *footer =
+            "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: CHECK";
+        if (status->state == DISPLAY_ONLINE_UPDATE_STATE_UP_TO_DATE) {
+            state_text = "UP TO DATE";
+        } else if (status->state ==
+                   DISPLAY_ONLINE_UPDATE_STATE_UPDATE_AVAILABLE) {
+            state_text = "UPDATE AVAILABLE";
+            footer = "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: REVIEW";
+        }
+        draw_system_row(82, "CURRENT", current_version);
+        draw_system_row(126, "LATEST", latest_version);
+        draw_system_row(170, "STATUS", state_text);
+        draw_system_row(
+            214, "LAST CHECK",
+            status->last_checked != NULL ? status->last_checked : "--");
+        draw_system_footer(footer);
+        break;
+    }
+    default:
+        draw_system_row(126, "STATUS", "NOT CHECKED");
+        draw_system_footer(
+            "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: CHECK");
+        break;
+    }
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_local_update(const display_system_status_t *status)
 {
     if (s_u8g2 == NULL || status == NULL) {
         return;
@@ -914,53 +1071,17 @@ void display_show_about_update(const display_system_status_t *status,
 
     char version_text[40];
     char idf_text[48];
-    snprintf(version_text, sizeof(version_text), "v%s",
-             status->firmware_version != NULL ? status->firmware_version : "-");
+    format_version(version_text, sizeof(version_text),
+                   status->firmware_version);
     snprintf(idf_text, sizeof(idf_text), "ESP-IDF %s",
-             status->idf_version != NULL ? status->idf_version : "-");
+             status->idf_version != NULL ? status->idf_version : "--");
 
-    draw_system_header("ABOUT & UPDATE", 5U);
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
-    u8g2_DrawStr(s_u8g2, 18, 78, "ESP32 RLCD");
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB18_tf);
-    u8g2_DrawStr(s_u8g2, 18, 118, version_text);
-    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    u8g2_DrawStr(s_u8g2, 18, 152, idf_text);
-    u8g2_DrawStr(s_u8g2, 18, 174, "LOCAL UPDATE");
-    u8g2_DrawStr(s_u8g2, 18, 194, "HOLD KEY 3s");
-    u8g2_DrawStr(s_u8g2, 18, 214, "WI-FI + BROWSER");
-    u8g2_DrawStr(s_u8g2, 18, 234, "USB: RECOVERY");
-
-    display_qr_context_t context = {
-        .area_left = ABOUT_QR_LEFT,
-        .area_top = ABOUT_QR_TOP,
-        .area_size = ABOUT_QR_SIZE,
-        .quiet_modules = 4,
-        .max_scale = 5,
-        .standard_polarity = true,
-    };
-    const bool qr_rendered = draw_qr_payload(
-        release_url != NULL ? release_url : "https://github.com/taifuer/esp32-rlcd-firmware/releases/latest",
-        &context, ESP_QRCODE_ECC_MED);
-    if (!qr_rendered) {
-        u8g2_DrawFrame(s_u8g2, ABOUT_QR_LEFT, ABOUT_QR_TOP,
-                       ABOUT_QR_SIZE, ABOUT_QR_SIZE);
-        u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-        const int center_x = ABOUT_QR_LEFT + ABOUT_QR_SIZE / 2;
-        const char *message = "QR UNAVAILABLE";
-        u8g2_DrawStr(s_u8g2,
-                     center_x - (int)u8g2_GetStrWidth(s_u8g2, message) / 2,
-                     ABOUT_QR_TOP + ABOUT_QR_SIZE / 2, message);
-    }
-    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    const char *qr_label = "LATEST RELEASE";
-    u8g2_DrawStr(s_u8g2,
-                 ABOUT_QR_LEFT +
-                     (ABOUT_QR_SIZE -
-                      (int)u8g2_GetStrWidth(s_u8g2, qr_label)) /
-                         2,
-                 238, qr_label);
-
-    draw_system_footer("BOOT: HOME | KEY: NEXT | HOLD KEY 3s: UPDATE");
+    draw_system_header("LOCAL UPDATE", 6U);
+    draw_system_row(82, "CURRENT", version_text);
+    draw_system_row(126, "RUNTIME", idf_text);
+    draw_system_row(170, "METHOD", "WI-FI + BROWSER");
+    draw_system_row(214, "RECOVERY", "USB DOWNLOAD MODE");
+    draw_system_footer(
+        "BOOT: HOME | KEY: NEXT | HOLD KEY 3s: START");
     u8g2_SendBuffer(s_u8g2);
 }

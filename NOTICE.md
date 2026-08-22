@@ -14,11 +14,12 @@ Copyright 2026 taifu
 
 | 组件 | 固定版本或来源 | 用途 | 许可证与文本 |
 | --- | --- | --- | --- |
-| ESP-IDF | v5.5.3，`2c211b236707889e8400c4dc5644dd5c4ee071e0` | 芯片支持、驱动、Bootloader、NVS、HTTP 服务和运行时 | Apache-2.0；见 [`LICENSE`](LICENSE) |
+| ESP-IDF | v5.5.3，`2c211b236707889e8400c4dc5644dd5c4ee071e0` | 芯片支持、驱动、Bootloader、NVS、HTTP/HTTPS 服务和运行时 | Apache-2.0；见 [`LICENSE`](LICENSE) |
 | ESP32 Wi-Fi、PHY 与共存二进制库 | ESP-IDF v5.5.3 内含 | ESP32-S3 2.4 GHz 无线连接 | Apache-2.0；各库许可文本与 [`LICENSE`](LICENSE) 完全一致 |
 | FreeRTOS Kernel | ESP-IDF v5.5.3 内含 V10.5.1 | 实时操作系统内核 | MIT；见 [`LICENSES/FreeRTOS.txt`](LICENSES/FreeRTOS.txt) |
-| Mbed TLS | ESP-IDF 内含 3.6.5，`ffb280bb63c78bfec1e1ab55040671768c85c923` | 启动哈希与 Wi-Fi 加密支持 | Apache-2.0 OR GPL-2.0-or-later；本固件选择 Apache-2.0，见 [`LICENSES/Mbed-TLS.txt`](LICENSES/Mbed-TLS.txt) |
+| Mbed TLS | ESP-IDF 内含 3.6.5，`ffb280bb63c78bfec1e1ab55040671768c85c923` | HTTPS 服务器认证、固件哈希与 Wi-Fi 加密支持 | Apache-2.0 OR GPL-2.0-or-later；本固件选择 Apache-2.0，见 [`LICENSES/Mbed-TLS.txt`](LICENSES/Mbed-TLS.txt) |
 | lwIP | ESP-IDF 内含 2.2.0 | TCP/IP、DHCP、DNS 与 SNTP | BSD-3-Clause；见 [`LICENSES/lwIP.txt`](LICENSES/lwIP.txt) |
+| cJSON | ESP-IDF v5.5.3 内含 | 解析在线固件升级清单 | MIT；见 [`LICENSES/cJSON.txt`](LICENSES/cJSON.txt) |
 | wpa_supplicant | ESP-IDF 内含 2.10 | WPA2/WPA3 客户端认证 | BSD-3-Clause；见 [`LICENSES/WPA-Supplicant.txt`](LICENSES/WPA-Supplicant.txt) 和 [`LICENSES/WPA-Supplicant-COPYING.txt`](LICENSES/WPA-Supplicant-COPYING.txt) |
 | HTTP Parser | ESP-IDF 内含 2.7.0 | 本地配网页面的 HTTP 请求解析 | MIT；见 [`LICENSES/HTTP-Parser.txt`](LICENSES/HTTP-Parser.txt) |
 | Espressif QR Code | v0.2.0，`3117b1e6806738c0271bbd18df17f6d74ec66452` | 在配网页面显示标准 Wi-Fi 加入二维码 | Espressif 包装层为 Apache-2.0，见 [`LICENSE`](LICENSE)；内含 Nayuki QR Code Generator，MIT，见 [`LICENSES/Nayuki-QR-Code-Generator.txt`](LICENSES/Nayuki-QR-Code-Generator.txt) |
@@ -43,6 +44,7 @@ Release 同时附带该版本打包时的本文件与完整许可文本。
 - wpa_supplicant：Copyright (c) 2002-2022, Jouni Malinen 及贡献者；
 - HTTP Parser：基于 Igor Sysoev 的 NGINX 解析器，并包含 Joyent, Inc. 及 Node 贡献者的
   修改；
+- cJSON：Copyright (c) 2009-2017 Dave Gamble and cJSON contributors；
 - Espressif QR Code：Copyright 2015-2021 Espressif Systems (Shanghai) CO LTD；底层
   QR Code Generator：Copyright (c) Project Nayuki；
 - `esp_codec_dev`：Copyright 2023 Espressif Systems (Shanghai) CO LTD；

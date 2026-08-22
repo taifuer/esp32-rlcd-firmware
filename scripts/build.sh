@@ -32,7 +32,9 @@ cd "${RLCD_PROJECT_DIR}"
 # merge-bin depends on the normal build target, so this performs one build and
 # then creates the complete first-install/recovery image without touching a
 # serial port. The standalone application image is the browser OTA artifact.
-idf.py -B build merge-bin --output rlcd_firmware_factory.bin
+idf.py -B build \
+  -D "RLCD_PROJECT_VERSION=${RLCD_PROJECT_VERSION:-}" \
+  merge-bin --output rlcd_firmware_factory.bin
 install -m 0644 build/rlcd_firmware.bin build/rlcd_firmware_ota.bin
 
 partition_summary="$(python "${RLCD_IDF_DIR}/components/partition_table/gen_esp32part.py" \

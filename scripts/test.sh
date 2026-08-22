@@ -40,6 +40,11 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_network_retry_policy"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/network \
+  src/network/network_session_policy.c tests/test_network_session_policy.c \
+  -o "${RLCD_TEST_TMP}/test_network_session_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/network/include \
   -I"${RLCD_QRCODE_COMPONENT_DIR}" \
   src/network/network_credentials.c \
@@ -67,6 +72,20 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   src/update/firmware_update_policy.c tests/test_firmware_update_policy.c \
   -o "${RLCD_TEST_TMP}/test_firmware_update_policy"
 
+cc -std=c17 -w \
+  -I"${RLCD_IDF_DIR}/components/json/cJSON" \
+  -c "${RLCD_IDF_DIR}/components/json/cJSON/cJSON.c" \
+  -o "${RLCD_TEST_TMP}/cJSON.o"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/update/include \
+  -I"${RLCD_IDF_DIR}/components/json/cJSON" \
+  src/update/online_update_manifest.c \
+  src/update/online_update_policy.c \
+  tests/test_online_update_policy.c \
+  "${RLCD_TEST_TMP}/cJSON.o" -lm \
+  -o "${RLCD_TEST_TMP}/test_online_update_policy"
+
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/rtc/include \
   src/rtc/rtc_backup_policy.c tests/test_rtc_backup_policy.c \
@@ -87,11 +106,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_battery_level"
 "${RLCD_TEST_TMP}/test_network_credentials"
 "${RLCD_TEST_TMP}/test_network_retry_policy"
+"${RLCD_TEST_TMP}/test_network_session_policy"
 "${RLCD_TEST_TMP}/test_network_qr"
 "${RLCD_TEST_TMP}/test_button_state"
 "${RLCD_TEST_TMP}/test_page_state"
 "${RLCD_TEST_TMP}/test_network_screen_policy"
 "${RLCD_TEST_TMP}/test_firmware_update_policy"
+"${RLCD_TEST_TMP}/test_online_update_policy"
 "${RLCD_TEST_TMP}/test_rtc_backup_policy"
 "${RLCD_TEST_TMP}/test_audio_level"
 "${RLCD_TEST_TMP}/test_audio_session_state"

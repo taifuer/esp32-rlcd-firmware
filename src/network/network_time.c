@@ -21,6 +21,7 @@
 #include "freertos/task.h"
 #include "network_credentials.h"
 #include "network_retry_policy.h"
+#include "network_session_policy.h"
 #include "nvs.h"
 
 #define NETWORK_NAMESPACE "rlcd_net"
@@ -84,17 +85,22 @@ static esp_netif_t *s_station_netif;
 static httpd_handle_t s_http_server;
 static bool s_initialized;
 static bool s_storage_ready;
-static bool s_maintenance_active;
 static volatile bool s_station_active;
 static volatile uint32_t s_station_retries;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
+static network_session_policy_t s_session_policy;
 static network_time_status_t s_status = {
     .state = NETWORK_TIME_STATE_UNINITIALIZED,
     .last_error = ESP_OK,
     .last_failure = NETWORK_TIME_FAILURE_NONE,
 };
 
-static bool maintenance_active(void);
+static bool exclusive_session_active(void);
+static esp_err_t load_credentials(network_credentials_t *credentials);
+static esp_err_t stop_wifi(void);
+static esp_err_t start_station(const network_credentials_t *credentials,
+                               uint32_t timeout_ms,
+                               network_time_failure_t *failure);
 
 static void set_status(network_time_state_t state, bool configured, esp_err_t error)
 {
@@ -197,7 +203,7 @@ esp_err_t network_time_request_sync(void)
 
     network_time_status_t status = {0};
     (void)network_time_get_status(&status);
-    if (!status.configured || maintenance_active() ||
+    if (!status.configured || exclusive_session_active() ||
         (status.state != NETWORK_TIME_STATE_SYNCHRONIZED &&
          status.state != NETWORK_TIME_STATE_RETRY_WAIT)) {
         return ESP_ERR_INVALID_STATE;
@@ -217,11 +223,11 @@ esp_err_t network_time_begin_maintenance(void)
 
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (!s_maintenance_active && !s_station_active && s_http_server == NULL &&
+    if (!s_station_active && s_http_server == NULL &&
         (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
          s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
-        s_maintenance_active = true;
-        accepted = true;
+        accepted = network_session_policy_try_acquire(
+            &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
     }
     portEXIT_CRITICAL(&s_status_lock);
     if (!accepted) {
@@ -239,20 +245,67 @@ void network_time_end_maintenance(void)
         return;
     }
 
+    bool released;
     portENTER_CRITICAL(&s_status_lock);
-    s_maintenance_active = false;
+    released = network_session_policy_release(
+        &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
     portEXIT_CRITICAL(&s_status_lock);
-    xEventGroupSetBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
-    ESP_LOGI(TAG, "network maintenance window released");
+    if (released) {
+        xEventGroupSetBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
+        ESP_LOGI(TAG, "network maintenance window released");
+    }
 }
 
-static bool maintenance_active(void)
+static bool exclusive_session_active(void)
 {
     bool active;
     portENTER_CRITICAL(&s_status_lock);
-    active = s_maintenance_active;
+    active = network_session_policy_is_exclusive(&s_session_policy);
     portEXIT_CRITICAL(&s_status_lock);
     return active;
+}
+
+static bool network_task_activity_begin(void)
+{
+    bool accepted;
+    portENTER_CRITICAL(&s_status_lock);
+    accepted = network_session_policy_try_begin_task(&s_session_policy);
+    portEXIT_CRITICAL(&s_status_lock);
+    return accepted;
+}
+
+static void network_task_activity_end(void)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    network_session_policy_end_task(&s_session_policy);
+    portEXIT_CRITICAL(&s_status_lock);
+}
+
+static bool online_session_acquire(void)
+{
+    bool accepted = false;
+    portENTER_CRITICAL(&s_status_lock);
+    if (!s_station_active && s_http_server == NULL && s_status.configured &&
+        (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
+         s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
+        accepted = network_session_policy_try_acquire(
+            &s_session_policy, NETWORK_SESSION_OWNER_ONLINE);
+    }
+    portEXIT_CRITICAL(&s_status_lock);
+    return accepted;
+}
+
+static bool online_session_release(void)
+{
+    bool released;
+    portENTER_CRITICAL(&s_status_lock);
+    released = network_session_policy_release(
+        &s_session_policy, NETWORK_SESSION_OWNER_ONLINE);
+    portEXIT_CRITICAL(&s_status_lock);
+    if (released) {
+        xEventGroupSetBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
+    }
+    return released;
 }
 
 static esp_err_t load_credentials(network_credentials_t *credentials)
@@ -675,13 +728,18 @@ static esp_err_t synchronize_system_time(network_time_datetime_t *datetime)
     return ESP_OK;
 }
 
-static esp_err_t connect_and_synchronize(
-    const network_credentials_t *credentials,
-    network_time_failure_t *failure)
+static esp_err_t start_station(const network_credentials_t *credentials,
+                               uint32_t timeout_ms,
+                               network_time_failure_t *failure)
 {
+    if (credentials == NULL || timeout_ms == 0U ||
+        !network_credentials_are_valid(credentials)) {
+        return ESP_ERR_INVALID_ARG;
+    }
     if (failure != NULL) {
         *failure = NETWORK_TIME_FAILURE_SERVICE;
     }
+
     wifi_config_t wifi_config = {0};
     const size_t ssid_length = strlen(credentials->ssid);
     const size_t password_length = strlen(credentials->password);
@@ -696,7 +754,6 @@ static esp_err_t connect_and_synchronize(
     s_station_retries = 0U;
     s_station_active = true;
     xEventGroupClearBits(s_events, NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED);
-    set_status(NETWORK_TIME_STATE_CONNECTING, true, ESP_OK);
 
     esp_err_t error = esp_wifi_set_mode(WIFI_MODE_STA);
     if (error == ESP_OK) {
@@ -713,13 +770,31 @@ static esp_err_t connect_and_synchronize(
 
     const EventBits_t bits = xEventGroupWaitBits(
         s_events, NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED,
-        pdTRUE, pdFALSE, pdMS_TO_TICKS(NETWORK_STATION_TIMEOUT_MS));
+        pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
     if ((bits & NETWORK_EVENT_CONNECTED) == 0U) {
         error = ESP_ERR_TIMEOUT;
         if (failure != NULL) {
             *failure = NETWORK_TIME_FAILURE_WIFI;
         }
-    } else {
+    }
+
+    if (error != ESP_OK) {
+        (void)stop_wifi();
+    } else if (failure != NULL) {
+        *failure = NETWORK_TIME_FAILURE_NONE;
+    }
+    memset(&wifi_config, 0, sizeof(wifi_config));
+    return error;
+}
+
+static esp_err_t connect_and_synchronize(
+    const network_credentials_t *credentials,
+    network_time_failure_t *failure)
+{
+    set_status(NETWORK_TIME_STATE_CONNECTING, true, ESP_OK);
+    esp_err_t error = start_station(credentials, NETWORK_STATION_TIMEOUT_MS,
+                                    failure);
+    if (error == ESP_OK) {
         set_status(NETWORK_TIME_STATE_SYNCHRONIZING, true, ESP_OK);
         network_time_datetime_t datetime = {0};
         error = synchronize_system_time(&datetime);
@@ -744,22 +819,92 @@ static esp_err_t connect_and_synchronize(
             *failure = NETWORK_TIME_FAILURE_SERVICE;
         }
     }
-    memset(&wifi_config, 0, sizeof(wifi_config));
     return error;
+}
+
+esp_err_t network_time_begin_online_session(uint32_t timeout_ms)
+{
+    if (timeout_ms == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_initialized || !s_storage_ready || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!online_session_acquire()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    network_credentials_t credentials = {0};
+    esp_err_t error = load_credentials(&credentials);
+    if (error == ESP_OK) {
+        network_time_failure_t failure = NETWORK_TIME_FAILURE_NONE;
+        error = start_station(&credentials, timeout_ms, &failure);
+    }
+    memset(&credentials, 0, sizeof(credentials));
+
+    if (error != ESP_OK) {
+        (void)stop_wifi();
+        (void)online_session_release();
+        ESP_LOGW(TAG, "online network session could not start: %s",
+                 esp_err_to_name(error));
+        return error;
+    }
+
+    ESP_LOGI(TAG, "online network session acquired");
+    return ESP_OK;
+}
+
+esp_err_t network_time_end_online_session(void)
+{
+    if (!s_initialized || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    network_session_owner_t owner;
+    portENTER_CRITICAL(&s_status_lock);
+    owner = s_session_policy.owner;
+    portEXIT_CRITICAL(&s_status_lock);
+    if (owner == NETWORK_SESSION_OWNER_NONE) {
+        return ESP_OK;
+    }
+    if (owner != NETWORK_SESSION_OWNER_ONLINE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const esp_err_t stop_error = stop_wifi();
+    (void)online_session_release();
+    if (stop_error != ESP_OK) {
+        ESP_LOGW(TAG, "online network session Wi-Fi shutdown failed: %s",
+                 esp_err_to_name(stop_error));
+        return stop_error;
+    }
+
+    ESP_LOGI(TAG, "online network session released");
+    return ESP_OK;
 }
 
 static bool wait_for_sync_request(TickType_t timeout)
 {
-    const EventBits_t bits = xEventGroupWaitBits(
-        s_events, NETWORK_EVENT_SYNC_REQUEST |
-                      NETWORK_EVENT_MAINTENANCE_CHANGED,
-        pdTRUE, pdFALSE, timeout);
-    return (bits & NETWORK_EVENT_SYNC_REQUEST) != 0U;
+    while (true) {
+        const EventBits_t bits = xEventGroupWaitBits(
+            s_events, NETWORK_EVENT_SYNC_REQUEST |
+                          NETWORK_EVENT_MAINTENANCE_CHANGED,
+            pdTRUE, pdFALSE, timeout);
+        if ((bits & NETWORK_EVENT_SYNC_REQUEST) != 0U) {
+            return true;
+        }
+        if ((bits & NETWORK_EVENT_MAINTENANCE_CHANGED) == 0U) {
+            return false;
+        }
+        while (exclusive_session_active()) {
+            vTaskDelay(pdMS_TO_TICKS(100U));
+        }
+    }
 }
 
 static void wait_for_maintenance_end(void)
 {
-    while (maintenance_active()) {
+    while (exclusive_session_active()) {
         vTaskDelay(pdMS_TO_TICKS(100U));
     }
     xEventGroupClearBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
@@ -775,11 +920,15 @@ static void network_task(void *argument)
 
     while (true) {
         wait_for_maintenance_end();
+        if (!network_task_activity_begin()) {
+            continue;
+        }
         esp_err_t error = load_credentials(&credentials);
         if (error != ESP_OK) {
             if (setup_window_completed && error == ESP_ERR_NVS_NOT_FOUND) {
                 set_status(NETWORK_TIME_STATE_RETRY_WAIT, false,
                            ESP_ERR_TIMEOUT);
+                network_task_activity_end();
                 (void)wait_for_sync_request(portMAX_DELAY);
                 continue;
             }
@@ -793,6 +942,7 @@ static void network_task(void *argument)
             if (error == ESP_ERR_TIMEOUT) {
                 setup_window_completed = true;
                 set_status(NETWORK_TIME_STATE_RETRY_WAIT, false, error);
+                network_task_activity_end();
                 ESP_LOGI(TAG,
                          "setup window closed; local features remain available until restart");
                 (void)wait_for_sync_request(portMAX_DELAY);
@@ -800,8 +950,11 @@ static void network_task(void *argument)
             }
             if (error != ESP_OK) {
                 set_status(NETWORK_TIME_STATE_ERROR, false, error);
+                network_task_activity_end();
                 ESP_LOGE(TAG, "network setup failed: %s", esp_err_to_name(error));
                 vTaskDelay(pdMS_TO_TICKS(60000U));
+            } else {
+                network_task_activity_end();
             }
             setup_window_completed = false;
             consecutive_failures = 0U;
@@ -818,6 +971,7 @@ static void network_task(void *argument)
         if (error == ESP_OK) {
             consecutive_failures = 0U;
             set_status(NETWORK_TIME_STATE_SYNCHRONIZED, true, ESP_OK);
+            network_task_activity_end();
             user_requested_sync = wait_for_sync_request(
                 pdMS_TO_TICKS(NETWORK_RESYNC_INTERVAL_MS));
             continue;
@@ -840,6 +994,7 @@ static void network_task(void *argument)
         if (user_requested_sync) {
             ESP_LOGW(TAG, "manual time synchronization did not complete");
         }
+        network_task_activity_end();
         user_requested_sync = wait_for_sync_request(
             pdMS_TO_TICKS(retry_delay_ms));
     }

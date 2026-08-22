@@ -8,7 +8,7 @@
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.9.0/`](../dist/v0.9.0/)。
+[`dist/v0.10.0/`](../dist/v0.10.0/)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
 v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明。
 从 v0.2.0 开始，版本目录还包含对应的界面效果图。
@@ -20,16 +20,26 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 
 | 文件 | 用途 | 安装方式 |
 | --- | --- | --- |
-| `esp32-rlcd-firmware-v0.9.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
-| `esp32-rlcd-firmware-v0.9.0-ota.bin` | 已安装 v0.7.0+ 后的日常升级 | 设备本地升级网页，保留 NVS |
+| `esp32-rlcd-firmware-v0.10.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
+| `esp32-rlcd-firmware-v0.10.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、本地更新或串行应用更新，保留 NVS |
 
 目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
 参数；两类文件的 SHA-256 见
-[`dist/v0.9.0/SHA256SUMS`](../dist/v0.9.0/SHA256SUMS)。
+[`dist/v0.10.0/SHA256SUMS`](../dist/v0.10.0/SHA256SUMS)。
 
 不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
 镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
-[固件安装与本地升级](firmware-update.md)。
+[固件安装与更新](firmware-update.md)。
+
+### 从 v0.9.0 升级
+
+v0.9.0 固件没有在线更新客户端，不能直接读取服务器清单。升级到 v0.10.0 时，需从
+v0.9.0 系统中心最后一页的本地更新入口上传 v0.10.0 `-ota.bin`，或使用 USB 写入。
+设备运行 v0.10.0 后，后续正式版本即可通过 `ONLINE UPDATE` 获取。
+
+正式版只检查 `stable.json`，带预发布标识的开发版只检查 `testing.json`。联网后的自动
+流程只记录检查结果，不会自动下载或静默安装；完整操作见
+[固件安装与更新](firmware-update.md)。
 
 ## 烧录前检查
 
@@ -42,7 +52,7 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.9.0
+cd dist/v0.10.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -50,16 +60,16 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.9.0/esp32-rlcd-firmware-v0.9.0-factory.bin
-shasum -a 256 dist/v0.9.0/esp32-rlcd-firmware-v0.9.0-ota.bin
+shasum -a 256 dist/v0.10.0/esp32-rlcd-firmware-v0.10.0-factory.bin
+shasum -a 256 dist/v0.10.0/esp32-rlcd-firmware-v0.10.0-ota.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.9.0\esp32-rlcd-firmware-v0.9.0-factory.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.9.0\esp32-rlcd-firmware-v0.9.0-ota.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.9.0\SHA256SUMS
+(Get-FileHash .\dist\v0.10.0\esp32-rlcd-firmware-v0.10.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.10.0\esp32-rlcd-firmware-v0.10.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.10.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -80,7 +90,7 @@ Windows 或 WSL。
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.9.0/esp32-rlcd-firmware-v0.9.0-factory.bin \
+  --firmware dist/v0.10.0/esp32-rlcd-firmware-v0.10.0-factory.bin \
   --confirm
 ```
 
@@ -121,7 +131,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.9.0\esp32-rlcd-firmware-v0.9.0-factory.bin
+  0x0 .\dist\v0.10.0\esp32-rlcd-firmware-v0.10.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -139,7 +149,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.9.0/esp32-rlcd-firmware-v0.9.0-factory.bin
+  0x0 dist/v0.10.0/esp32-rlcd-firmware-v0.10.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -203,13 +213,14 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 | 按键 | 正常运行时的用途 |
 | --- | --- |
 | `BOOT` | 日常页面中短按切换首屏和月历；系统中心中短按返回首屏；运行时长按无操作 |
-| `KEY` | 日常页面中短按进入系统中心；系统中心中短按切换设备健康、网络与时间、音频、Wi-Fi 维护、关于与更新 |
-| `KEY` 长按 | “网络与时间”页按住 2 秒立即校时；“音频”页按住 2 秒开始临时语音回放测试；“Wi-Fi 维护”页按住 5 秒清除网络配置；“关于与更新”页按住 3 秒开启本地升级；其他页面无操作 |
+| `KEY` | 日常页面中短按进入系统中心；系统中心中短按切换设备健康、网络与时间、音频、Wi-Fi 维护、在线更新、本地更新 |
+| `KEY` 长按 | “网络与时间”页按住 2 秒立即校时；“音频”页按住 2 秒开始临时语音回放测试；“Wi-Fi 维护”页按住 5 秒清除网络配置；“在线更新”页按住 2 秒检查或进入 `REVIEW`，确认页按住 3 秒安装；“本地更新”页按住 3 秒开启更新热点；其他页面无操作 |
 | `PWR` | 开机或长按关机 |
 
-月历和系统页停留 30 秒会自动回到首屏。“关于与更新”页二维码指向项目最新 Release；
-设备健康与网络状态分别显示在对应页面。Wi-Fi 重置倒计时结束前松开会取消，不会修改
-配置；确认清除后需要按屏幕重新配网。该操作只清除本项目的网络凭据，不是全片擦除。
+月历和系统页停留 30 秒会自动回到首屏。在线更新的检查、连接和确认阶段可按 `BOOT`
+取消；开始写入后按键不再中断。本地更新在无互联网时仍可使用。设备健康与网络状态分别
+显示在对应页面。Wi-Fi 重置倒计时结束前松开会取消，不会修改配置；确认清除后需要按
+屏幕重新配网。该操作只清除本项目的网络凭据，不是全片擦除。
 
 音频测试会先播放两声提示音，再录制最多 5 秒并自动回放；录制或回放时短按 `KEY` 可
 提前结束当前阶段，短按 `BOOT` 可取消整个测试。语音只临时存放在 PSRAM，结束后立即

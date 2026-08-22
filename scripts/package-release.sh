@@ -38,7 +38,9 @@ install -m 0644 "${RLCD_PROJECT_DIR}/NOTICE.md" "${release_dir}/NOTICE.md"
 for preview_name in \
     home-screen.svg calendar-screen.svg \
     device-health.svg network-time.svg audio.svg \
-    wifi-maintenance.svg about-update.svg \
+    wifi-maintenance.svg online-update.svg local-update.svg \
+    online-update-confirm.svg online-update-progress.svg \
+    online-update-verify.svg online-update-result.svg \
     firmware-update.svg update-progress.svg \
     firmware-info.svg device-status.svg; do
     if [[ -f "${version_dir}/${preview_name}" ]]; then

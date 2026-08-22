@@ -7,8 +7,9 @@
 - 项目源码按 ESP-IDF 组件拆分在 `src/`，应用入口位于 `src/app/`。
 - 网络功能独立位于 `src/network/`，使用 ESP-IDF Wi-Fi、HTTP Server、NVS 与
   ESP-NETIF SNTP API。
-- 固件升级独立位于 `src/update/`，使用双 OTA 分区、ESP-IDF OTA API 和受实体按键控制的
-  临时本地网页。
+- 固件更新独立位于 `src/update/`：在线更新使用 HTTPS 清单、ESP-IDF CA 证书包和受控的
+  HTTP Client/OTA 写入流程，本地更新使用受实体按键控制的临时网页；两者共用双 OTA
+  分区与回滚。
 - 音频驱动与诊断位于 `src/audio/`，使用板载 ES8311、ES7210、ESP-IDF I2S 和只保存于
   PSRAM 的非阻塞临时回放状态机。
 - U8g2、微雪 ST7305 适配器、Espressif QR Code 和 `esp_codec_dev` 作为外部构建依赖使用。
@@ -74,19 +75,44 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 `LICENSE`、`NOTICE.md` 和完整许可文本压缩包，并在返回成功前自检全部附件。它不会创建
 或修改 GitHub Release，也不会更改仓库可见性。
 
+### 构建版本与更新通道
+
+仓库默认构建版本为 `0.10.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
+候选构建修改 `CMakeLists.txt`：
+
+```bash
+RLCD_PROJECT_VERSION=0.10.0-rc.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.10.0 ./scripts/build.sh
+```
+
+版本必须是固件可比较的 SemVer，且不带文件名使用的前导 `v`：
+
+- 带 `-dev`、`-rc.1` 等预发布标识的构建只读取
+  `https://mcu.taifua.com/esp32-rlcd/firmware/testing.json`；
+- `0.10.0` 这类正式构建只读取
+  `https://mcu.taifua.com/esp32-rlcd/firmware/stable.json`。
+
+预发布验证先上传版本化 `-ota.bin`，核对大小和 SHA-256，再更新 `testing.json`。正式
+发布必须从同一份已实机验收的源码构建正式版本，重新核对产物差异、大小与 SHA-256 后
+更新 `stable.json`；不要让清单提前指向尚未上传或尚未验收的文件。v0.9.0 没有在线更新
+客户端，首次迁移到 v0.10.0 仍需通过 v0.9.0 本地更新或 USB 写入。
+
 ## 版本发布清单
 
-1. 在 `CMakeLists.txt` 更新 `PROJECT_VER`。
-2. 在 `CHANGELOG.md` 把变化写入对应版本。
+1. 确定 SemVer；正式构建必须显式使用 `RLCD_PROJECT_VERSION=X.Y.Z`，并确认版本不含
+   预发布标识，因此设备只读取 `stable.json`。
+2. 在 `CHANGELOG.md` 把 `[Unreleased]` 内容整理为对应正式版本。
 3. 执行 `./scripts/bootstrap.sh --check`。
 4. 执行 `./scripts/check-repository.sh`，确认仓库边界、文档链接和历史发布哈希正常。
 5. 执行 `./scripts/check-licenses.sh`；新增或升级组件、字体时先更新 `NOTICE.md`、
    `LICENSES/` 和检查脚本。
 6. 执行 `./scripts/test.sh`，确认纯逻辑测试通过。
-7. 执行 `./scripts/build.sh`，确认无编译错误。
+7. 执行 `RLCD_PROJECT_VERSION=X.Y.Z ./scripts/build.sh`，确认无编译错误且应用描述中的
+   版本正确。
 8. 核对 `build/SHA256SUMS`。
-9. 首次迁移使用 Factory 镜像完整烧录；后续同时验证本地网页 OTA 和保留 NVS 的串行应用
-   更新，具体步骤见[开发烧录指南](flashing.md)和[固件安装与本地升级](firmware-update.md)。
+9. 首次迁移使用 Factory 镜像完整烧录；后续同时验证在线更新、本地更新和保留 NVS 的
+   串行应用更新，具体步骤见[开发烧录指南](flashing.md)和
+   [固件安装与更新](firmware-update.md)。
 10. 验证屏幕、RTC、农历、温湿度、电池 ADC、PSRAM 和串口日志。
     含联网功能的版本还必须验证首次配网、错误密码恢复、自动 SNTP、RTC 写后回读、断电
     重连、`GET_NETWORK`、USB `RESET_WIFI`、系统中心页面和上下文长按操作，并确认日志
@@ -100,8 +126,11 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 15. 提交并创建 `vX.Y.Z` 标签。
 16. 创建 GitHub Release，上传打包目录中的 Factory/OTA 固件、校验文件、效果图、
     `LICENSE`、`NOTICE.md` 和许可文本压缩包。
-17. GitHub Releases 只保留最新正式版本；删除旧 Release 条目时保留 `dist/` 历史文件。
-18. 仓库可见性是独立的人工决定；构建、打包和发布脚本均不得自动切换 Public/Private。
+17. 把同一 OTA 固件发布到版本化 HTTPS 地址，核对远端大小和 SHA-256 后再原子更新
+    `stable.json`；不得让正式清单指向测试文件。
+18. 用上一正式版本在线检查并确认能发现新版本，但安装仍需实体按键确认。
+19. GitHub Releases 只保留最新正式版本；删除旧 Release 条目时保留 `dist/` 历史文件。
+20. 仓库可见性是独立的人工决定；构建、打包和发布脚本均不得自动切换 Public/Private。
 
 ## Git 身份和 Agent 提交规则
 
@@ -134,6 +163,9 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
   已配置、状态名、错误码和非敏感长度。
 - 二维码原文包含临时热点密码；外部组件的输入日志必须在编译时关闭，`build.sh` 会检查
   最终组件归档，发现相关日志字符串时拒绝生成可用构建结果。
+- 在线更新必须通过 ESP-IDF CA 证书包验证 HTTPS；清单的项目、硬件、通道、版本、下载
+  主机、大小和 SHA-256 任一不匹配都不得写入或切换启动槽。安装前必须重新读取清单，
+  自动流程只能检查，不能下载或安装。
 - 不改写或提交仓库外的上游参考源码。
 
 ## 网络功能验收
@@ -154,22 +186,28 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
    都保留 NVS 网络凭据并按需自动恢复时间；
 7. USB `RESET_WIFI` 与“Wi-Fi 维护”页长按 `KEY` 5 秒都只清除项目网络命名空间，重启后
    回到首次配网；5 秒前松开必须取消，且一次长按只能触发一次；
-8. `BOOT` 只在首屏与月历之间切换，并能从任意系统页返回首屏；`KEY` 可进入并循环五个
+8. `BOOT` 只在首屏与月历之间切换，并能从任意系统页返回首屏；`KEY` 可进入并循环六个
    系统页，所有次级页面 30 秒超时符合规范；
 9. 只有“网络与时间”页长按 `KEY` 2 秒触发即时校时，只有“音频”页长按 2 秒执行
    扬声器、双麦克风和最长 5 秒临时回放测试，只有“Wi-Fi 维护”页长按 5 秒触发重置；
    音频录制/回放中短按 `KEY` 可停止、活动阶段短按 `BOOT` 可取消且清除 PSRAM 数据，
    其他页面长按 `KEY` 或运行时长按 `BOOT` 均无操作且不会误判为短按；
-10. “关于与更新”页二维码能由 Android 和 iOS 扫描并打开项目最新 Release，关机后按住
-    `BOOT` 再按 `PWR` 仍能正常进入 ROM 下载模式；长按 `KEY` 3 秒能开启升级热点，短按
-    `BOOT` 能在等待上传时安全取消；
-11. 上传错误文件和中断传输不会改变当前启动槽；正确 OTA 镜像显示实际进度、校验后重启，
-    版本更新且 NVS/Wi-Fi 保留；故意不确认的新镜像能由 Bootloader 回滚；
-12. Factory 镜像重新烧录后 NVS 被清空并能重新完成首次配网；`update-app.sh` 串行更新后
+10. “在线更新”页按住 `KEY` 2 秒可检查；发现新版本后再按住 2 秒进入 `REVIEW`，确认页
+    必须按住 3 秒才安装。自动联网只更新检查结果，不切换页面、不下载且不静默安装；
+11. 预发布版只接受 `testing.json`，正式版只接受 `stable.json`；错误项目、硬件、通道、
+    版本、最低版本、URL 主机、大小和 SHA-256 均被拒绝，同版本与降级也不安装；
+12. 在线检查、连接和确认阶段短按 `BOOT` 可以取消；写入开始后按键不再中断。正确 OTA
+    镜像显示实际百分比、校验后重启并保留 NVS/Wi-Fi；断网、截断响应和摘要不匹配仍保留
+    当前启动槽；故意不确认的新镜像能由 Bootloader 回滚；
+13. “本地更新”页长按 `KEY` 3 秒能开启更新热点，短按 `BOOT` 能在等待上传时安全取消；
+    上传错误文件和中断传输不会改变当前启动槽，无互联网时仍可完成本地更新；
+14. 关机后按住 `BOOT` 再按 `PWR` 仍能正常进入 ROM 下载模式；此时应用未运行，屏幕不
+    显示写入进度；
+15. Factory 镜像重新烧录后 NVS 被清空并能重新完成首次配网；`update-app.sh` 串行更新后
     NVS 和家庭 Wi-Fi 保留；
-13. 空白 NVS 的配网二维码 60 秒后恢复离线首屏，临时热点在 5 分钟后关闭；RTC 无效时
+16. 空白 NVS 的配网二维码 60 秒后恢复离线首屏，临时热点在 5 分钟后关闭；RTC 无效时
     首屏稳定显示占位符，系统中心和其他本地功能仍可操作；
-14. 串口和构建产物的字符串检查不包含实机家庭 SSID、家庭密码或二维码中的临时热点密码。
+17. 串口和构建产物的字符串检查不包含实机家庭 SSID、家庭密码或二维码中的临时热点密码。
 
 纯逻辑表单测试由 `./scripts/test.sh` 执行。网络驱动、DHCP、HTTP、SNTP、NVS 和 RTC
 联动无法由 WSL 主机测试替代，必须在目标开发板上验收。

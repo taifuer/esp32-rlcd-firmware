@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware online update result</title>
+  <desc id="description">A focused white-on-black success modal shown after the online firmware image passes validation.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="200" y="32" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">ONLINE UPDATE</text>
+    <text x="388" y="32" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">5/6</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+    <rect x="24" y="64" width="352" height="164" fill="none" stroke-width="1"/>
+    <text x="200" y="108" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">UPDATE READY</text>
+    <text x="200" y="158" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="700">v0.10.0 is ready</text>
+    <text x="200" y="199" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">Restarting automatically</text>
+    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">DO NOT POWER OFF</text>
+  </g>
+</svg>
