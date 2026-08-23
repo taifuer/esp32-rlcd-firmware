@@ -10,9 +10,15 @@ enum {
     FORM_FIELD_UNIT = 1U << 2,
     FORM_FIELD_VOLUME = 1U << 3,
     FORM_FIELD_UPDATES = 1U << 4,
+    FORM_FIELD_ALARM = 1U << 5,
+    FORM_FIELD_ALARM_HOUR = 1U << 6,
+    FORM_FIELD_ALARM_MINUTE = 1U << 7,
+    FORM_FIELD_ALARM_DAYS = 1U << 8,
     FORM_FIELD_ALL = FORM_FIELD_POWER | FORM_FIELD_TIMEZONE |
                      FORM_FIELD_UNIT | FORM_FIELD_VOLUME |
-                     FORM_FIELD_UPDATES,
+                     FORM_FIELD_UPDATES | FORM_FIELD_ALARM |
+                     FORM_FIELD_ALARM_HOUR | FORM_FIELD_ALARM_MINUTE |
+                     FORM_FIELD_ALARM_DAYS,
     FORM_KEY_CAPACITY = 16,
     FORM_VALUE_CAPACITY = 24,
 };
@@ -30,6 +36,10 @@ void app_settings_defaults(app_settings_t *settings)
         .audio_playback_volume =
             APP_SETTINGS_DEFAULT_AUDIO_PLAYBACK_VOLUME,
         .update_channel = APP_UPDATE_CHANNEL_STABLE,
+        .alarm_enabled = false,
+        .alarm_hour = APP_SETTINGS_DEFAULT_ALARM_HOUR,
+        .alarm_minute = APP_SETTINGS_DEFAULT_ALARM_MINUTE,
+        .alarm_weekdays = APP_SETTINGS_ALARM_WEEKDAYS_MASK,
     };
 }
 
@@ -52,7 +62,12 @@ bool app_settings_validate(const app_settings_t *settings)
                 APP_TEMPERATURE_UNIT_FAHRENHEIT) &&
            settings->audio_playback_volume <= 100U &&
            (settings->update_channel == APP_UPDATE_CHANNEL_STABLE ||
-            settings->update_channel == APP_UPDATE_CHANNEL_BETA);
+            settings->update_channel == APP_UPDATE_CHANNEL_BETA) &&
+           settings->alarm_hour < 24U &&
+           settings->alarm_minute < 60U &&
+           settings->alarm_weekdays != 0U &&
+           (settings->alarm_weekdays &
+            (uint8_t)~APP_SETTINGS_ALARM_ALL_DAYS_MASK) == 0U;
 }
 
 bool app_settings_format_posix_tz(int16_t utc_offset_minutes,
@@ -212,6 +227,38 @@ static bool assign_form_field(const char *key, const char *value,
         } else {
             return false;
         }
+    } else if (strcmp(key, "alarm") == 0) {
+        field = FORM_FIELD_ALARM;
+        if (strcmp(value, "off") == 0) {
+            settings->alarm_enabled = false;
+        } else if (strcmp(value, "on") == 0) {
+            settings->alarm_enabled = true;
+        } else {
+            return false;
+        }
+    } else if (strcmp(key, "alarm_hour") == 0) {
+        field = FORM_FIELD_ALARM_HOUR;
+        int hour = 0;
+        if (!parse_decimal(value, 0, 23, &hour)) {
+            return false;
+        }
+        settings->alarm_hour = (uint8_t)hour;
+    } else if (strcmp(key, "alarm_minute") == 0) {
+        field = FORM_FIELD_ALARM_MINUTE;
+        int minute = 0;
+        if (!parse_decimal(value, 0, 59, &minute)) {
+            return false;
+        }
+        settings->alarm_minute = (uint8_t)minute;
+    } else if (strcmp(key, "alarm_days") == 0) {
+        field = FORM_FIELD_ALARM_DAYS;
+        int weekdays = 0;
+        if (!parse_decimal(value, 1,
+                           APP_SETTINGS_ALARM_ALL_DAYS_MASK,
+                           &weekdays)) {
+            return false;
+        }
+        settings->alarm_weekdays = (uint8_t)weekdays;
     } else {
         return false;
     }

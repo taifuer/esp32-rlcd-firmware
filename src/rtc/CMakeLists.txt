@@ -3,4 +3,5 @@ idf_component_register(
          "rtc_backup.c" "rtc_backup_policy.c"
     INCLUDE_DIRS "include"
     REQUIRES esp_driver_i2c nvs_flash
+    PRIV_REQUIRES freertos
 )

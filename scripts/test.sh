@@ -44,6 +44,24 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_environment_comfort"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/alarm/include \
+  src/alarm/alarm_scheduler.c tests/test_alarm_scheduler.c \
+  -o "${RLCD_TEST_TMP}/test_alarm_scheduler"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/alarm/include \
+  src/alarm/alarm_input_gate.c tests/test_alarm_input_gate.c \
+  -o "${RLCD_TEST_TMP}/test_alarm_input_gate"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/alarm/include \
+  src/alarm/alarm_history_record.c tests/test_alarm_history_record.c \
+  -o "${RLCD_TEST_TMP}/test_alarm_history_record"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/network/include \
   src/network/network_credentials.c tests/test_network_credentials.c \
   -o "${RLCD_TEST_TMP}/test_network_credentials"
@@ -153,6 +171,9 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_calendar_month"
 "${RLCD_TEST_TMP}/test_battery_level"
 "${RLCD_TEST_TMP}/test_environment_comfort"
+"${RLCD_TEST_TMP}/test_alarm_scheduler"
+"${RLCD_TEST_TMP}/test_alarm_input_gate"
+"${RLCD_TEST_TMP}/test_alarm_history_record"
 "${RLCD_TEST_TMP}/test_network_credentials"
 "${RLCD_TEST_TMP}/test_network_retry_policy"
 "${RLCD_TEST_TMP}/test_network_session_policy"

@@ -101,7 +101,9 @@ static void process_line(const char *line, bool rtc_available)
         const esp_err_t error = app_settings_get(&settings);
         if (error == ESP_OK) {
             ESP_LOGI(TAG,
-                     "SETTINGS power=%s utc_offset_minutes=%d unit=%s playback_volume=%u updates=%s",
+                     "SETTINGS power=%s utc_offset_minutes=%d unit=%s "
+                     "playback_volume=%u updates=%s alarm=%s "
+                     "alarm_time=%02u:%02u alarm_days=0x%02x",
                      settings.power_mode == APP_POWER_MODE_SAVING
                          ? "saving"
                          : "normal",
@@ -113,7 +115,11 @@ static void process_line(const char *line, bool rtc_available)
                      settings.audio_playback_volume,
                      settings.update_channel == APP_UPDATE_CHANNEL_BETA
                          ? "beta"
-                         : "stable");
+                         : "stable",
+                     settings.alarm_enabled ? "on" : "off",
+                     (unsigned int)settings.alarm_hour,
+                     (unsigned int)settings.alarm_minute,
+                     (unsigned int)settings.alarm_weekdays);
         } else {
             ESP_LOGW(TAG, "SETTINGS_ERROR %s", esp_err_to_name(error));
         }

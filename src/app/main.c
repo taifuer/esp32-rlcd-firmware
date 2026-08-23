@@ -1,10 +1,15 @@
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <sys/time.h>
 #include <time.h>
 
 #include "app_storage.h"
 #include "app_settings.h"
+#include "alarm_history.h"
+#include "alarm_input_gate.h"
+#include "alarm_scheduler.h"
+#include "audio_alert.h"
 #include "audio_diagnostics.h"
 #include "battery.h"
 #include "board_buttons.h"
@@ -43,6 +48,7 @@ typedef enum {
     APP_DISPLAY_MONOCHROME_IMAGE,
     APP_DISPLAY_STATUS,
     APP_DISPLAY_AUDIO,
+    APP_DISPLAY_ALARM,
     APP_DISPLAY_SETTINGS,
     APP_DISPLAY_ONLINE_UPDATE,
     APP_DISPLAY_MANUAL_SYNC,
@@ -122,6 +128,81 @@ static const char *firmware_update_error_detail(esp_err_t error)
     default:
         return esp_err_to_name(error);
     }
+}
+
+static uint32_t alarm_schedule_revision(const app_settings_t *settings)
+{
+    if (settings == NULL) {
+        return 0U;
+    }
+    return UINT32_C(0x01000000) |
+           (settings->alarm_enabled ? UINT32_C(1) : UINT32_C(0)) |
+           ((uint32_t)settings->alarm_hour << 1U) |
+           ((uint32_t)settings->alarm_minute << 6U) |
+           ((uint32_t)settings->alarm_weekdays << 12U);
+}
+
+static alarm_schedule_t alarm_schedule_from_settings(
+    const app_settings_t *settings)
+{
+    return (alarm_schedule_t){
+        .enabled = settings != NULL && settings->alarm_enabled,
+        .hour = settings != NULL ? settings->alarm_hour : 0U,
+        .minute = settings != NULL ? settings->alarm_minute : 0U,
+        .repeat_weekdays =
+            settings != NULL ? settings->alarm_weekdays : 0U,
+        .revision = alarm_schedule_revision(settings),
+    };
+}
+
+static alarm_clock_observation_t alarm_clock_from_dashboard(
+    const display_dashboard_t *dashboard)
+{
+    alarm_clock_observation_t observation = {0};
+    if (dashboard == NULL || !dashboard->time_valid) {
+        return observation;
+    }
+
+    uint8_t calculated_weekday = 0U;
+    if (pcf85063_calculate_weekday(
+            dashboard->year, dashboard->month, dashboard->day,
+            &calculated_weekday) != ESP_OK) {
+        return observation;
+    }
+
+    observation.valid = true;
+    observation.date_key = (uint32_t)dashboard->year * 10000U +
+                           (uint32_t)dashboard->month * 100U +
+                           dashboard->day;
+    observation.weekday = calculated_weekday;
+    observation.hour = dashboard->hour;
+    observation.minute = dashboard->minute;
+    return observation;
+}
+
+static alarm_clock_observation_t alarm_clock_from_rtc(
+    const pcf85063_datetime_t *datetime)
+{
+    alarm_clock_observation_t observation = {0};
+    if (datetime == NULL || !datetime->clock_integrity) {
+        return observation;
+    }
+
+    uint8_t calculated_weekday = 0U;
+    if (pcf85063_calculate_weekday(
+            datetime->year, datetime->month, datetime->day,
+            &calculated_weekday) != ESP_OK) {
+        return observation;
+    }
+
+    observation.valid = true;
+    observation.date_key = (uint32_t)datetime->year * 10000U +
+                           (uint32_t)datetime->month * 100U +
+                           datetime->day;
+    observation.weekday = calculated_weekday;
+    observation.hour = datetime->hour;
+    observation.minute = datetime->minute;
+    return observation;
 }
 
 static display_audio_state_t display_audio_state(
@@ -568,6 +649,29 @@ void app_main(void)
         initial_sd_image_status.state == SD_IMAGE_STATE_READY);
     sd_image_state_t previous_sd_image_state =
         initial_sd_image_status.state;
+    const alarm_schedule_t alarm_schedule =
+        alarm_schedule_from_settings(&settings);
+    alarm_scheduler_t alarm_scheduler;
+    alarm_scheduler_init(&alarm_scheduler);
+    alarm_input_gate_t alarm_input_gate = {0};
+    if (storage_error == ESP_OK) {
+        alarm_history_record_t alarm_history_record = {0};
+        bool alarm_history_found = false;
+        const esp_err_t alarm_history_error = alarm_history_load(
+            &alarm_history_record, &alarm_history_found);
+        if (alarm_history_error != ESP_OK) {
+            ESP_LOGW(TAG, "alarm history unavailable: %s",
+                     esp_err_to_name(alarm_history_error));
+        } else if (alarm_history_found) {
+            (void)alarm_scheduler_restore_last_fired(
+                &alarm_scheduler, alarm_history_record.date_key,
+                alarm_history_record.schedule_revision);
+            ESP_LOGI(TAG,
+                     "restored alarm occurrence date=%u revision=0x%08x",
+                     (unsigned)alarm_history_record.date_key,
+                     (unsigned)alarm_history_record.schedule_revision);
+        }
+    }
     const TickType_t initial_tick = xTaskGetTickCount();
     TickType_t last_button_update = initial_tick;
     TickType_t last_periodic_update = initial_tick;
@@ -667,11 +771,19 @@ void app_main(void)
         const bool online_update_confirmation_active =
             online_update_status.state ==
             ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION;
+        const bool periodic_update =
+            first_periodic_update ||
+            now - last_periodic_update >=
+                pdMS_TO_TICKS(APP_PERIODIC_UPDATE_MS);
 
         button_event_t key_event = BUTTON_EVENT_NONE;
         button_event_t boot_event = BUTTON_EVENT_NONE;
         bool key_pressed = false;
         bool boot_pressed = false;
+        alarm_scheduler_input_t alarm_input =
+            ALARM_SCHEDULER_INPUT_NONE;
+        const bool alarm_was_ringing =
+            alarm_scheduler.state == ALARM_SCHEDULER_RINGING;
         const app_page_t input_page = app_page_state_current(&page_state);
         if (buttons_ready) {
             configure_key_timing(&key_button_state, input_page,
@@ -683,7 +795,152 @@ void app_main(void)
             boot_event = button_state_update(
                 &boot_button_state, boot_pressed, button_elapsed_ms);
         }
-        if (audio_session_active) {
+        const bool key_debounced_pressed =
+            button_state_is_pressed(&key_button_state);
+        const bool boot_debounced_pressed =
+            button_state_is_pressed(&boot_button_state);
+        const bool key_pressed_or_debounced =
+            key_pressed || key_debounced_pressed;
+        const bool boot_pressed_or_debounced =
+            boot_pressed || boot_debounced_pressed;
+        const bool alarm_gate_was_blocking =
+            alarm_input_gate_is_blocking(&alarm_input_gate);
+        if (alarm_was_ringing || alarm_gate_was_blocking) {
+            alarm_input = alarm_input_gate_update(
+                &alarm_input_gate, key_pressed_or_debounced,
+                boot_pressed_or_debounced,
+                key_event == BUTTON_EVENT_SHORT_PRESS,
+                boot_event == BUTTON_EVENT_SHORT_PRESS);
+            if (!alarm_was_ringing) {
+                alarm_input = ALARM_SCHEDULER_INPUT_NONE;
+            }
+        }
+
+        if (periodic_update) {
+            network_time_datetime_t synchronized_time = {0};
+            if (network_time_take_datetime(&synchronized_time)) {
+                last_sync_time = synchronized_time;
+                last_sync_valid = true;
+                automatic_update_check_pending =
+                    power_policy.automatic_network;
+                system_status_data_changed = true;
+                esp_err_t rtc_sync_error = ESP_OK;
+                if (!rtc_driver_ready) {
+                    rtc_sync_error = ESP_ERR_INVALID_STATE;
+                    ESP_LOGW(TAG,
+                             "SNTP succeeded but PCF85063 is unavailable");
+                } else {
+                    rtc_sync_error =
+                        write_network_time_to_rtc(&synchronized_time);
+                    if (rtc_sync_error != ESP_OK) {
+                        ESP_LOGW(TAG,
+                                 "could not write SNTP time to RTC: %s",
+                                 esp_err_to_name(rtc_sync_error));
+                    }
+                }
+                if (manual_sync_ui == MANUAL_SYNC_UI_ACTIVE) {
+                    manual_sync_error = rtc_sync_error;
+                    manual_sync_ui = rtc_sync_error == ESP_OK
+                                         ? MANUAL_SYNC_UI_SUCCESS
+                                         : MANUAL_SYNC_UI_FAILED;
+                    manual_sync_ui_started = now;
+                    render_requested = true;
+                }
+            }
+        }
+        usb_commands_poll(rtc_driver_ready);
+
+        bool rtc_alarm_sample_attempted = false;
+        esp_err_t rtc_alarm_sample_error = ESP_OK;
+        if (settings.alarm_enabled && rtc_driver_ready && periodic_update) {
+            const bool status_page_needs_fresh_alarm_sample =
+                app_page_state_current(&page_state) == APP_PAGE_STATUS &&
+                status_refresh_pending;
+            const bool rtc_alarm_sample_due =
+                first_periodic_update ||
+                status_page_needs_fresh_alarm_sample ||
+                now - last_rtc_read >= pdMS_TO_TICKS(rtc_read_wait_ms);
+            if (rtc_alarm_sample_due) {
+                rtc_alarm_sample_attempted = true;
+                rtc_alarm_sample_error = pcf85063_read(&datetime);
+            }
+        }
+
+        const alarm_clock_observation_t alarm_clock =
+            rtc_alarm_sample_attempted
+                ? (rtc_alarm_sample_error == ESP_OK
+                       ? alarm_clock_from_rtc(&datetime)
+                       : (alarm_clock_observation_t){0})
+                : alarm_clock_from_dashboard(&dashboard);
+        const alarm_scheduler_result_t alarm_result =
+            alarm_scheduler_update(
+                &alarm_scheduler, &alarm_schedule, &alarm_clock,
+                (uint32_t)((uint64_t)now * portTICK_PERIOD_MS),
+                alarm_input);
+        if (alarm_result.output ==
+            ALARM_SCHEDULER_OUTPUT_START_RINGING) {
+            if (alarm_result.snooze_available) {
+                const alarm_history_record_t record = {
+                    .schedule_revision = alarm_schedule.revision,
+                    .date_key = alarm_clock.date_key,
+                };
+                const esp_err_t history_error =
+                    alarm_history_store(&record);
+                if (history_error != ESP_OK) {
+                    ESP_LOGW(TAG,
+                             "could not persist alarm occurrence: %s",
+                             esp_err_to_name(history_error));
+                }
+            }
+            const esp_err_t alert_error = audio_alert_start();
+            if (alert_error != ESP_OK) {
+                ESP_LOGW(TAG,
+                         "alarm visual started without audio: %s",
+                         esp_err_to_name(alert_error));
+            }
+            alarm_input_gate_arm(&alarm_input_gate,
+                                 key_pressed_or_debounced,
+                                 boot_pressed_or_debounced);
+            app_page_state_note_activity(&page_state);
+            render_requested = true;
+            ESP_LOGI(TAG, "alarm ringing%s",
+                     alarm_result.snooze_available ? ""
+                                                   : " after snooze");
+        } else if (alarm_result.output ==
+                   ALARM_SCHEDULER_OUTPUT_STOP_RINGING) {
+            const esp_err_t stop_error = audio_alert_stop();
+            if (stop_error != ESP_OK &&
+                stop_error != ESP_ERR_INVALID_STATE) {
+                ESP_LOGW(TAG, "could not stop alarm audio: %s",
+                         esp_err_to_name(stop_error));
+            }
+            alarm_input_gate_arm(&alarm_input_gate,
+                                 key_pressed_or_debounced,
+                                 boot_pressed_or_debounced);
+            app_page_state_note_activity(&page_state);
+            render_requested = true;
+            ESP_LOGI(TAG, "alarm stopped%s",
+                     alarm_result.state == ALARM_SCHEDULER_SNOOZED
+                         ? "; snoozed for 5 minutes"
+                         : "");
+        }
+        const bool alarm_modal_active =
+            alarm_result.state == ALARM_SCHEDULER_RINGING;
+        const bool alarm_started_this_loop =
+            alarm_result.output ==
+            ALARM_SCHEDULER_OUTPUT_START_RINGING;
+        const bool alarm_button_events_suppressed =
+            alarm_was_ringing || alarm_started_this_loop ||
+            alarm_gate_was_blocking;
+
+        if (alarm_button_events_suppressed) {
+            if (key_event != BUTTON_EVENT_NONE ||
+                boot_event != BUTTON_EVENT_NONE) {
+                app_page_state_note_activity(&page_state);
+            }
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
+        } else if (audio_session_active) {
             audio_session_input_t audio_input = AUDIO_SESSION_INPUT_NONE;
             if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
                 audio_input = AUDIO_SESSION_INPUT_BOOT_SHORT_PRESS;
@@ -889,7 +1146,9 @@ void app_main(void)
         const uint32_t button_hold_ms =
             button_state_hold_ms(&key_button_state);
         const bool settings_portal_prompt_active =
-            buttons_ready && input_page == APP_PAGE_SETTINGS &&
+            !alarm_button_events_suppressed && !alarm_modal_active &&
+            buttons_ready &&
+            input_page == APP_PAGE_SETTINGS &&
             manual_sync_ui == MANUAL_SYNC_UI_NONE &&
             !firmware_update_ui_active && !online_update_busy &&
             !online_update_confirmation_active &&
@@ -922,13 +1181,13 @@ void app_main(void)
             !(input_page == APP_PAGE_ONLINE_UPDATE &&
               (online_update_busy ||
                online_update_confirmation_active)) &&
-            !audio_session_active && !button_interaction_active &&
+            !alarm_button_events_suppressed && !alarm_modal_active &&
+            !audio_session_active &&
+            !button_interaction_active &&
             app_page_state_tick(&page_state, button_elapsed_ms)) {
             render_requested = true;
             ESP_LOGI(TAG, "page timeout: returning home");
         }
-
-        usb_commands_poll(rtc_driver_ready);
 
         if (running_image_confirmation_pending &&
             now - initial_tick >= pdMS_TO_TICKS(APP_OTA_CONFIRM_DELAY_MS)) {
@@ -944,10 +1203,6 @@ void app_main(void)
             running_image_confirmation_pending = false;
         }
 
-        const bool periodic_update =
-            first_periodic_update ||
-            now - last_periodic_update >=
-                pdMS_TO_TICKS(APP_PERIODIC_UPDATE_MS);
         if (periodic_update) {
             const bool first_update = first_periodic_update;
             first_periodic_update = false;
@@ -968,43 +1223,20 @@ void app_main(void)
                 now - last_battery_read >=
                     pdMS_TO_TICKS(power_policy.battery_read_interval_ms);
 
-            network_time_datetime_t synchronized_time = {0};
-            if (network_time_take_datetime(&synchronized_time)) {
-                last_sync_time = synchronized_time;
-                last_sync_valid = true;
-                automatic_update_check_pending =
-                    power_policy.automatic_network;
-                system_status_data_changed = true;
-                esp_err_t rtc_sync_error = ESP_OK;
-                if (!rtc_driver_ready) {
-                    rtc_sync_error = ESP_ERR_INVALID_STATE;
-                    ESP_LOGW(TAG, "SNTP succeeded but PCF85063 is unavailable");
-                } else {
-                    rtc_sync_error =
-                        write_network_time_to_rtc(&synchronized_time);
-                    if (rtc_sync_error != ESP_OK) {
-                        ESP_LOGW(TAG, "could not write SNTP time to RTC: %s",
-                                 esp_err_to_name(rtc_sync_error));
-                    }
-                }
-                if (manual_sync_ui == MANUAL_SYNC_UI_ACTIVE) {
-                    manual_sync_error = rtc_sync_error;
-                    manual_sync_ui = rtc_sync_error == ESP_OK
-                                         ? MANUAL_SYNC_UI_SUCCESS
-                                         : MANUAL_SYNC_UI_FAILED;
-                    manual_sync_ui_started = now;
-                    render_requested = true;
-                }
-            }
-
-            if (rtc_driver_ready && rtc_read_due &&
-                !firmware_update_ui_active) {
+            if (rtc_driver_ready && rtc_read_due) {
                 last_rtc_read = now;
-                const esp_err_t error = pcf85063_read(&datetime);
+                const esp_err_t error =
+                    rtc_alarm_sample_attempted
+                        ? rtc_alarm_sample_error
+                        : pcf85063_read(&datetime);
                 if (error == ESP_OK) {
                     rtc_read_wait_ms =
                         app_power_policy_next_clock_delay_ms(
                             &power_policy, datetime.second);
+                    if (settings.alarm_enabled &&
+                        rtc_read_wait_ms > APP_PERIODIC_UPDATE_MS) {
+                        rtc_read_wait_ms = APP_PERIODIC_UPDATE_MS;
+                    }
                     const bool rtc_display_changed =
                         dashboard.time_valid != datetime.clock_integrity ||
                         (datetime.clock_integrity &&
@@ -1050,6 +1282,10 @@ void app_main(void)
                     }
                 } else {
                     rtc_read_wait_ms = power_policy.rtc_read_interval_ms;
+                    if (settings.alarm_enabled &&
+                        rtc_read_wait_ms > APP_PERIODIC_UPDATE_MS) {
+                        rtc_read_wait_ms = APP_PERIODIC_UPDATE_MS;
+                    }
                     const bool rtc_display_changed = dashboard.time_valid;
                     dashboard.time_valid = false;
                     dashboard.lunar_valid = false;
@@ -1207,7 +1443,19 @@ void app_main(void)
         }
 
         const app_page_t active_page = app_page_state_current(&page_state);
-        if (display_ready && settings_portal_prompt_active) {
+        if (display_ready && alarm_modal_active) {
+            if (render_requested ||
+                previous_display_mode != APP_DISPLAY_ALARM) {
+                const display_alarm_status_t alarm_status = {
+                    .hour = dashboard.hour,
+                    .minute = dashboard.minute,
+                    .snooze_available = alarm_result.snooze_available,
+                };
+                display_show_alarm(&alarm_status);
+            }
+            previous_display_mode = APP_DISPLAY_ALARM;
+            previous_portal_seconds = 0U;
+        } else if (display_ready && settings_portal_prompt_active) {
             if (previous_display_mode !=
                     APP_DISPLAY_SETTINGS_PORTAL_PROMPT ||
                 portal_seconds_remaining != previous_portal_seconds) {
@@ -1423,6 +1671,10 @@ void app_main(void)
                             APP_TEMPERATURE_UNIT_FAHRENHEIT,
                         .playback_volume_percent =
                             settings.audio_playback_volume,
+                        .alarm_enabled = settings.alarm_enabled,
+                        .alarm_hour = settings.alarm_hour,
+                        .alarm_minute = settings.alarm_minute,
+                        .alarm_weekdays = settings.alarm_weekdays,
                     };
                     display_show_settings(&settings_status);
                 } else if (active_page == APP_PAGE_ONLINE_UPDATE) {
@@ -1479,6 +1731,7 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_STATUS ||
                     previous_display_mode == APP_DISPLAY_AUDIO ||
                     previous_display_mode == APP_DISPLAY_SETTINGS ||
+                    previous_display_mode == APP_DISPLAY_ALARM ||
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||
                     previous_display_mode == APP_DISPLAY_MONOCHROME_IMAGE ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC ||

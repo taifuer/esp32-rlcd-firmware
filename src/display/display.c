@@ -941,7 +941,7 @@ void display_show_audio(const display_audio_status_t *status)
     } else if (status->state == DISPLAY_AUDIO_STATE_COMPLETED ||
                status->test_completed) {
         draw_system_row(72, "SPEAKER",
-                        status->tone_played ? "TONE PLAYED" : "FAILED");
+                        status->tone_played ? "TONE PLAYED" : "MUTED");
         if (status->microphone_capture_completed) {
             snprintf(value, sizeof(value), "%u %%",
                      status->microphone_1_level_percent);
@@ -1005,6 +1005,20 @@ static void format_utc_offset(char *buffer, size_t capacity,
              (unsigned)(absolute_minutes % 60U));
 }
 
+static const char *alarm_repeat_name(uint8_t weekdays)
+{
+    switch (weekdays) {
+    case 0x7fU:
+        return "DAILY";
+    case 0x3eU:
+        return "MON-FRI";
+    case 0x41U:
+        return "WEEKENDS";
+    default:
+        return "CUSTOM";
+    }
+}
+
 void display_show_settings(const display_settings_status_t *status)
 {
     if (s_u8g2 == NULL || status == NULL) {
@@ -1028,13 +1042,48 @@ void display_show_settings(const display_settings_status_t *status)
         snprintf(value, sizeof(value), "NOT SET");
     }
     draw_system_row(180, "VOLUME", value);
-    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    u8g2_DrawStr(s_u8g2, SYSTEM_LABEL_X, 216, "PORTAL");
-    u8g2_DrawStr(s_u8g2, SYSTEM_VALUE_X, 216,
-                 "CONFIG | RTC | WI-FI | LOCAL OTA");
+    if (status->alarm_enabled && status->alarm_hour < 24U &&
+        status->alarm_minute < 60U &&
+        (status->alarm_weekdays & 0x7fU) != 0U) {
+        snprintf(value, sizeof(value), "%02u:%02u %s",
+                 status->alarm_hour, status->alarm_minute,
+                 alarm_repeat_name(status->alarm_weekdays));
+    } else {
+        snprintf(value, sizeof(value), "OFF");
+    }
+    draw_system_row(216, "ALARM", value);
 
     draw_system_footer(
         "BOOT: HOME | KEY: NEXT | HOLD KEY 3s: OPEN PORTAL");
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_alarm(const display_alarm_status_t *status)
+{
+    if (s_u8g2 == NULL || status == NULL || status->hour >= 24U ||
+        status->minute >= 60U) {
+        return;
+    }
+
+    char time_text[8];
+    snprintf(time_text, sizeof(time_text), "%02u:%02u", status->hour,
+             status->minute);
+
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    draw_centered(34, "ALARM");
+    u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN, SYSTEM_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_logisoso78_tn);
+    draw_centered(169, time_text);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    draw_centered(216, status->snooze_available ? "TIME TO WAKE"
+                                               : "SNOOZED ALARM");
+    draw_system_footer(status->snooze_available
+                           ? "BOOT: STOP | KEY: SNOOZE 5m"
+                           : "BOOT: STOP");
     u8g2_SendBuffer(s_u8g2);
 }
 

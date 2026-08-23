@@ -2,6 +2,9 @@
 
 #include <stddef.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #define PCF85063_CONTROL_1_REGISTER 0x00
 #define PCF85063_SECONDS_REGISTER 0x04
 #define PCF85063_CONTROL_1_STOP (1U << 5U)
@@ -10,6 +13,7 @@
 #define PCF85063_I2C_CLOCK_HZ 100000
 
 static i2c_master_dev_handle_t s_device;
+static SemaphoreHandle_t s_mutex;
 
 static bool bcd_decode(uint8_t value, uint8_t *decoded)
 {
@@ -51,12 +55,23 @@ esp_err_t pcf85063_init(i2c_master_bus_handle_t bus)
         return ESP_OK;
     }
 
+    s_mutex = xSemaphoreCreateMutex();
+    if (s_mutex == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
     const i2c_device_config_t config = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = PCF85063_I2C_ADDRESS,
         .scl_speed_hz = PCF85063_I2C_CLOCK_HZ,
     };
-    return i2c_master_bus_add_device(bus, &config, &s_device);
+    const esp_err_t error =
+        i2c_master_bus_add_device(bus, &config, &s_device);
+    if (error != ESP_OK) {
+        vSemaphoreDelete(s_mutex);
+        s_mutex = NULL;
+    }
+    return error;
 }
 
 esp_err_t pcf85063_read(pcf85063_datetime_t *datetime)
@@ -64,8 +79,12 @@ esp_err_t pcf85063_read(pcf85063_datetime_t *datetime)
     if (datetime == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (s_device == NULL) {
+    if (s_device == NULL || s_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
     }
 
     const uint8_t start_register = PCF85063_SECONDS_REGISTER;
@@ -74,6 +93,7 @@ esp_err_t pcf85063_read(pcf85063_datetime_t *datetime)
         s_device, &start_register, sizeof(start_register), raw, sizeof(raw),
         PCF85063_TRANSFER_TIMEOUT_MS);
     if (error != ESP_OK) {
+        xSemaphoreGive(s_mutex);
         return error;
     }
 
@@ -90,15 +110,18 @@ esp_err_t pcf85063_read(pcf85063_datetime_t *datetime)
         !bcd_decode(raw[3] & 0x3fU, &value.day) ||
         !bcd_decode(raw[5] & 0x1fU, &value.month) ||
         !bcd_decode(raw[6], &year)) {
+        xSemaphoreGive(s_mutex);
         return ESP_ERR_INVALID_RESPONSE;
     }
     value.year = (uint16_t)(2000U + year);
 
     if (!pcf85063_datetime_is_valid(&value)) {
+        xSemaphoreGive(s_mutex);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
     *datetime = value;
+    xSemaphoreGive(s_mutex);
     return ESP_OK;
 }
 
@@ -107,8 +130,11 @@ esp_err_t pcf85063_write(const pcf85063_datetime_t *datetime)
     if (datetime == NULL || !pcf85063_datetime_is_valid(datetime)) {
         return ESP_ERR_INVALID_ARG;
     }
-    if (s_device == NULL) {
+    if (s_device == NULL || s_mutex == NULL) {
         return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
     }
 
     const uint8_t control_register = PCF85063_CONTROL_1_REGISTER;
@@ -117,6 +143,7 @@ esp_err_t pcf85063_write(const pcf85063_datetime_t *datetime)
         s_device, &control_register, sizeof(control_register), &control_1, sizeof(control_1),
         PCF85063_TRANSFER_TIMEOUT_MS);
     if (error != ESP_OK) {
+        xSemaphoreGive(s_mutex);
         return error;
     }
 
@@ -130,6 +157,7 @@ esp_err_t pcf85063_write(const pcf85063_datetime_t *datetime)
     error = i2c_master_transmit(
         s_device, stop_write, sizeof(stop_write), PCF85063_TRANSFER_TIMEOUT_MS);
     if (error != ESP_OK) {
+        xSemaphoreGive(s_mutex);
         return error;
     }
 
@@ -153,6 +181,7 @@ esp_err_t pcf85063_write(const pcf85063_datetime_t *datetime)
     };
     const esp_err_t start_error = i2c_master_transmit(
         s_device, start_write, sizeof(start_write), PCF85063_TRANSFER_TIMEOUT_MS);
+    xSemaphoreGive(s_mutex);
     return time_error != ESP_OK ? time_error : start_error;
 }
 

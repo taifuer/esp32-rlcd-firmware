@@ -119,10 +119,10 @@ ROM 下载模式。完整步骤见[固件安装与更新](firmware-update.md)。
 
 ### 构建版本与在线通道
 
-仓库默认生成 `0.13.0`。构建后续预发布候选时使用环境变量，例如：
+仓库默认生成 `0.14.0`。构建后续预发布候选时使用环境变量，例如：
 
 ```bash
-RLCD_PROJECT_VERSION=0.14.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.15.0-dev.1 ./scripts/build.sh
 ```
 
 所有版本默认读取 `stable.json`，只有在设备设置中显式开启 Beta 更新后才读取

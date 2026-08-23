@@ -15,6 +15,10 @@ static void test_defaults_and_validation(void)
     assert(settings.temperature_unit == APP_TEMPERATURE_UNIT_CELSIUS);
     assert(settings.audio_playback_volume == 68U);
     assert(settings.update_channel == APP_UPDATE_CHANNEL_STABLE);
+    assert(!settings.alarm_enabled);
+    assert(settings.alarm_hour == 7U);
+    assert(settings.alarm_minute == 30U);
+    assert(settings.alarm_weekdays == APP_SETTINGS_ALARM_WEEKDAYS_MASK);
     assert(app_settings_validate(&settings));
 
     settings.schema_version++;
@@ -39,6 +43,17 @@ static void test_defaults_and_validation(void)
     assert(!app_settings_validate(&settings));
     app_settings_defaults(&settings);
     settings.update_channel = (app_update_channel_t)2;
+    assert(!app_settings_validate(&settings));
+    app_settings_defaults(&settings);
+    settings.alarm_hour = 24U;
+    assert(!app_settings_validate(&settings));
+    app_settings_defaults(&settings);
+    settings.alarm_minute = 60U;
+    assert(!app_settings_validate(&settings));
+    app_settings_defaults(&settings);
+    settings.alarm_weekdays = 0U;
+    assert(!app_settings_validate(&settings));
+    settings.alarm_weekdays = 0x80U;
     assert(!app_settings_validate(&settings));
     assert(!app_settings_validate(NULL));
     app_settings_defaults(NULL);
@@ -93,7 +108,9 @@ static void test_power_policy(void)
 
 static void assert_form(const char *form, app_power_mode_t power,
                         int16_t offset, app_temperature_unit_t unit,
-                        uint8_t volume, app_update_channel_t updates)
+                        uint8_t volume, app_update_channel_t updates,
+                        bool alarm_enabled, uint8_t alarm_hour,
+                        uint8_t alarm_minute, uint8_t alarm_weekdays)
 {
     app_settings_t settings = {0};
     assert(app_settings_parse_form(form, strlen(form), &settings));
@@ -103,22 +120,29 @@ static void assert_form(const char *form, app_power_mode_t power,
     assert(settings.temperature_unit == unit);
     assert(settings.audio_playback_volume == volume);
     assert(settings.update_channel == updates);
+    assert(settings.alarm_enabled == alarm_enabled);
+    assert(settings.alarm_hour == alarm_hour);
+    assert(settings.alarm_minute == alarm_minute);
+    assert(settings.alarm_weekdays == alarm_weekdays);
 }
 
 static void test_form_parser(void)
 {
-    assert_form("power=normal&timezone=480&unit=c&volume=75&updates=stable",
+    assert_form("power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=62",
                 APP_POWER_MODE_NORMAL, 480,
                 APP_TEMPERATURE_UNIT_CELSIUS, 75U,
-                APP_UPDATE_CHANNEL_STABLE);
-    assert_form("updates=beta&volume=0&unit=f&timezone=-300&power=saving",
+                APP_UPDATE_CHANNEL_STABLE, true, 7U, 30U,
+                APP_SETTINGS_ALARM_WEEKDAYS_MASK);
+    assert_form("updates=beta&volume=0&unit=f&timezone=-300&power=saving&alarm=off&alarm_hour=0&alarm_minute=0&alarm_days=127",
                 APP_POWER_MODE_SAVING, -300,
                 APP_TEMPERATURE_UNIT_FAHRENHEIT, 0U,
-                APP_UPDATE_CHANNEL_BETA);
-    assert_form("power=%73aving&timezone=%2B330&unit=f&volume=100&updates=%62eta",
+                APP_UPDATE_CHANNEL_BETA, false, 0U, 0U,
+                APP_SETTINGS_ALARM_ALL_DAYS_MASK);
+    assert_form("power=%73aving&timezone=%2B330&unit=f&volume=100&updates=%62eta&alarm=%6fn&alarm_hour=23&alarm_minute=59&alarm_days=65",
                 APP_POWER_MODE_SAVING, 330,
                 APP_TEMPERATURE_UNIT_FAHRENHEIT, 100U,
-                APP_UPDATE_CHANNEL_BETA);
+                APP_UPDATE_CHANNEL_BETA, true, 23U, 59U,
+                APP_SETTINGS_ALARM_WEEKENDS_MASK);
 
     const char *invalid[] = {
         "",
@@ -140,6 +164,12 @@ static void test_form_parser(void)
         "power=normal&timezone=480&unit=c&volume=75&updates=stable=",
         "power=%GG&timezone=480&unit=c&volume=75&updates=stable",
         "power=%00normal&timezone=480&unit=c&volume=75&updates=stable",
+        "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=maybe&alarm_hour=7&alarm_minute=30&alarm_days=62",
+        "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=24&alarm_minute=30&alarm_days=62",
+        "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=60&alarm_days=62",
+        "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=0",
+        "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=128",
+        "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=62&alarm_days=62",
     };
     for (size_t index = 0U; index < sizeof(invalid) / sizeof(invalid[0]);
          ++index) {

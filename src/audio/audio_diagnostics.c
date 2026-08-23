@@ -1,4 +1,5 @@
 #include "audio_diagnostics.h"
+#include "audio_alert.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -40,10 +41,8 @@ enum {
     AUDIO_TONE_GAP_MS = 60,
     AUDIO_TONE_FADE_MS = 15,
     AUDIO_TONE_AMPLITUDE = 7000,
-    AUDIO_TEST_TONE_VOLUME = 58,
-    /* The default esp_codec_dev curve is 0.5 dB per step. Keep the verified
-     * prompt level, but give speech a conservative 5 dB intelligibility
-     * boost while the digital limiter still caps its peak. */
+    /* Give speech a conservative intelligibility boost while the digital
+     * limiter still caps its peak. */
     AUDIO_MICROPHONE_GAIN_DB = 30,
     AUDIO_PREPARE_RECORDING_MS = 300,
     AUDIO_CAPTURE_TO_PLAYBACK_MS = 150,
@@ -53,6 +52,10 @@ enum {
     AUDIO_PLAYBACK_MAX_GAIN = AUDIO_PLAYBACK_GAIN_ONE * 4,
     AUDIO_WORKER_STACK_SIZE = 6144,
     AUDIO_WORKER_PRIORITY = 4,
+    AUDIO_ALERT_NOTE_MS = 170,
+    AUDIO_ALERT_GAP_MS = 70,
+    AUDIO_ALERT_REPEAT_GAP_MS = 900,
+    AUDIO_ALERT_SAFETY_TIMEOUT_MS = 65U * 1000U,
 };
 
 static const char *TAG = "audio_diagnostics";
@@ -64,6 +67,12 @@ typedef enum {
     AUDIO_CONTROL_STOP,
     AUDIO_CONTROL_CANCEL,
 } audio_control_t;
+
+typedef enum {
+    AUDIO_WORK_NONE = 0,
+    AUDIO_WORK_DIAGNOSTIC,
+    AUDIO_WORK_ALERT,
+} audio_work_t;
 
 typedef struct {
     i2s_chan_handle_t tx_channel;
@@ -80,6 +89,11 @@ typedef struct {
     TaskHandle_t worker_task;
     bool stop_requested;
     bool cancel_requested;
+    bool alert_cancelled_diagnostic;
+    bool diagnostic_requested;
+    bool alert_requested;
+    bool alert_running;
+    bool alert_stop_requested;
     audio_diagnostics_status_t status;
 } audio_diagnostics_context_t;
 
@@ -183,6 +197,7 @@ static audio_control_t take_control(void)
     if (s_audio.cancel_requested) {
         control = AUDIO_CONTROL_CANCEL;
         s_audio.cancel_requested = false;
+        s_audio.alert_cancelled_diagnostic = false;
         s_audio.stop_requested = false;
     } else if (s_audio.stop_requested) {
         control = AUDIO_CONTROL_STOP;
@@ -467,6 +482,78 @@ static esp_err_t write_note(int16_t *playback_buffer,
     return ESP_OK;
 }
 
+static bool alert_should_stop(TickType_t started)
+{
+    bool requested = false;
+    lock_context();
+    requested = s_audio.alert_stop_requested;
+    unlock_context();
+    const uint32_t elapsed_ms =
+        (uint32_t)(xTaskGetTickCount() - started) * portTICK_PERIOD_MS;
+    return requested || elapsed_ms >= AUDIO_ALERT_SAFETY_TIMEOUT_MS;
+}
+
+static esp_err_t alert_write_silence(int16_t *playback_buffer,
+                                     uint32_t duration_ms,
+                                     TickType_t started, bool *stopped)
+{
+    memset(playback_buffer, 0,
+           AUDIO_TONE_CHUNK_FRAMES * sizeof(playback_buffer[0]));
+    uint32_t frames_remaining =
+        (AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ * duration_ms) / 1000U;
+    while (frames_remaining > 0U) {
+        if (alert_should_stop(started)) {
+            *stopped = true;
+            return ESP_OK;
+        }
+        const uint32_t frames = frames_remaining > AUDIO_TONE_CHUNK_FRAMES
+                                    ? AUDIO_TONE_CHUNK_FRAMES
+                                    : frames_remaining;
+        const esp_err_t error = codec_error(esp_codec_dev_write(
+            s_audio.speaker_device, playback_buffer,
+            (int)(frames * sizeof(playback_buffer[0]))));
+        if (error != ESP_OK) {
+            return error;
+        }
+        frames_remaining -= frames;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t alert_write_note(int16_t *playback_buffer,
+                                  uint32_t frequency_hz,
+                                  uint32_t duration_ms,
+                                  TickType_t started, bool *stopped)
+{
+    const uint32_t total_frames =
+        (AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ * duration_ms) / 1000U;
+    uint32_t frames_written = 0U;
+    uint32_t phase = 0U;
+    while (frames_written < total_frames) {
+        if (alert_should_stop(started)) {
+            *stopped = true;
+            return ESP_OK;
+        }
+        const uint32_t frames =
+            total_frames - frames_written > AUDIO_TONE_CHUNK_FRAMES
+                ? AUDIO_TONE_CHUNK_FRAMES
+                : total_frames - frames_written;
+        for (uint32_t frame = 0U; frame < frames; ++frame) {
+            playback_buffer[frame] = triangle_sample(
+                &phase, frequency_hz, frames_written + frame,
+                total_frames);
+        }
+        const esp_err_t error = codec_error(esp_codec_dev_write(
+            s_audio.speaker_device, playback_buffer,
+            (int)(frames * sizeof(playback_buffer[0]))));
+        if (error != ESP_OK) {
+            return error;
+        }
+        frames_written += frames;
+    }
+    return ESP_OK;
+}
+
 static esp_err_t open_speaker(int volume)
 {
     if (s_audio.speaker_device == NULL) {
@@ -502,10 +589,21 @@ static esp_err_t close_speaker(void)
     return codec_error(esp_codec_dev_close(s_audio.speaker_device));
 }
 
-static esp_err_t play_test_tone(int16_t *playback_buffer, bool *cancelled)
+static esp_err_t play_test_tone(int16_t *playback_buffer, uint8_t volume,
+                                bool *played, bool *cancelled)
 {
+    *played = false;
     *cancelled = false;
-    esp_err_t error = open_speaker(AUDIO_TEST_TONE_VOLUME);
+    if (volume == 0U) {
+        if (take_control() == AUDIO_CONTROL_CANCEL) {
+            *cancelled = true;
+        }
+        ESP_LOGI(TAG,
+                 "diagnostic tone skipped because playback volume is 0%%");
+        return ESP_OK;
+    }
+
+    esp_err_t error = open_speaker(volume);
     if (error != ESP_OK) {
         return error;
     }
@@ -527,7 +625,9 @@ static esp_err_t play_test_tone(int16_t *playback_buffer, bool *cancelled)
         error = write_silence(playback_buffer, 30U, cancelled);
     }
     const esp_err_t close_error = close_speaker();
-    return error != ESP_OK ? error : close_error;
+    const esp_err_t result = error != ESP_OK ? error : close_error;
+    *played = result == ESP_OK && !*cancelled;
+    return result;
 }
 
 static esp_err_t open_microphones(void)
@@ -752,8 +852,8 @@ static void playback_parameters(const int16_t *recording,
 static esp_err_t play_recording(const int16_t *recording,
                                 uint32_t recorded_frames,
                                 int16_t *playback_buffer,
-                                uint8_t microphone, bool *stopped,
-                                bool *cancelled)
+                                uint8_t microphone, uint8_t volume,
+                                bool *stopped, bool *cancelled)
 {
     *stopped = false;
     *cancelled = false;
@@ -762,7 +862,7 @@ static esp_err_t play_recording(const int16_t *recording,
     playback_parameters(recording, recorded_frames, microphone, &mean,
                         &gain);
 
-    esp_err_t error = open_speaker(s_playback_volume);
+    esp_err_t error = open_speaker(volume);
     if (error != ESP_OK) {
         return error;
     }
@@ -822,6 +922,7 @@ static void finish_cancelled(void)
     s_audio.status.state = AUDIO_SESSION_STATE_CANCELLED;
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
+    s_audio.alert_cancelled_diagnostic = false;
     bump_revision_locked();
     unlock_context();
     ESP_LOGI(TAG, "temporary audio session cancelled and cleared");
@@ -838,6 +939,7 @@ static void finish_failed(esp_err_t error)
     s_audio.status.state = AUDIO_SESSION_STATE_FAILED;
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
+    s_audio.alert_cancelled_diagnostic = false;
     bump_revision_locked();
     unlock_context();
     ESP_LOGW(TAG, "temporary audio session failed: %s",
@@ -855,6 +957,7 @@ static void finish_completed(bool voice_played, bool playback_stopped)
     s_audio.status.state = AUDIO_SESSION_STATE_COMPLETED;
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
+    s_audio.alert_cancelled_diagnostic = false;
     bump_revision_locked();
     const audio_diagnostics_status_t completed = s_audio.status;
     unlock_context();
@@ -871,6 +974,77 @@ static void finish_completed(bool voice_played, bool playback_stopped)
                           : (playback_stopped ? "stopped" : "not_played"),
              completed.playback_microphone,
              (unsigned)completed.recording_duration_ms);
+}
+
+static void finish_alert(esp_err_t error)
+{
+    lock_context();
+    s_audio.alert_running = false;
+    s_audio.alert_stop_requested = false;
+    s_audio.alert_cancelled_diagnostic = false;
+    unlock_context();
+    if (error == ESP_OK) {
+        ESP_LOGI(TAG, "alert playback stopped");
+    } else {
+        ESP_LOGW(TAG, "alert playback failed: %s",
+                 esp_err_to_name(error));
+    }
+}
+
+static void run_audio_alert(void)
+{
+    int16_t playback_buffer[AUDIO_TONE_CHUNK_FRAMES];
+    uint8_t volume = 0U;
+    lock_context();
+    volume = s_playback_volume;
+    unlock_context();
+
+    if (volume == 0U) {
+        ESP_LOGI(TAG, "alert is silent because playback volume is 0%%");
+        finish_alert(ESP_OK);
+        return;
+    }
+
+    esp_err_t error = open_speaker(volume);
+    if (error != ESP_OK) {
+        finish_alert(error);
+        return;
+    }
+
+    const TickType_t started = xTaskGetTickCount();
+    bool stopped = false;
+    while (error == ESP_OK && !stopped) {
+        error = alert_write_note(playback_buffer, 784U,
+                                 AUDIO_ALERT_NOTE_MS, started, &stopped);
+        if (error == ESP_OK && !stopped) {
+            error = alert_write_silence(playback_buffer,
+                                        AUDIO_ALERT_GAP_MS, started,
+                                        &stopped);
+        }
+        if (error == ESP_OK && !stopped) {
+            error = alert_write_note(playback_buffer, 988U,
+                                     AUDIO_ALERT_NOTE_MS, started,
+                                     &stopped);
+        }
+        if (error == ESP_OK && !stopped) {
+            error = alert_write_silence(playback_buffer,
+                                        AUDIO_ALERT_GAP_MS, started,
+                                        &stopped);
+        }
+        if (error == ESP_OK && !stopped) {
+            error = alert_write_note(playback_buffer, 1175U,
+                                     AUDIO_ALERT_NOTE_MS, started,
+                                     &stopped);
+        }
+        if (error == ESP_OK && !stopped) {
+            error = alert_write_silence(playback_buffer,
+                                        AUDIO_ALERT_REPEAT_GAP_MS,
+                                        started, &stopped);
+        }
+    }
+
+    const esp_err_t close_error = close_speaker();
+    finish_alert(error != ESP_OK ? error : close_error);
 }
 
 static void run_audio_session(void)
@@ -893,10 +1067,16 @@ static void run_audio_session(void)
     int16_t *recording = workspace;
     int16_t *capture_buffer = workspace + recording_samples;
     int16_t *playback_buffer = capture_buffer + capture_samples;
+    uint8_t playback_volume = 0U;
+    lock_context();
+    playback_volume = s_playback_volume;
+    unlock_context();
 
     bool cancelled = false;
-    esp_err_t error = play_test_tone(playback_buffer, &cancelled);
-    set_tone_played(error == ESP_OK && !cancelled);
+    bool tone_played = false;
+    esp_err_t error = play_test_tone(playback_buffer, playback_volume,
+                                     &tone_played, &cancelled);
+    set_tone_played(tone_played);
     if (cancelled) {
         release_audio_workspace(workspace, workspace_bytes);
         finish_cancelled();
@@ -946,6 +1126,13 @@ static void run_audio_session(void)
         finish_completed(false, false);
         return;
     }
+    if (playback_volume == 0U) {
+        ESP_LOGI(TAG,
+                 "diagnostic loopback skipped because playback volume is 0%%");
+        release_audio_workspace(workspace, workspace_bytes);
+        finish_completed(false, false);
+        return;
+    }
     if (!delay_with_cancel(AUDIO_CAPTURE_TO_PLAYBACK_MS)) {
         release_audio_workspace(workspace, workspace_bytes);
         finish_cancelled();
@@ -955,7 +1142,7 @@ static void run_audio_session(void)
     set_state(AUDIO_SESSION_STATE_PLAYBACK);
     bool playback_stopped = false;
     error = play_recording(recording, recorded_frames, playback_buffer,
-                           (uint8_t)(playback_microphone - 1U),
+                           (uint8_t)(playback_microphone - 1U), playback_volume,
                            &playback_stopped, &cancelled);
     release_audio_workspace(workspace, workspace_bytes);
     if (cancelled) {
@@ -972,7 +1159,30 @@ static void audio_worker_task(void *argument)
     (void)argument;
     while (true) {
         (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        run_audio_session();
+        while (true) {
+            audio_work_t work = AUDIO_WORK_NONE;
+            lock_context();
+            /* If both requests arrived before this task ran, start the
+             * diagnostic only so it can observe cancellation and release its
+             * resources before the alert opens the speaker. */
+            if (s_audio.diagnostic_requested) {
+                s_audio.diagnostic_requested = false;
+                work = AUDIO_WORK_DIAGNOSTIC;
+            } else if (s_audio.alert_requested) {
+                s_audio.alert_requested = false;
+                s_audio.alert_running = true;
+                work = AUDIO_WORK_ALERT;
+            }
+            unlock_context();
+
+            if (work == AUDIO_WORK_DIAGNOSTIC) {
+                run_audio_session();
+            } else if (work == AUDIO_WORK_ALERT) {
+                run_audio_alert();
+            } else {
+                break;
+            }
+        }
     }
 }
 
@@ -1035,23 +1245,29 @@ esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus)
                  "audio partially initialized: speaker=%d microphones=%d",
                  s_audio.status.speaker_ready,
                  s_audio.status.microphones_ready);
-        return s_audio.status.last_error != ESP_OK
-                   ? s_audio.status.last_error
-                   : ESP_ERR_NOT_FOUND;
     }
 
-    const BaseType_t task_created = xTaskCreate(
-        audio_worker_task, "audio_loopback", AUDIO_WORKER_STACK_SIZE, NULL,
-        AUDIO_WORKER_PRIORITY, &s_audio.worker_task);
-    if (task_created != pdPASS) {
-        s_audio.status.last_error = ESP_ERR_NO_MEM;
-        return ESP_ERR_NO_MEM;
+    if (s_audio.status.speaker_ready) {
+        const BaseType_t task_created = xTaskCreate(
+            audio_worker_task, "audio_worker", AUDIO_WORKER_STACK_SIZE,
+            NULL, AUDIO_WORKER_PRIORITY, &s_audio.worker_task);
+        if (task_created != pdPASS) {
+            s_audio.status.last_error = ESP_ERR_NO_MEM;
+            return ESP_ERR_NO_MEM;
+        }
     }
 
-    ESP_LOGI(TAG,
-             "ES8311 speaker and ES7210 dual microphones ready at %u Hz",
-             AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ);
-    return ESP_OK;
+    if (s_audio.status.speaker_ready &&
+        s_audio.status.microphones_ready &&
+        s_audio.worker_task != NULL) {
+        ESP_LOGI(TAG,
+                 "ES8311 speaker and ES7210 dual microphones ready at %u Hz",
+                 AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ);
+        return ESP_OK;
+    }
+    return s_audio.status.last_error != ESP_OK
+               ? s_audio.status.last_error
+               : ESP_ERR_NOT_FOUND;
 }
 
 void audio_diagnostics_get_status(audio_diagnostics_status_t *status)
@@ -1071,7 +1287,8 @@ esp_err_t audio_diagnostics_set_playback_volume(uint8_t volume_percent)
     }
 
     lock_context();
-    if (audio_session_state_is_active(s_audio.status.state)) {
+    if (audio_session_state_is_active(s_audio.status.state) ||
+        s_audio.alert_requested || s_audio.alert_running) {
         unlock_context();
         return ESP_ERR_INVALID_STATE;
     }
@@ -1085,13 +1302,16 @@ esp_err_t audio_diagnostics_start(void)
     lock_context();
     if (!s_audio.status.initialized || !s_audio.status.speaker_ready ||
         !s_audio.status.microphones_ready || s_audio.worker_task == NULL ||
-        audio_session_state_is_active(s_audio.status.state)) {
+        audio_session_state_is_active(s_audio.status.state) ||
+        s_audio.alert_requested || s_audio.alert_running) {
         unlock_context();
         return ESP_ERR_INVALID_STATE;
     }
 
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
+    s_audio.alert_cancelled_diagnostic = false;
+    s_audio.diagnostic_requested = true;
     s_audio.status.running = true;
     s_audio.status.test_completed = false;
     s_audio.status.tone_played = false;
@@ -1106,7 +1326,9 @@ esp_err_t audio_diagnostics_start(void)
     s_audio.status.recording_elapsed_ms = 0U;
     s_audio.status.recording_duration_ms = 0U;
     s_audio.status.playback_elapsed_ms = 0U;
-    s_audio.status.state = AUDIO_SESSION_STATE_PLAYING_TONE;
+    s_audio.status.state = s_playback_volume == 0U
+                               ? AUDIO_SESSION_STATE_PREPARING_RECORDING
+                               : AUDIO_SESSION_STATE_PLAYING_TONE;
     s_audio.status.result = AUDIO_DIAGNOSTICS_RESULT_NOT_RUN;
     s_audio.status.last_error = ESP_OK;
     bump_revision_locked();
@@ -1114,6 +1336,60 @@ esp_err_t audio_diagnostics_start(void)
 
     xTaskNotifyGive(s_audio.worker_task);
     return ESP_OK;
+}
+
+esp_err_t audio_alert_start(void)
+{
+    lock_context();
+    if (!s_audio.status.initialized || !s_audio.status.speaker_ready ||
+        s_audio.worker_task == NULL || s_audio.alert_requested ||
+        s_audio.alert_running) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    s_audio.alert_cancelled_diagnostic = false;
+    if (audio_session_state_is_active(s_audio.status.state)) {
+        s_audio.alert_cancelled_diagnostic =
+            !s_audio.cancel_requested;
+        s_audio.cancel_requested = true;
+    }
+    s_audio.alert_requested = true;
+    s_audio.alert_stop_requested = false;
+    unlock_context();
+
+    xTaskNotifyGive(s_audio.worker_task);
+    return ESP_OK;
+}
+
+esp_err_t audio_alert_stop(void)
+{
+    lock_context();
+    if (s_audio.alert_requested && !s_audio.alert_running) {
+        s_audio.alert_requested = false;
+        s_audio.alert_stop_requested = false;
+        if (s_audio.alert_cancelled_diagnostic) {
+            s_audio.cancel_requested = false;
+            s_audio.alert_cancelled_diagnostic = false;
+        }
+        unlock_context();
+        return ESP_OK;
+    }
+    if (!s_audio.alert_running) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_audio.alert_stop_requested = true;
+    unlock_context();
+    return ESP_OK;
+}
+
+bool audio_alert_is_active(void)
+{
+    lock_context();
+    const bool active = s_audio.alert_requested || s_audio.alert_running;
+    unlock_context();
+    return active;
 }
 
 esp_err_t audio_diagnostics_request_stop(void)
@@ -1137,6 +1413,7 @@ esp_err_t audio_diagnostics_cancel(void)
         return ESP_ERR_INVALID_STATE;
     }
     s_audio.cancel_requested = true;
+    s_audio.alert_cancelled_diagnostic = false;
     s_audio.stop_requested = false;
     unlock_context();
     return ESP_OK;

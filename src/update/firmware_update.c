@@ -59,7 +59,9 @@ static const char SETTINGS_PAGE[] =
     "h2{font-size:1.15rem;margin:0 0 .9rem}p{line-height:1.55;margin:.45rem 0;color:#555}section{background:#fff;"
     "border:1px solid #e2e4e7;border-radius:.8rem;padding:1.15rem;margin:1rem 0}label{display:block;font-weight:600;"
     "margin:.9rem 0 .35rem}input,select,button{width:100%;font:inherit;border-radius:.55rem;padding:.72rem .8rem;"
-    "border:1px solid #a9adb2;background:#fff}input[type=range]{padding:.35rem 0;border:0}button{margin-top:.9rem;"
+    "border:1px solid #a9adb2;background:#fff}input[type=range]{padding:.35rem 0;border:0}.days{display:grid;"
+    "grid-template-columns:repeat(7,minmax(0,1fr));gap:.35rem}.day{display:flex;flex-direction:column;align-items:center;"
+    "gap:.35rem;margin:0;padding:.55rem .2rem;border:1px solid #d7dade;border-radius:.55rem;font-weight:500}.day input{width:auto;margin:0;padding:0;accent-color:#171717}button{margin-top:.9rem;"
     "border-color:#171717;background:#171717;color:#fff;font-weight:650}button.secondary{background:#fff;color:#171717}"
     "button.danger{background:#fff;color:#a32626;border-color:#c96c6c}small,.note{font-size:.88rem;color:#676b70}"
     ".row{display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:center}.row output{min-width:3ch;text-align:right}"
@@ -73,9 +75,25 @@ static const char SETTINGS_PAGE[] =
     "<label for=\"timezone\">时区</label><select id=\"timezone\" name=\"timezone\"></select>"
     "<label for=\"unit\">温度单位</label><select id=\"unit\" name=\"unit\">"
     "<option value=\"c\">摄氏度（°C）</option><option value=\"f\">华氏度（°F）</option></select>"
-    "<label for=\"volume\">回放音量</label><div class=\"row\">"
+    "<label for=\"volume\">播放音量</label><div class=\"row\">"
     "<input id=\"volume\" name=\"volume\" type=\"range\" min=\"0\" max=\"100\" step=\"1\">"
     "<output id=\"volumeValue\">--</output></div>"
+    "<p class=\"note\">此音量用于音频检测中的扬声器输出和闹钟；0% 静音。</p>"
+    "<label for=\"alarm\">启用闹钟</label><select id=\"alarm\" name=\"alarm\">"
+    "<option value=\"off\">关闭</option><option value=\"on\">开启</option></select>"
+    "<label for=\"alarmTime\">响铃时间</label><input id=\"alarmTime\" type=\"time\" value=\"07:30\" step=\"60\" required>"
+    "<input id=\"alarmHour\" name=\"alarm_hour\" type=\"hidden\" value=\"7\">"
+    "<input id=\"alarmMinute\" name=\"alarm_minute\" type=\"hidden\" value=\"30\">"
+    "<input id=\"alarmDays\" name=\"alarm_days\" type=\"hidden\" value=\"62\">"
+    "<label>重复日期</label><div class=\"days\" role=\"group\" aria-label=\"重复日期\">"
+    "<label class=\"day\"><input class=\"alarm-day\" type=\"checkbox\" data-bit=\"1\">日</label>"
+    "<label class=\"day\"><input class=\"alarm-day\" type=\"checkbox\" data-bit=\"2\" checked>一</label>"
+    "<label class=\"day\"><input class=\"alarm-day\" type=\"checkbox\" data-bit=\"4\" checked>二</label>"
+    "<label class=\"day\"><input class=\"alarm-day\" type=\"checkbox\" data-bit=\"8\" checked>三</label>"
+    "<label class=\"day\"><input class=\"alarm-day\" type=\"checkbox\" data-bit=\"16\" checked>四</label>"
+    "<label class=\"day\"><input class=\"alarm-day\" type=\"checkbox\" data-bit=\"32\" checked>五</label>"
+    "<label class=\"day\"><input class=\"alarm-day\" type=\"checkbox\" data-bit=\"64\">六</label></div>"
+    "<p class=\"note\">设备开机时按本地 RTC 时间响铃，无需网络；关闭后仍会保留时间和重复日期。</p>"
     "<label for=\"updates\">Beta 更新</label><select id=\"updates\" name=\"updates\">"
     "<option value=\"stable\">关闭（默认）</option><option value=\"beta\">开启（开发者）</option></select>"
     "<p class=\"note\">测试固件可能不稳定，仅适合能使用本地 OTA 或 USB 恢复的开发者；安装仍需在设备上确认。关闭后不会自动降级。</p>"
@@ -95,7 +113,7 @@ static const char SETTINGS_PAGE[] =
     "<p id=\"updateMessage\" class=\"message\">等待选择固件</p>"
     "<small>写入期间请保持设备供电。校验成功后设备会自动重启。</small></section>"
     "<script>let token='',initialUpdates='stable';const $=id=>document.getElementById(id);"
-    "const show=(id,text)=>{$(id).textContent=text};"
+    "const show=(id,text)=>{$(id).textContent=text};const alarmDays=()=>document.querySelectorAll('.alarm-day');"
     "const unix=()=>String(Math.floor(Date.now()/1000));"
     "function zones(){const select=$('timezone');for(let minutes=-720;minutes<=840;minutes+=15){const option=document.createElement('option');"
     "const sign=minutes>=0?'+':'-';const absolute=Math.abs(minutes),hours=String(Math.floor(absolute/60)).padStart(2,'0'),"
@@ -106,9 +124,16 @@ static const char SETTINGS_PAGE[] =
     "headers,body});const text=await response.text();if(!response.ok)throw new Error(text||'操作失败');return text;}"
     "async function load(){const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw new Error('无法读取设备设置');"
     "const state=await response.json();token=state.token;$('power').value=state.power;$('timezone').value=state.timezone;"
-    "$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume;$('updates').value=state.updates;initialUpdates=state.updates;}"
+    "$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume;$('updates').value=state.updates;"
+    "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
+    "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});initialUpdates=state.updates;}"
     "$('volume').oninput=()=>{$('volumeValue').value=$('volume').value};"
-    "$('settings').onsubmit=async event=>{event.preventDefault();if(initialUpdates!=='beta'&&$('updates').value==='beta'&&!confirm('开启 Beta 更新？测试固件可能不稳定，请确认你能够使用本地 OTA 或 USB 恢复设备。'))return;show('settingsMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();"
+    "$('settings').onsubmit=async event=>{event.preventDefault();const match=/^(\\d{2}):(\\d{2})$/.exec($('alarmTime').value);"
+    "const days=Array.from(alarmDays()).reduce((mask,input)=>input.checked?mask|Number(input.dataset.bit):mask,0);"
+    "if(!match||Number(match[1])>23||Number(match[2])>59){show('settingsMessage','请选择有效的响铃时间。');return}"
+    "if(days===0||(days&~127)!==0){show('settingsMessage','请至少选择一个重复日期。');return}"
+    "$('alarmHour').value=String(Number(match[1]));$('alarmMinute').value=String(Number(match[2]));$('alarmDays').value=String(days);"
+    "if(initialUpdates!=='beta'&&$('updates').value==='beta'&&!confirm('开启 Beta 更新？测试固件可能不稳定，请确认你能够使用本地 OTA 或 USB 恢复设备。'))return;show('settingsMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();"
     "show('settingsMessage',await post('/api/settings',body));}catch(error){show('settingsMessage',error.message)}};"
     "$('setTime').onclick=async()=>{show('timeMessage','正在校准…');try{show('timeMessage',await post('/api/time','unix='+unix()))}"
     "catch(error){show('timeMessage',error.message)}};"
@@ -489,11 +514,13 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
     portENTER_CRITICAL(&s_status_lock);
     memcpy(token, s_session_token, sizeof(token));
     portEXIT_CRITICAL(&s_status_lock);
-    char json[288];
+    char json[384];
     const int written = snprintf(
         json, sizeof(json),
         "{\"power\":\"%s\",\"timezone\":%d,\"unit\":\"%s\","
-        "\"volume\":%u,\"updates\":\"%s\",\"token\":\"%s\"}",
+        "\"volume\":%u,\"updates\":\"%s\",\"alarm\":\"%s\","
+        "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
+        "\"token\":\"%s\"}",
         settings.power_mode == APP_POWER_MODE_SAVING ? "saving" : "normal",
         settings.utc_offset_minutes,
         settings.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT ? "f"
@@ -501,6 +528,10 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         settings.audio_playback_volume,
         settings.update_channel == APP_UPDATE_CHANNEL_BETA ? "beta"
                                                            : "stable",
+        settings.alarm_enabled ? "on" : "off",
+        (unsigned int)settings.alarm_hour,
+        (unsigned int)settings.alarm_minute,
+        (unsigned int)settings.alarm_weekdays,
         token);
     memset(token, 0, sizeof(token));
     if (written <= 0 || (size_t)written >= sizeof(json)) {

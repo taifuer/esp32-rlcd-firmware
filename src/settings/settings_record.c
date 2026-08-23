@@ -3,7 +3,9 @@
 #include <limits.h>
 
 #define SETTINGS_RECORD_MAGIC UINT32_C(0x47464352)
-#define SETTINGS_RECORD_FORMAT_VERSION 1U
+#define SETTINGS_RECORD_FORMAT_VERSION 2U
+#define SETTINGS_RECORD_SCHEMA2_FORMAT_VERSION 1U
+#define SETTINGS_RECORD_SCHEMA2_VERSION 2U
 
 enum {
     MAGIC_OFFSET = 0,
@@ -16,7 +18,12 @@ enum {
     UTC_OFFSET = 16,
     AUDIO_VOLUME_OFFSET = 18,
     UPDATE_CHANNEL_OFFSET = 19,
-    CHECKSUM_OFFSET = 20,
+    ALARM_ENABLED_OFFSET = 20,
+    ALARM_HOUR_OFFSET = 21,
+    ALARM_MINUTE_OFFSET = 22,
+    ALARM_WEEKDAYS_OFFSET = 23,
+    CHECKSUM_OFFSET = 24,
+    SCHEMA2_CHECKSUM_OFFSET = 20,
 };
 
 _Static_assert(CHECKSUM_OFFSET + sizeof(uint32_t) ==
@@ -75,6 +82,9 @@ bool settings_record_encode(uint32_t generation,
         return false;
     }
 
+    for (size_t index = 0U; index < encoded_size; ++index) {
+        encoded[index] = 0U;
+    }
     put_u32(encoded, MAGIC_OFFSET, SETTINGS_RECORD_MAGIC);
     put_u16(encoded, FORMAT_OFFSET, SETTINGS_RECORD_FORMAT_VERSION);
     put_u16(encoded, SIZE_OFFSET, SETTINGS_RECORD_ENCODED_SIZE);
@@ -88,6 +98,10 @@ bool settings_record_encode(uint32_t generation,
     encoded[AUDIO_VOLUME_OFFSET] = settings->audio_playback_volume;
     encoded[UPDATE_CHANNEL_OFFSET] =
         (uint8_t)settings->update_channel;
+    encoded[ALARM_ENABLED_OFFSET] = settings->alarm_enabled ? 1U : 0U;
+    encoded[ALARM_HOUR_OFFSET] = settings->alarm_hour;
+    encoded[ALARM_MINUTE_OFFSET] = settings->alarm_minute;
+    encoded[ALARM_WEEKDAYS_OFFSET] = settings->alarm_weekdays;
     put_u32(encoded, CHECKSUM_OFFSET,
             record_checksum(encoded, CHECKSUM_OFFSET));
     return true;
@@ -112,6 +126,9 @@ bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
         raw_utc_offset <= INT16_MAX
             ? (int32_t)raw_utc_offset
             : (int32_t)raw_utc_offset - INT32_C(65536);
+    if (encoded[ALARM_ENABLED_OFFSET] > 1U) {
+        return false;
+    }
     const app_settings_t settings = {
         .schema_version = get_u16(encoded, SCHEMA_OFFSET),
         .power_mode = (app_power_mode_t)encoded[POWER_OFFSET],
@@ -121,7 +138,53 @@ bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
         .audio_playback_volume = encoded[AUDIO_VOLUME_OFFSET],
         .update_channel =
             (app_update_channel_t)encoded[UPDATE_CHANNEL_OFFSET],
+        .alarm_enabled = encoded[ALARM_ENABLED_OFFSET] == 1U,
+        .alarm_hour = encoded[ALARM_HOUR_OFFSET],
+        .alarm_minute = encoded[ALARM_MINUTE_OFFSET],
+        .alarm_weekdays = encoded[ALARM_WEEKDAYS_OFFSET],
     };
+    if (!app_settings_validate(&settings)) {
+        return false;
+    }
+
+    *record = (settings_record_t){
+        .generation = get_u32(encoded, GENERATION_OFFSET),
+        .settings = settings,
+    };
+    return true;
+}
+
+bool settings_record_decode_schema2(const uint8_t *encoded,
+                                    size_t encoded_size,
+                                    settings_record_t *record)
+{
+    if (encoded == NULL || record == NULL ||
+        encoded_size != SETTINGS_RECORD_SCHEMA2_ENCODED_SIZE ||
+        get_u32(encoded, MAGIC_OFFSET) != SETTINGS_RECORD_MAGIC ||
+        get_u16(encoded, FORMAT_OFFSET) !=
+            SETTINGS_RECORD_SCHEMA2_FORMAT_VERSION ||
+        get_u16(encoded, SIZE_OFFSET) !=
+            SETTINGS_RECORD_SCHEMA2_ENCODED_SIZE ||
+        get_u16(encoded, SCHEMA_OFFSET) != SETTINGS_RECORD_SCHEMA2_VERSION ||
+        get_u32(encoded, SCHEMA2_CHECKSUM_OFFSET) !=
+            record_checksum(encoded, SCHEMA2_CHECKSUM_OFFSET)) {
+        return false;
+    }
+
+    const uint16_t raw_utc_offset = get_u16(encoded, UTC_OFFSET);
+    const int32_t signed_utc_offset =
+        raw_utc_offset <= INT16_MAX
+            ? (int32_t)raw_utc_offset
+            : (int32_t)raw_utc_offset - INT32_C(65536);
+    app_settings_t settings;
+    app_settings_defaults(&settings);
+    settings.power_mode = (app_power_mode_t)encoded[POWER_OFFSET];
+    settings.utc_offset_minutes = (int16_t)signed_utc_offset;
+    settings.temperature_unit =
+        (app_temperature_unit_t)encoded[TEMPERATURE_UNIT_OFFSET];
+    settings.audio_playback_volume = encoded[AUDIO_VOLUME_OFFSET];
+    settings.update_channel =
+        (app_update_channel_t)encoded[UPDATE_CHANNEL_OFFSET];
     if (!app_settings_validate(&settings)) {
         return false;
     }
@@ -177,4 +240,16 @@ bool settings_record_repair_is_usable(
     return plan != NULL &&
            (plan->source_slot != SETTINGS_RECORD_SLOT_NONE ||
             repair_write_succeeded);
+}
+
+settings_migration_source_t settings_record_select_migration_source(
+    bool current_record_valid, bool schema2_record_valid)
+{
+    if (current_record_valid) {
+        return SETTINGS_MIGRATION_SOURCE_CURRENT_RECORD;
+    }
+    if (schema2_record_valid) {
+        return SETTINGS_MIGRATION_SOURCE_SCHEMA2_RECORD;
+    }
+    return SETTINGS_MIGRATION_SOURCE_V1_FIELDS;
 }

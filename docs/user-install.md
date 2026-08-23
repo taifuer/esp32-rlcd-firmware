@@ -8,7 +8,7 @@
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.13.0/`](../dist/v0.13.0/)。
+[`dist/v0.14.0/`](../dist/v0.14.0/)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
 v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明。
 从 v0.2.0 开始，版本目录还包含对应的界面效果图。
@@ -20,12 +20,12 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 
 | 文件 | 用途 | 安装方式 |
 | --- | --- | --- |
-| `esp32-rlcd-firmware-v0.13.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
-| `esp32-rlcd-firmware-v0.13.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
+| `esp32-rlcd-firmware-v0.14.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
+| `esp32-rlcd-firmware-v0.14.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
 
 目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
 参数；两类文件的 SHA-256 见
-[`dist/v0.13.0/SHA256SUMS`](../dist/v0.13.0/SHA256SUMS)。
+[`dist/v0.14.0/SHA256SUMS`](../dist/v0.14.0/SHA256SUMS)。
 
 不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
 镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
@@ -34,7 +34,7 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 ### 从旧版本升级
 
 v0.7.0—v0.9.0 没有在线更新客户端，可从原系统中心最后一页的本地更新入口上传
-v0.13.0 `-ota.bin`，或使用 USB 写入。v0.10.0—v0.12.0 可直接从 `ONLINE UPDATE`
+v0.14.0 `-ota.bin`，或使用 USB 写入。v0.10.0—v0.13.0 可直接从 `ONLINE UPDATE`
 升级；v0.6.0 及更早版本必须使用 Factory 固件完整安装。
 
 设备默认只检查 `stable.json`；只有在设置门户明确开启 Beta 更新后才检查
@@ -53,7 +53,7 @@ v0.13.0 `-ota.bin`，或使用 USB 写入。v0.10.0—v0.12.0 可直接从 `ONLI
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.13.0
+cd dist/v0.14.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -61,16 +61,16 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.13.0/esp32-rlcd-firmware-v0.13.0-factory.bin
-shasum -a 256 dist/v0.13.0/esp32-rlcd-firmware-v0.13.0-ota.bin
+shasum -a 256 dist/v0.14.0/esp32-rlcd-firmware-v0.14.0-factory.bin
+shasum -a 256 dist/v0.14.0/esp32-rlcd-firmware-v0.14.0-ota.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.13.0\esp32-rlcd-firmware-v0.13.0-factory.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.13.0\esp32-rlcd-firmware-v0.13.0-ota.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.13.0\SHA256SUMS
+(Get-FileHash .\dist\v0.14.0\esp32-rlcd-firmware-v0.14.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.14.0\esp32-rlcd-firmware-v0.14.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.14.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -90,7 +90,7 @@ Get-Content .\dist\v0.13.0\SHA256SUMS
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.13.0/esp32-rlcd-firmware-v0.13.0-factory.bin \
+  --firmware dist/v0.14.0/esp32-rlcd-firmware-v0.14.0-factory.bin \
   --confirm
 ```
 
@@ -131,7 +131,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.13.0\esp32-rlcd-firmware-v0.13.0-factory.bin
+  0x0 .\dist\v0.14.0\esp32-rlcd-firmware-v0.14.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -149,7 +149,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.13.0/esp32-rlcd-firmware-v0.13.0-factory.bin
+  0x0 dist/v0.14.0/esp32-rlcd-firmware-v0.14.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -224,7 +224,7 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 “设置”页按住 `KEY` 3 秒后，设备会开启最多 5 分钟的临时 WPA2 热点并显示二维码、随机
 密码和 `http://192.168.4.1`。手机进入“设备设置”页面后可以：
 
-- 修改 `NORMAL / SAVING`、时区、摄氏/华氏温标、回放音量和 Beta 更新偏好；
+- 修改 `NORMAL / SAVING`、时区、摄氏/华氏温标、回放音量、单个每周闹钟和 Beta 更新偏好；
 - 使用手机当前时间校准 RTC，或恢复偏好默认值；
 - 清除家庭 Wi-Fi 配置；该操作不会删除其他偏好，设备重启后进入配网；
 - 上传本项目发布的 `-ota.bin` 完成本地升级；不要上传 `-factory.bin`。
@@ -233,9 +233,14 @@ Beta 更新默认关闭，仅建议能够使用本地 OTA 或 USB 恢复设备�
 恢复默认值和清除 Wi-Fi 在成功后会重启；本地 OTA 校验成功后会自动切换到新槽并重启。
 设置门户和本地 OTA 不依赖家庭 Wi-Fi 或互联网。
 
+闹钟按 RTC 本地时间和勾选的星期运行，断网及 `SAVING` 模式不影响已保存的规则。到点后
+短按 `BOOT` 停止；首次响铃可短按 `KEY` 延后 5 分钟，单次响铃最长 60 秒。物理关机时
+设备与扬声器没有供电，因此不会响铃，也不会在下次开机补发。
+
 音频测试会先播放两声提示音，再录制最多 5 秒并自动回放；录制或回放时短按 `KEY` 可
 提前结束当前阶段，短按 `BOOT` 可取消整个测试。语音只临时存放在 PSRAM，结束后立即
-清除，不会写入设备存储或上传网络。
+清除，不会写入设备存储或上传网络。播放音量为 `0%` 时不会启用扬声器，但仍会完成录音
+和双麦克风分析；提示音不会播放，回放结果显示为 `NOT PLAYED`。
 
 `BOOT` 在开机时和正常运行时具有不同含义：关机后按住它再按 `PWR` 会选择 ROM 下载
 模式；固件正常运行后只处理短按页面导航，长按不执行操作。

@@ -79,7 +79,17 @@ typedef struct {
     int16_t utc_offset_minutes;
     bool temperature_fahrenheit;
     uint8_t playback_volume_percent;
+    bool alarm_enabled;
+    uint8_t alarm_hour;
+    uint8_t alarm_minute;
+    uint8_t alarm_weekdays;
 } display_settings_status_t;
+
+typedef struct {
+    uint8_t hour;
+    uint8_t minute;
+    bool snooze_available;
+} display_alarm_status_t;
 
 typedef enum {
     DISPLAY_AUDIO_STATE_IDLE = 0,
@@ -153,6 +163,7 @@ void display_show_monochrome_image(
 void display_show_system_status(const display_system_status_t *status);
 void display_show_audio(const display_audio_status_t *status);
 void display_show_settings(const display_settings_status_t *status);
+void display_show_alarm(const display_alarm_status_t *status);
 void display_show_online_update(const display_online_update_status_t *status);
 
 #ifdef __cplusplus

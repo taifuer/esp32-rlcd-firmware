@@ -8,14 +8,26 @@
 extern "C" {
 #endif
 
-#define APP_SETTINGS_SCHEMA_VERSION 2U
+#define APP_SETTINGS_SCHEMA_VERSION 3U
 #define APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES 480
 #define APP_SETTINGS_MIN_UTC_OFFSET_MINUTES (-720)
 #define APP_SETTINGS_MAX_UTC_OFFSET_MINUTES 840
 #define APP_SETTINGS_UTC_OFFSET_STEP_MINUTES 15
 #define APP_SETTINGS_DEFAULT_AUDIO_PLAYBACK_VOLUME 68U
 #define APP_SETTINGS_POSIX_TZ_CAPACITY 16U
-#define APP_SETTINGS_FORM_MAX_LENGTH 192U
+#define APP_SETTINGS_FORM_MAX_LENGTH 256U
+#define APP_SETTINGS_DEFAULT_ALARM_HOUR 7U
+#define APP_SETTINGS_DEFAULT_ALARM_MINUTE 30U
+#define APP_SETTINGS_ALARM_WEEKDAY_SUNDAY (1U << 0U)
+#define APP_SETTINGS_ALARM_WEEKDAY_MONDAY (1U << 1U)
+#define APP_SETTINGS_ALARM_WEEKDAY_TUESDAY (1U << 2U)
+#define APP_SETTINGS_ALARM_WEEKDAY_WEDNESDAY (1U << 3U)
+#define APP_SETTINGS_ALARM_WEEKDAY_THURSDAY (1U << 4U)
+#define APP_SETTINGS_ALARM_WEEKDAY_FRIDAY (1U << 5U)
+#define APP_SETTINGS_ALARM_WEEKDAY_SATURDAY (1U << 6U)
+#define APP_SETTINGS_ALARM_WEEKDAYS_MASK 0x3eU
+#define APP_SETTINGS_ALARM_WEEKENDS_MASK 0x41U
+#define APP_SETTINGS_ALARM_ALL_DAYS_MASK 0x7fU
 
 typedef enum {
     APP_POWER_MODE_NORMAL = 0,
@@ -39,6 +51,10 @@ typedef struct {
     app_temperature_unit_t temperature_unit;
     uint8_t audio_playback_volume;
     app_update_channel_t update_channel;
+    bool alarm_enabled;
+    uint8_t alarm_hour;
+    uint8_t alarm_minute;
+    uint8_t alarm_weekdays;
 } app_settings_t;
 
 void app_settings_defaults(app_settings_t *settings);
