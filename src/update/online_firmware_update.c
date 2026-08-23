@@ -32,6 +32,7 @@ static const char EXPECTED_APP_PROJECT[] = "rlcd_firmware";
 static bool s_initialized;
 static bool s_cancel_requested;
 static bool s_manifest_valid;
+static online_update_channel_t s_channel = ONLINE_UPDATE_CHANNEL_STABLE;
 static online_update_manifest_t s_manifest;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static online_firmware_update_status_t s_status = {
@@ -40,26 +41,16 @@ static online_firmware_update_status_t s_status = {
     .last_error = ESP_OK,
 };
 
-static bool is_prerelease(const char *version)
-{
-    if (version == NULL) {
-        return false;
-    }
-    const char *dash = strchr(version, '-');
-    const char *metadata = strchr(version, '+');
-    return dash != NULL && (metadata == NULL || dash < metadata);
-}
-
 static const char *manifest_url(void)
 {
-    return is_prerelease(s_status.current_version)
+    return s_channel == ONLINE_UPDATE_CHANNEL_TESTING
                ? TESTING_MANIFEST_URL
                : STABLE_MANIFEST_URL;
 }
 
 static const char *expected_channel(void)
 {
-    return is_prerelease(s_status.current_version) ? "testing" : "stable";
+    return online_update_channel_name(s_channel);
 }
 
 static void set_state(online_update_state_t state, esp_err_t error,
@@ -619,7 +610,8 @@ static void install_task(void *argument)
     vTaskDelete(NULL);
 }
 
-esp_err_t online_firmware_update_init(const char *current_version)
+esp_err_t online_firmware_update_init(const char *current_version,
+                                      bool beta_updates_enabled)
 {
     if (current_version == NULL || current_version[0] == '\0' ||
         strlen(current_version) >= ONLINE_FIRMWARE_UPDATE_VERSION_CAPACITY) {
@@ -636,6 +628,9 @@ esp_err_t online_firmware_update_init(const char *current_version)
     }
     snprintf(s_status.current_version, sizeof(s_status.current_version),
              "%s", current_version);
+    s_channel = online_update_select_channel(beta_updates_enabled);
+    s_status.beta_channel =
+        s_channel == ONLINE_UPDATE_CHANNEL_TESTING;
     s_initialized = true;
     ESP_LOGI(TAG, "online update service ready (%s channel)",
              expected_channel());
@@ -749,7 +744,7 @@ const char *online_firmware_update_error_detail(
         return "UNKNOWN ERROR";
     }
     if (status->policy_error == ONLINE_UPDATE_ERROR_CURRENT_VERSION_TOO_OLD) {
-        return "USE LOCAL UPDATE";
+        return "SETTINGS: USE LOCAL OTA";
     }
     if (status->policy_error != ONLINE_UPDATE_ERROR_NONE) {
         return "UPDATE REJECTED";

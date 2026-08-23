@@ -5,60 +5,68 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.10.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.11.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
+以下界面反映 v0.11.0 正式版。
+
 | 首屏 | 月历 |
 | :---: | :---: |
 | ![首屏效果图](docs/assets/home-screen.svg) | ![月历页效果图](docs/assets/calendar-screen.svg) |
-| 设备健康 | 网络与时间 |
-| ![设备健康页效果图](docs/assets/device-health.svg) | ![网络与时间页效果图](docs/assets/network-time.svg) |
-| 音频诊断 | Wi-Fi 维护 |
-| ![音频诊断页效果图](docs/assets/audio.svg) | ![Wi-Fi 维护页效果图](docs/assets/wifi-maintenance.svg) |
-| 在线更新 | 本地更新 |
-| ![在线更新页效果图](docs/assets/online-update.svg) | ![本地更新页效果图](docs/assets/local-update.svg) |
+| 状态 | 音频 |
+| ![状态页效果图](docs/assets/status.svg) | ![音频页效果图](docs/assets/audio.svg) |
+| 设置 | 设置门户 |
+| ![设置页效果图](docs/assets/settings.svg) | ![设置门户效果图](docs/assets/settings-portal.svg) |
+| 在线更新 | 更新进度 |
+| ![在线更新页效果图](docs/assets/online-update.svg) | ![在线更新进度效果图](docs/assets/online-update-progress.svg) |
 
 效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
 
 ## 当前功能
 
-- 三段式首屏显示公历、农历、星期、等大 `HH:MM:SS`、温湿度、电量和网络结果；
+- 三段式首屏显示公历、农历、星期、温湿度、电量和网络结果；`NORMAL` 等大显示
+  `HH:MM:SS`，`SAVING` 显示 `HH:MM`；
 - PCF85063 RTC、SHTC3、GPIO4 电池采样和 8 MB Octal PSRAM；
 - 首次启动使用临时 WPA2 热点配网，凭据保存在 NVS，随后自动 SNTP 校时；
-- 网络不可用时继续使用 RTC、月历、传感器、按键和音频，后台按退避策略重试；
+- 网络不可用时继续使用 RTC、月历、传感器、按键和音频；`NORMAL` 后台退避重试，
+  `SAVING` 保持离线；
 - ES8311 与 ES7210 本机音频诊断，最多临时采集并回放 5 秒语音，不持久化或上传；
-- 六页系统中心分别承载设备健康、网络与时间、音频、Wi-Fi 维护、在线更新和本地更新；
+- 四页系统中心依次为状态、音频、设置和在线更新，低频维护不再占用独立页面；
+- 设置门户支持省电模式、时区、温度单位、播放音量、更新通道、手机校时、清除 Wi-Fi 和
+  本地 OTA；
+- `NORMAL` 保持 `HH:MM:SS` 与自动联网；`SAVING` 隐藏秒数、降低刷新和采样频率，并关闭
+  自动校时与自动更新检查，所有手动功能仍可使用；
 - 在线更新通过 HTTPS 检查清单并下载 OTA 镜像，安装始终需要实体按键确认；
-- 本地更新通过设备临时热点上传 OTA 镜像，作为无互联网时的维护与恢复入口；
+- 本地更新通过设置门户上传 OTA 镜像，作为无互联网时的维护与恢复入口；
 - 双 OTA 应用槽、镜像校验、新版本启动确认和失败回滚，普通更新保留 Wi-Fi 配置。
 
-自动联网只检查更新，不会弹出页面、静默安装或打断日常功能。“在线更新”页按住 `KEY`
-2 秒检查；发现新版本后再次按住 2 秒进入 `REVIEW`，确认页再按住 3 秒才安装。“本地更新”
-页按住 `KEY` 3 秒开启本地更新热点。完整说明见[界面与按键](docs/home-screen.md)和
-[固件安装与更新](docs/firmware-update.md)。
+`NORMAL` 自动校时完成后只在后台检查是否有更新，不会弹出页面、静默安装或打断日常功能。
+“在线更新”页按住 `KEY` 2 秒检查；发现新版本后再次按住 2 秒进入 `REVIEW`，确认页再按住
+3 秒才安装。正式固件默认只检查稳定版；开发者可在“设置”门户主动加入测试通道。完整说明见
+[界面与按键](docs/home-screen.md)和[固件安装与更新](docs/firmware-update.md)。
 
-v0.9.0 及更早版本没有在线更新客户端，升级到 v0.10.0 时需先使用本地更新或 USB 写入；
-设备运行 v0.10.0 后，后续正式版本即可直接从“在线更新”页获取。
+已安装 v0.10.0 的设备可直接从“在线更新”页升级；v0.7.0—v0.9.0 可通过原有本地更新
+入口上传 v0.11.0 OTA 固件，v0.6.0 及更早版本需使用 Factory 固件完整安装。
 
 ## 安装使用
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
-中的 `-factory.bin`；已安装 v0.7.0 或更新版本后，可在设备“本地更新”页上传
-`-ota.bin`。下载、校验、Windows、Linux 和 macOS 的完整步骤见
+中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`。v0.11.0 的离线更新
+位于“设置”门户。下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
 
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.10.0
+cd dist/v0.11.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.10.0/esp32-rlcd-firmware-v0.10.0-factory.bin \
+  --firmware dist/v0.11.0/esp32-rlcd-firmware-v0.11.0-factory.bin \
   --confirm
 ```
 
@@ -82,7 +90,8 @@ cd ../..
 │   ├── display/         # ST7305 界面
 │   ├── network/         # 配网、NVS、SNTP 与联网会话
 │   ├── rtc/             # PCF85063 与备用电池保持判定
-│   └── update/          # 在线更新、本地更新与双槽 OTA
+│   ├── settings/        # 持久化偏好、输入校验与省电策略
+│   └── update/          # 在线更新、设置门户、本地 OTA 与双槽回滚
 ├── tests/               # 主机端纯逻辑测试
 ├── scripts/             # 依赖、测试、构建、烧录与发布脚本
 ├── docs/                # 使用、设计与开发文档
@@ -108,7 +117,7 @@ cd ../..
 ## 文档
 
 - [发布固件安装指南](docs/user-install.md)：下载、校验、首次安装与故障排查；
-- [固件安装与更新](docs/firmware-update.md)：在线更新、本地更新、双槽与失败恢复；
+- [固件安装与更新](docs/firmware-update.md)：在线更新、设置门户本地 OTA、双槽与失败恢复；
 - [自动配网与网络校时](docs/network-time.md)：配网、NVS、SNTP 与离线行为；
 - [界面与按键](docs/home-screen.md)：首屏、月历、系统中心和实体按键；
 - [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉与交互原则；

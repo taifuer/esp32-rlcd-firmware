@@ -22,12 +22,14 @@ typedef struct {
     size_t downloaded_bytes;
     size_t total_bytes;
     uint8_t percent;
+    bool beta_channel;
     char current_version[ONLINE_FIRMWARE_UPDATE_VERSION_CAPACITY];
     char latest_version[ONLINE_FIRMWARE_UPDATE_VERSION_CAPACITY];
     char last_checked[ONLINE_FIRMWARE_UPDATE_CHECKED_CAPACITY];
 } online_firmware_update_status_t;
 
-esp_err_t online_firmware_update_init(const char *current_version);
+esp_err_t online_firmware_update_init(const char *current_version,
+                                      bool beta_updates_enabled);
 esp_err_t online_firmware_update_request_check(void);
 esp_err_t online_firmware_update_request_confirmation(void);
 esp_err_t online_firmware_update_start_install(void);

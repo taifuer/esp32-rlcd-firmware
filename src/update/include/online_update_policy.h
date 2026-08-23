@@ -72,6 +72,11 @@ typedef enum {
     ONLINE_UPDATE_STATE_FAILED,
 } online_update_state_t;
 
+typedef enum {
+    ONLINE_UPDATE_CHANNEL_STABLE = 0,
+    ONLINE_UPDATE_CHANNEL_TESTING,
+} online_update_channel_t;
+
 /* Parse a bounded, non-NUL-terminated JSON response into the trusted model. */
 online_update_error_t online_update_manifest_parse(
     const char *json,
@@ -100,6 +105,11 @@ online_update_error_t online_update_semver_compare(
     const char *left,
     const char *right,
     int *result);
+
+/* The persisted beta preference is the sole update-channel selection rule. */
+online_update_channel_t online_update_select_channel(
+    bool beta_updates_enabled);
+const char *online_update_channel_name(online_update_channel_t channel);
 
 bool online_update_url_is_allowed(const char *url);
 bool online_update_state_is_busy(online_update_state_t state);

@@ -14,6 +14,7 @@ extern "C" {
 #define AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ 24000U
 #define AUDIO_DIAGNOSTICS_BITS_PER_SAMPLE 16U
 #define AUDIO_DIAGNOSTICS_MAX_RECORDING_MS 5000U
+#define AUDIO_DIAGNOSTICS_DEFAULT_PLAYBACK_VOLUME 68U
 
 typedef enum {
     AUDIO_DIAGNOSTICS_RESULT_NOT_RUN = 0,
@@ -48,6 +49,7 @@ typedef struct {
 
 esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus);
 void audio_diagnostics_get_status(audio_diagnostics_status_t *status);
+esp_err_t audio_diagnostics_set_playback_volume(uint8_t volume_percent);
 esp_err_t audio_diagnostics_start(void);
 esp_err_t audio_diagnostics_request_stop(void);
 esp_err_t audio_diagnostics_cancel(void);

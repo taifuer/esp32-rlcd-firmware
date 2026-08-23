@@ -71,6 +71,18 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_page_state"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/settings/include \
+  src/settings/settings_model.c src/settings/settings_power_policy.c \
+  tests/test_app_settings.c \
+  -o "${RLCD_TEST_TMP}/test_app_settings"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/settings -Isrc/settings/include \
+  src/settings/settings_model.c src/settings/settings_record.c \
+  tests/test_settings_record.c \
+  -o "${RLCD_TEST_TMP}/test_settings_record"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/app \
   src/app/network_screen_policy.c tests/test_network_screen_policy.c \
   -o "${RLCD_TEST_TMP}/test_network_screen_policy"
@@ -79,6 +91,11 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/update/include \
   src/update/firmware_update_policy.c tests/test_firmware_update_policy.c \
   -o "${RLCD_TEST_TMP}/test_firmware_update_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/update/include \
+  src/update/settings_portal_policy.c tests/test_settings_portal_policy.c \
+  -o "${RLCD_TEST_TMP}/test_settings_portal_policy"
 
 cc -std=c17 -w \
   -I"${RLCD_CJSON_DIR}" \
@@ -100,6 +117,12 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_rtc_backup_policy"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -D_POSIX_C_SOURCE=200809L \
+  -Isrc/rtc/include \
+  src/rtc/clock_service_policy.c tests/test_clock_service_policy.c \
+  -o "${RLCD_TEST_TMP}/test_clock_service_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/audio/include \
   src/audio/audio_level.c tests/test_audio_level.c \
   -o "${RLCD_TEST_TMP}/test_audio_level"
@@ -118,9 +141,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_network_qr"
 "${RLCD_TEST_TMP}/test_button_state"
 "${RLCD_TEST_TMP}/test_page_state"
+"${RLCD_TEST_TMP}/test_app_settings"
+"${RLCD_TEST_TMP}/test_settings_record"
 "${RLCD_TEST_TMP}/test_network_screen_policy"
 "${RLCD_TEST_TMP}/test_firmware_update_policy"
+"${RLCD_TEST_TMP}/test_settings_portal_policy"
 "${RLCD_TEST_TMP}/test_online_update_policy"
 "${RLCD_TEST_TMP}/test_rtc_backup_policy"
+"${RLCD_TEST_TMP}/test_clock_service_policy"
 "${RLCD_TEST_TMP}/test_audio_level"
 "${RLCD_TEST_TMP}/test_audio_session_state"

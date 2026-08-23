@@ -39,6 +39,7 @@ for preview_name in \
     home-screen.svg calendar-screen.svg \
     device-health.svg network-time.svg audio.svg \
     wifi-maintenance.svg online-update.svg local-update.svg \
+    status.svg settings.svg settings-portal.svg \
     online-update-confirm.svg online-update-progress.svg \
     online-update-verify.svg online-update-result.svg \
     firmware-update.svg update-progress.svg \

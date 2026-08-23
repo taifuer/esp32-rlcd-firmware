@@ -66,6 +66,21 @@ static void test_semver(void)
            ONLINE_UPDATE_ERROR_INVALID_ARGUMENT);
 }
 
+static void test_channel_selection(void)
+{
+    assert(online_update_select_channel(false) ==
+           ONLINE_UPDATE_CHANNEL_STABLE);
+    assert(online_update_select_channel(true) ==
+           ONLINE_UPDATE_CHANNEL_TESTING);
+    assert(strcmp(online_update_channel_name(
+                      ONLINE_UPDATE_CHANNEL_STABLE),
+                  "stable") == 0);
+    assert(strcmp(online_update_channel_name(
+                      ONLINE_UPDATE_CHANNEL_TESTING),
+                  "testing") == 0);
+    assert(online_update_channel_name((online_update_channel_t)9) == NULL);
+}
+
 static void test_urls(void)
 {
     assert(online_update_url_is_allowed(
@@ -274,6 +289,27 @@ static void test_policy_rejections(void)
            ONLINE_UPDATE_ERROR_MANIFEST_HARDWARE);
 }
 
+static void test_channel_target_policy(void)
+{
+    online_update_manifest_t manifest;
+
+    assert(parse_json(valid_manifest_json, &manifest) ==
+           ONLINE_UPDATE_ERROR_NONE);
+    strcpy(manifest.version, "0.11.0-rc.1");
+    assert(online_update_manifest_evaluate(
+               &manifest, "0.10.0", "stable") ==
+           ONLINE_UPDATE_ERROR_MANIFEST_CHANNEL);
+
+    strcpy(manifest.channel, "testing");
+    assert(online_update_manifest_evaluate(
+               &manifest, "0.10.0", "testing") ==
+           ONLINE_UPDATE_ERROR_NONE);
+    strcpy(manifest.version, "0.11.0");
+    assert(online_update_manifest_evaluate(
+               &manifest, "0.10.0", "testing") ==
+           ONLINE_UPDATE_ERROR_NONE);
+}
+
 static void test_state_and_error_mapping(void)
 {
     assert(!online_update_state_is_busy(ONLINE_UPDATE_STATE_IDLE));
@@ -307,11 +343,13 @@ static void test_state_and_error_mapping(void)
 int main(void)
 {
     test_semver();
+    test_channel_selection();
     test_urls();
     test_valid_manifest();
     test_manifest_bounds_and_json();
     test_manifest_field_validation();
     test_policy_rejections();
+    test_channel_target_policy();
     test_state_and_error_mapping();
 
     puts("online update policy tests passed");

@@ -8,7 +8,7 @@
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.10.0/`](../dist/v0.10.0/)。
+[`dist/v0.11.0/`](../dist/v0.11.0/)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
 v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明。
 从 v0.2.0 开始，版本目录还包含对应的界面效果图。
@@ -20,25 +20,26 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 
 | 文件 | 用途 | 安装方式 |
 | --- | --- | --- |
-| `esp32-rlcd-firmware-v0.10.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
-| `esp32-rlcd-firmware-v0.10.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、本地更新或串行应用更新，保留 NVS |
+| `esp32-rlcd-firmware-v0.11.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
+| `esp32-rlcd-firmware-v0.11.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
 
 目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
 参数；两类文件的 SHA-256 见
-[`dist/v0.10.0/SHA256SUMS`](../dist/v0.10.0/SHA256SUMS)。
+[`dist/v0.11.0/SHA256SUMS`](../dist/v0.11.0/SHA256SUMS)。
 
 不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
 镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
 [固件安装与更新](firmware-update.md)。
 
-### 从 v0.9.0 升级
+### 从旧版本升级
 
-v0.9.0 固件没有在线更新客户端，不能直接读取服务器清单。升级到 v0.10.0 时，需从
-v0.9.0 系统中心最后一页的本地更新入口上传 v0.10.0 `-ota.bin`，或使用 USB 写入。
-设备运行 v0.10.0 后，后续正式版本即可通过 `ONLINE UPDATE` 获取。
+v0.7.0—v0.9.0 没有在线更新客户端，可从原系统中心最后一页的本地更新入口上传
+v0.11.0 `-ota.bin`，或使用 USB 写入。v0.10.0 可直接从 `ONLINE UPDATE` 升级；v0.6.0
+及更早版本必须使用 Factory 固件完整安装。
 
-正式版只检查 `stable.json`，带预发布标识的开发版只检查 `testing.json`。联网后的自动
-流程只记录检查结果，不会自动下载或静默安装；完整操作见
+设备默认只检查 `stable.json`；只有在设置门户明确开启 Beta 更新后才检查
+`testing.json`，版本名本身不会切换通道。联网后的自动流程只记录检查结果，不会自动下载
+或静默安装；完整操作见
 [固件安装与更新](firmware-update.md)。
 
 ## 烧录前检查
@@ -52,7 +53,7 @@ v0.9.0 系统中心最后一页的本地更新入口上传 v0.10.0 `-ota.bin`，
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.10.0
+cd dist/v0.11.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -60,16 +61,16 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.10.0/esp32-rlcd-firmware-v0.10.0-factory.bin
-shasum -a 256 dist/v0.10.0/esp32-rlcd-firmware-v0.10.0-ota.bin
+shasum -a 256 dist/v0.11.0/esp32-rlcd-firmware-v0.11.0-factory.bin
+shasum -a 256 dist/v0.11.0/esp32-rlcd-firmware-v0.11.0-ota.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.10.0\esp32-rlcd-firmware-v0.10.0-factory.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.10.0\esp32-rlcd-firmware-v0.10.0-ota.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.10.0\SHA256SUMS
+(Get-FileHash .\dist\v0.11.0\esp32-rlcd-firmware-v0.11.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.11.0\esp32-rlcd-firmware-v0.11.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.11.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -81,8 +82,7 @@ Get-Content .\dist\v0.10.0\SHA256SUMS
 3. 短按 `PWR` 开机；
 4. 等待约 2 秒后松开 `BOOT`。
 
-这只是在开发板上选择 ESP32-S3 ROM 下载模式，不需要进入电脑 BIOS，也不需要重启
-Windows 或 WSL。
+这只是在开发板上选择 ESP32-S3 ROM 下载模式，不需要重启 Windows 或 WSL。
 
 ## 方法一：Windows + WSL 项目脚本（已实机验证）
 
@@ -90,7 +90,7 @@ Windows 或 WSL。
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.10.0/esp32-rlcd-firmware-v0.10.0-factory.bin \
+  --firmware dist/v0.11.0/esp32-rlcd-firmware-v0.11.0-factory.bin \
   --confirm
 ```
 
@@ -131,7 +131,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.10.0\esp32-rlcd-firmware-v0.10.0-factory.bin
+  0x0 .\dist\v0.11.0\esp32-rlcd-firmware-v0.11.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -149,7 +149,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.10.0/esp32-rlcd-firmware-v0.10.0-factory.bin
+  0x0 dist/v0.11.0/esp32-rlcd-firmware-v0.11.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -184,7 +184,7 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
 进入配网：RTC、月历、温湿度、电量和音频继续离线运行，网络在后台按逐步延长的间隔重试。
 RTC 同时无效且无法联网时，首屏显示 `--:--:--`，可使用下方 USB 后备流程校时。
 
-安装 RTC 备用电池后，设备健康页的 `RTC BACKUP` 首先显示 `UNTESTED`。保持 RTC 已校时，
+安装 RTC 备用电池后，“状态”页的 `RTC BACKUP` 首先显示 `UNTESTED`。保持 RTC 已校时，
 拔掉 Type-C 后长按 `PWR` 关机，等待至少一分钟，再在不按 `BOOT` 的情况下短按 `PWR`
 开机；固件会在联网前自动判断并显示 `VERIFIED` 或 `FAILED`。该状态不等同于电池电量，
 只表示最近一次断电是否保持了 RTC。
@@ -213,14 +213,25 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 | 按键 | 正常运行时的用途 |
 | --- | --- |
 | `BOOT` | 日常页面中短按切换首屏和月历；系统中心中短按返回首屏；运行时长按无操作 |
-| `KEY` | 日常页面中短按进入系统中心；系统中心中短按切换设备健康、网络与时间、音频、Wi-Fi 维护、在线更新、本地更新 |
-| `KEY` 长按 | “网络与时间”页按住 2 秒立即校时；“音频”页按住 2 秒开始临时语音回放测试；“Wi-Fi 维护”页按住 5 秒清除网络配置；“在线更新”页按住 2 秒检查或进入 `REVIEW`，确认页按住 3 秒安装；“本地更新”页按住 3 秒开启更新热点；其他页面无操作 |
+| `KEY` | 日常页面中短按进入系统中心；系统中心中短按依次切换“状态 → 音频 → 设置 → 在线更新” |
+| `KEY` 长按 | “状态”页按住 2 秒立即校时；“音频”页按住 2 秒开始临时语音回放测试；“设置”页按住 3 秒开启设置门户；“在线更新”页按住 2 秒检查或进入 `REVIEW`，确认页按住 3 秒安装；其他页面无操作 |
 | `PWR` | 开机或长按关机 |
 
 月历和系统页停留 30 秒会自动回到首屏。在线更新的检查、连接和确认阶段可按 `BOOT`
-取消；开始写入后按键不再中断。本地更新在无互联网时仍可使用。设备健康与网络状态分别
-显示在对应页面。Wi-Fi 重置倒计时结束前松开会取消，不会修改配置；确认清除后需要按
-屏幕重新配网。该操作只清除本项目的网络凭据，不是全片擦除。
+取消；开始写入后按键不再中断。“状态”页集中显示 RTC、RTC 备用电池、传感器、电池和
+网络校时摘要。
+
+“设置”页按住 `KEY` 3 秒后，设备会开启最多 5 分钟的临时 WPA2 热点并显示二维码、随机
+密码和 `http://192.168.4.1`。手机进入“设备设置”页面后可以：
+
+- 修改 `NORMAL / SAVING`、时区、摄氏/华氏温标、回放音量和 Beta 更新偏好；
+- 使用手机当前时间校准 RTC，或恢复偏好默认值；
+- 清除家庭 Wi-Fi 配置；该操作不会删除其他偏好，设备重启后进入配网；
+- 上传本项目发布的 `-ota.bin` 完成本地升级；不要上传 `-factory.bin`。
+
+Beta 更新默认关闭，仅建议能够使用本地 OTA 或 USB 恢复设备的开发者开启。普通偏好、
+恢复默认值和清除 Wi-Fi 在成功后会重启；本地 OTA 校验成功后会自动切换到新槽并重启。
+设置门户和本地 OTA 不依赖家庭 Wi-Fi 或互联网。
 
 音频测试会先播放两声提示音，再录制最多 5 秒并自动回放；录制或回放时短按 `KEY` 可
 提前结束当前阶段，短按 `BOOT` 可取消整个测试。语音只临时存放在 PSRAM，结束后立即
@@ -251,7 +262,7 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 
 首次启动请按屏幕完成配网；已有网络配置时等待设备自动连接并校时。网络不可用时再使用
 USB 校时脚本。若希望关机仍保持时间，应按微雪产品文档使用 PH1.0 接口的兼容可充电 RTC
-电池，不要接入不可充电纽扣电池。安装后按“首次配网与自动校时”的断电步骤检查设备健康
+电池，不要接入不可充电纽扣电池。安装后按“首次配网与自动校时”的断电步骤检查“状态”
 页；`UNTESTED` 表示尚未完成一次有效断电测试，不是故障。
 
 ## 参考资料

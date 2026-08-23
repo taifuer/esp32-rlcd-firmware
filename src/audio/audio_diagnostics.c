@@ -44,7 +44,6 @@ enum {
     /* The default esp_codec_dev curve is 0.5 dB per step. Keep the verified
      * prompt level, but give speech a conservative 5 dB intelligibility
      * boost while the digital limiter still caps its peak. */
-    AUDIO_VOICE_PLAYBACK_VOLUME = 68,
     AUDIO_MICROPHONE_GAIN_DB = 30,
     AUDIO_PREPARE_RECORDING_MS = 300,
     AUDIO_CAPTURE_TO_PLAYBACK_MS = 150,
@@ -57,6 +56,8 @@ enum {
 };
 
 static const char *TAG = "audio_diagnostics";
+static uint8_t s_playback_volume =
+    AUDIO_DIAGNOSTICS_DEFAULT_PLAYBACK_VOLUME;
 
 typedef enum {
     AUDIO_CONTROL_NONE = 0,
@@ -761,7 +762,7 @@ static esp_err_t play_recording(const int16_t *recording,
     playback_parameters(recording, recorded_frames, microphone, &mean,
                         &gain);
 
-    esp_err_t error = open_speaker(AUDIO_VOICE_PLAYBACK_VOLUME);
+    esp_err_t error = open_speaker(s_playback_volume);
     if (error != ESP_OK) {
         return error;
     }
@@ -1061,6 +1062,22 @@ void audio_diagnostics_get_status(audio_diagnostics_status_t *status)
     lock_context();
     *status = s_audio.status;
     unlock_context();
+}
+
+esp_err_t audio_diagnostics_set_playback_volume(uint8_t volume_percent)
+{
+    if (volume_percent > 100U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    lock_context();
+    if (audio_session_state_is_active(s_audio.status.state)) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_playback_volume = volume_percent;
+    unlock_context();
+    return ESP_OK;
 }
 
 esp_err_t audio_diagnostics_start(void)

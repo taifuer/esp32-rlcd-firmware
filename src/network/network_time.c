@@ -85,12 +85,14 @@ static esp_netif_t *s_station_netif;
 static httpd_handle_t s_http_server;
 static bool s_initialized;
 static bool s_storage_ready;
+static bool s_automatic_sync_enabled = true;
 static volatile bool s_station_active;
 static volatile uint32_t s_station_retries;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static network_session_policy_t s_session_policy;
 static network_time_status_t s_status = {
     .state = NETWORK_TIME_STATE_UNINITIALIZED,
+    .automatic_sync_enabled = true,
     .last_error = ESP_OK,
     .last_failure = NETWORK_TIME_FAILURE_NONE,
 };
@@ -107,6 +109,7 @@ static void set_status(network_time_state_t state, bool configured, esp_err_t er
     portENTER_CRITICAL(&s_status_lock);
     s_status.state = state;
     s_status.configured = configured;
+    s_status.automatic_sync_enabled = s_automatic_sync_enabled;
     s_status.last_error = error;
     s_status.last_failure = NETWORK_TIME_FAILURE_NONE;
     memset(s_status.setup_ssid, 0, sizeof(s_status.setup_ssid));
@@ -122,6 +125,7 @@ static void set_failure_status(network_time_state_t state, bool configured,
     portENTER_CRITICAL(&s_status_lock);
     s_status.state = state;
     s_status.configured = configured;
+    s_status.automatic_sync_enabled = s_automatic_sync_enabled;
     s_status.last_error = error;
     s_status.last_failure = failure;
     memset(s_status.setup_ssid, 0, sizeof(s_status.setup_ssid));
@@ -136,6 +140,7 @@ static void set_provisioning_status(bool configured, esp_err_t reason,
     portENTER_CRITICAL(&s_status_lock);
     s_status.state = NETWORK_TIME_STATE_PROVISIONING;
     s_status.configured = configured;
+    s_status.automatic_sync_enabled = s_automatic_sync_enabled;
     s_status.last_error = reason;
     s_status.last_failure = NETWORK_TIME_FAILURE_NONE;
     snprintf(s_status.setup_ssid, sizeof(s_status.setup_ssid), "%s", ssid);
@@ -806,7 +811,7 @@ static esp_err_t connect_and_synchronize(
                 *failure = NETWORK_TIME_FAILURE_NONE;
             }
             xQueueOverwrite(s_datetime_queue, &datetime);
-            ESP_LOGI(TAG, "SNTP time %04u-%02u-%02u %02u:%02u:%02u (UTC+8)",
+            ESP_LOGI(TAG, "SNTP local time %04u-%02u-%02u %02u:%02u:%02u",
                      datetime.year, datetime.month, datetime.day, datetime.hour,
                      datetime.minute, datetime.second);
         }
@@ -965,6 +970,12 @@ static void network_task(void *argument)
         if (wait_for_sync_request(0U)) {
             user_requested_sync = true;
         }
+        if (!s_automatic_sync_enabled && !user_requested_sync) {
+            set_status(NETWORK_TIME_STATE_RETRY_WAIT, true, ESP_OK);
+            network_task_activity_end();
+            user_requested_sync = wait_for_sync_request(portMAX_DELAY);
+            continue;
+        }
         network_time_failure_t failure = NETWORK_TIME_FAILURE_NONE;
         error = connect_and_synchronize(&credentials, &failure);
         memset(&credentials, 0, sizeof(credentials));
@@ -973,7 +984,9 @@ static void network_task(void *argument)
             set_status(NETWORK_TIME_STATE_SYNCHRONIZED, true, ESP_OK);
             network_task_activity_end();
             user_requested_sync = wait_for_sync_request(
-                pdMS_TO_TICKS(NETWORK_RESYNC_INTERVAL_MS));
+                s_automatic_sync_enabled
+                    ? pdMS_TO_TICKS(NETWORK_RESYNC_INTERVAL_MS)
+                    : portMAX_DELAY);
             continue;
         }
 
@@ -988,23 +1001,31 @@ static void network_task(void *argument)
         }
         const uint32_t retry_delay_ms =
             network_retry_delay_ms(consecutive_failures);
-        ESP_LOGW(TAG, "%s unavailable; retrying in %u seconds",
-                 network_time_failure_name(failure),
-                 (unsigned)(retry_delay_ms / 1000U));
+        if (s_automatic_sync_enabled) {
+            ESP_LOGW(TAG, "%s unavailable; retrying in %u seconds",
+                     network_time_failure_name(failure),
+                     (unsigned)(retry_delay_ms / 1000U));
+        } else {
+            ESP_LOGW(TAG,
+                     "%s unavailable; automatic retry disabled by power mode",
+                     network_time_failure_name(failure));
+        }
         if (user_requested_sync) {
             ESP_LOGW(TAG, "manual time synchronization did not complete");
         }
         network_task_activity_end();
         user_requested_sync = wait_for_sync_request(
-            pdMS_TO_TICKS(retry_delay_ms));
+            s_automatic_sync_enabled ? pdMS_TO_TICKS(retry_delay_ms)
+                                     : portMAX_DELAY);
     }
 }
 
-esp_err_t network_time_init(void)
+esp_err_t network_time_init(bool automatic_sync_enabled)
 {
     if (s_initialized) {
         return ESP_OK;
     }
+    s_automatic_sync_enabled = automatic_sync_enabled;
     set_status(NETWORK_TIME_STATE_STARTING, false, ESP_OK);
 
     esp_err_t error = app_storage_init();
@@ -1013,7 +1034,7 @@ esp_err_t network_time_init(void)
         return error;
     }
     s_storage_ready = true;
-    if (setenv("TZ", "CST-8", 1) != 0) {
+    if (getenv("TZ") == NULL && setenv("TZ", "CST-8", 1) != 0) {
         set_status(NETWORK_TIME_STATE_ERROR, false, ESP_FAIL);
         return ESP_FAIL;
     }
@@ -1069,7 +1090,9 @@ esp_err_t network_time_init(void)
         set_status(NETWORK_TIME_STATE_ERROR, false, ESP_ERR_NO_MEM);
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "network time service ready; credentials are never written to logs");
+    ESP_LOGI(TAG,
+             "network time service ready; automatic sync %s; credentials are never written to logs",
+             s_automatic_sync_enabled ? "enabled" : "disabled");
     return ESP_OK;
 }
 

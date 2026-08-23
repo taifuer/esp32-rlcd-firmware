@@ -4,6 +4,7 @@
 #include <time.h>
 
 #include "app_storage.h"
+#include "app_settings.h"
 #include "audio_diagnostics.h"
 #include "battery.h"
 #include "board_buttons.h"
@@ -28,6 +29,7 @@
 #include "pcf85063.h"
 #include "rtc_backup.h"
 #include "shtc3.h"
+#include "settings_power_policy.h"
 #include "usb_commands.h"
 
 static const char *TAG = "rlcd_firmware";
@@ -36,16 +38,13 @@ typedef enum {
     APP_DISPLAY_DASHBOARD,
     APP_DISPLAY_NETWORK_SETUP,
     APP_DISPLAY_CALENDAR,
-    APP_DISPLAY_DEVICE_HEALTH,
-    APP_DISPLAY_NETWORK_TIME,
+    APP_DISPLAY_STATUS,
     APP_DISPLAY_AUDIO,
-    APP_DISPLAY_WIFI_MAINTENANCE,
+    APP_DISPLAY_SETTINGS,
     APP_DISPLAY_ONLINE_UPDATE,
-    APP_DISPLAY_LOCAL_UPDATE,
     APP_DISPLAY_MANUAL_SYNC,
     APP_DISPLAY_MANUAL_SYNC_RESULT,
-    APP_DISPLAY_WIFI_RESET_PROMPT,
-    APP_DISPLAY_FIRMWARE_UPDATE_PROMPT,
+    APP_DISPLAY_SETTINGS_PORTAL_PROMPT,
     APP_DISPLAY_FIRMWARE_UPDATE_STARTING,
     APP_DISPLAY_FIRMWARE_UPDATE_READY,
     APP_DISPLAY_FIRMWARE_UPDATE_RECEIVING,
@@ -74,18 +73,14 @@ static const char *page_name(app_page_t page)
     switch (page) {
     case APP_PAGE_CALENDAR:
         return "calendar";
-    case APP_PAGE_DEVICE_HEALTH:
-        return "device health";
-    case APP_PAGE_NETWORK_TIME:
-        return "network and time";
+    case APP_PAGE_STATUS:
+        return "status";
     case APP_PAGE_AUDIO:
         return "audio";
-    case APP_PAGE_WIFI_MAINTENANCE:
-        return "Wi-Fi maintenance";
+    case APP_PAGE_SETTINGS:
+        return "settings";
     case APP_PAGE_ONLINE_UPDATE:
         return "online update";
-    case APP_PAGE_LOCAL_UPDATE:
-        return "local update";
     case APP_PAGE_HOME:
     default:
         return "home";
@@ -188,8 +183,12 @@ static const char *device_network_state_name(
     case NETWORK_TIME_STATE_SYNCHRONIZING:
         return "SYNCHRONIZING";
     case NETWORK_TIME_STATE_SYNCHRONIZED:
-        return "SYNCHRONIZED";
+        return "SYNCED";
     case NETWORK_TIME_STATE_RETRY_WAIT:
+        if (!status->automatic_sync_enabled &&
+            status->last_failure == NETWORK_TIME_FAILURE_NONE) {
+            return "MANUAL ONLY";
+        }
         if (status->last_failure == NETWORK_TIME_FAILURE_WIFI) {
             return "WI-FI OFFLINE";
         }
@@ -217,8 +216,7 @@ static void configure_key_timing(
         online_update_state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION) {
         action_threshold_ms = APP_PAGE_ONLINE_UPDATE_INSTALL_HOLD_MS;
     }
-    if (action == APP_PAGE_ACTION_RESET_WIFI ||
-        action == APP_PAGE_ACTION_START_LOCAL_UPDATE ||
+    if (action == APP_PAGE_ACTION_OPEN_SETTINGS ||
         (page == APP_PAGE_ONLINE_UPDATE &&
          online_update_state ==
              ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION)) {
@@ -340,6 +338,37 @@ void app_main(void)
                  esp_err_to_name(storage_error));
     }
 
+    app_settings_t settings;
+    app_settings_defaults(&settings);
+    esp_err_t settings_error = storage_error == ESP_OK
+                                   ? app_settings_init()
+                                   : storage_error;
+    if ((settings_error == ESP_OK ||
+         settings_error == ESP_ERR_NOT_SUPPORTED) &&
+        app_settings_get(&settings) != ESP_OK) {
+        app_settings_defaults(&settings);
+        settings_error = ESP_FAIL;
+    }
+    if (settings_error != ESP_OK) {
+        ESP_LOGW(TAG, "using safe settings defaults: %s",
+                 esp_err_to_name(settings_error));
+    }
+    if (app_settings_apply_timezone(&settings) != ESP_OK) {
+        ESP_LOGW(TAG, "could not apply configured time zone; using process default");
+    }
+    app_power_policy_t power_policy;
+    if (!app_power_policy_for_mode(settings.power_mode, &power_policy)) {
+        app_settings_defaults(&settings);
+        (void)app_power_policy_for_mode(settings.power_mode, &power_policy);
+    }
+    const esp_err_t volume_error =
+        audio_diagnostics_set_playback_volume(
+            settings.audio_playback_volume);
+    if (volume_error != ESP_OK) {
+        ESP_LOGW(TAG, "could not apply audio playback volume: %s",
+                 esp_err_to_name(volume_error));
+    }
+
     const esp_err_t i2c_error = board_i2c_init();
     const bool i2c_ready = i2c_error == ESP_OK;
     if (!i2c_ready) {
@@ -433,13 +462,13 @@ void app_main(void)
                  esp_err_to_name(button_init_error));
     }
 
-    const esp_err_t network_error = network_time_init();
+    const esp_err_t network_error =
+        network_time_init(power_policy.automatic_network);
     if (network_error != ESP_OK) {
         ESP_LOGW(TAG, "automatic network time unavailable: %s",
                  esp_err_to_name(network_error));
     }
-    if (network_error == ESP_OK && startup_rtc_readable &&
-        startup_datetime.clock_integrity) {
+    if (startup_rtc_readable && startup_datetime.clock_integrity) {
         const esp_err_t seed_error =
             seed_system_time_from_rtc(&startup_datetime);
         if (seed_error == ESP_OK) {
@@ -462,7 +491,9 @@ void app_main(void)
                  esp_err_to_name(firmware_update_error));
     }
     const esp_err_t online_update_error =
-        online_firmware_update_init(app->version);
+        online_firmware_update_init(
+            app->version,
+            settings.update_channel == APP_UPDATE_CHANNEL_BETA);
     if (online_update_error != ESP_OK) {
         ESP_LOGW(TAG, "online update service unavailable: %s",
                  esp_err_to_name(online_update_error));
@@ -473,6 +504,10 @@ void app_main(void)
 
     display_dashboard_t dashboard = {
         .lunar_text = NULL,
+        .show_seconds = power_policy.show_seconds,
+        .temperature_fahrenheit =
+            settings.temperature_unit ==
+            APP_TEMPERATURE_UNIT_FAHRENHEIT,
     };
     pcf85063_datetime_t datetime = {0};
     shtc3_measurement_t measurement = {0};
@@ -501,6 +536,10 @@ void app_main(void)
     const TickType_t initial_tick = xTaskGetTickCount();
     TickType_t last_button_update = initial_tick;
     TickType_t last_periodic_update = initial_tick;
+    TickType_t last_rtc_read = initial_tick;
+    TickType_t last_sensor_read = initial_tick;
+    TickType_t last_battery_read = initial_tick;
+    uint32_t rtc_read_wait_ms = 0U;
     TickType_t manual_sync_ui_started = initial_tick;
     TickType_t firmware_update_result_started = initial_tick;
     network_time_state_t previous_network_state = NETWORK_TIME_STATE_UNINITIALIZED;
@@ -511,8 +550,8 @@ void app_main(void)
     manual_sync_ui_t manual_sync_ui = MANUAL_SYNC_UI_NONE;
     esp_err_t manual_sync_error = ESP_OK;
     bool first_periodic_update = true;
-    uint8_t previous_reset_seconds = 0U;
-    uint8_t previous_update_seconds = 0U;
+    bool status_refresh_pending = false;
+    uint8_t previous_portal_seconds = 0U;
     uint8_t previous_update_percent = 0U;
     bool setup_screen_dismissed = false;
     firmware_update_state_t previous_update_state =
@@ -529,10 +568,9 @@ void app_main(void)
             (uint32_t)(now - last_button_update) * portTICK_PERIOD_MS;
         last_button_update = now;
         bool render_requested = false;
+        bool dashboard_data_changed = false;
         bool calendar_data_changed = false;
-        bool device_health_data_changed = false;
-        bool network_time_data_changed = false;
-        bool wifi_maintenance_data_changed = false;
+        bool system_status_data_changed = false;
         bool online_update_data_changed = false;
         audio_diagnostics_status_t latest_audio_status = {0};
         audio_diagnostics_get_status(&latest_audio_status);
@@ -641,6 +679,9 @@ void app_main(void)
                     setup_screen_dismissed = true;
                 }
                 app_page_state_key_short_press(&page_state);
+                if (app_page_state_current(&page_state) == APP_PAGE_STATUS) {
+                    status_refresh_pending = true;
+                }
                 render_requested = true;
                 ESP_LOGI(TAG, "KEY short press: showing %s page",
                          page_name(app_page_state_current(&page_state)));
@@ -648,12 +689,9 @@ void app_main(void)
         } else if (key_event == BUTTON_EVENT_HOLD_CANCELLED) {
             app_page_state_note_activity(&page_state);
             render_requested = true;
-            if (input_page == APP_PAGE_WIFI_MAINTENANCE) {
+            if (input_page == APP_PAGE_SETTINGS) {
                 ESP_LOGI(TAG,
-                         "KEY hold cancelled; Wi-Fi settings unchanged");
-            } else if (input_page == APP_PAGE_LOCAL_UPDATE) {
-                ESP_LOGI(TAG,
-                         "KEY hold cancelled; local update not started");
+                         "KEY hold cancelled; settings portal not opened");
             } else if (input_page == APP_PAGE_ONLINE_UPDATE) {
                 ESP_LOGI(TAG,
                          "KEY hold cancelled; online update unchanged");
@@ -682,35 +720,6 @@ void app_main(void)
                              esp_err_to_name(manual_sync_error));
                 }
                 render_requested = true;
-            } else if (key_action == APP_PAGE_ACTION_RESET_WIFI &&
-                       manual_sync_ui == MANUAL_SYNC_UI_NONE &&
-                       !online_update_busy) {
-                ESP_LOGW(TAG, "KEY long press: clearing Wi-Fi settings");
-                if (display_ready) {
-                    display_show_status("RESET WI-FI", "Clearing settings");
-                }
-                const esp_err_t clear_error =
-                    network_time_clear_credentials();
-                if (clear_error == ESP_OK) {
-                    if (display_ready) {
-                        display_show_status("WI-FI RESET",
-                                            "Restarting setup");
-                    }
-                    ESP_LOGI(TAG,
-                             "Wi-Fi settings cleared; restarting into setup mode");
-                    vTaskDelay(pdMS_TO_TICKS(500U));
-                    esp_restart();
-                    continue;
-                }
-                ESP_LOGE(TAG, "could not clear Wi-Fi settings: %s",
-                         esp_err_to_name(clear_error));
-                if (display_ready) {
-                    display_show_status("RESET FAILED",
-                                        "Use USB RESET_WIFI");
-                }
-                vTaskDelay(pdMS_TO_TICKS(1500U));
-                render_requested = true;
-                previous_display_mode = APP_DISPLAY_NONE;
             } else if (key_action == APP_PAGE_ACTION_TEST_AUDIO &&
                        manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                        !firmware_update_ui_active &&
@@ -760,19 +769,18 @@ void app_main(void)
                 previous_online_update_percent =
                     online_update_status.percent;
                 render_requested = true;
-            } else if (key_action ==
-                           APP_PAGE_ACTION_START_LOCAL_UPDATE &&
+            } else if (key_action == APP_PAGE_ACTION_OPEN_SETTINGS &&
                        manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                        !firmware_update_ui_active &&
                        !online_update_busy &&
                        !online_update_confirmation_active) {
                 const esp_err_t start_error = firmware_update_start();
                 if (start_error != ESP_OK) {
-                    ESP_LOGW(TAG, "could not start firmware update: %s",
+                    ESP_LOGW(TAG, "could not open settings portal: %s",
                              esp_err_to_name(start_error));
                 } else {
                     ESP_LOGI(TAG,
-                             "KEY long press: local firmware update started");
+                             "KEY long press: settings portal started");
                 }
                 (void)firmware_update_get_status(&firmware_update_status);
                 firmware_update_ui_active =
@@ -834,28 +842,17 @@ void app_main(void)
 
         const uint32_t button_hold_ms =
             button_state_hold_ms(&key_button_state);
-        const bool reset_prompt_active =
-            buttons_ready && input_page == APP_PAGE_WIFI_MAINTENANCE &&
-            manual_sync_ui == MANUAL_SYNC_UI_NONE &&
-            button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
-            button_hold_ms < APP_PAGE_WIFI_RESET_HOLD_MS;
-        const bool firmware_update_prompt_active =
-            buttons_ready && input_page == APP_PAGE_LOCAL_UPDATE &&
+        const bool settings_portal_prompt_active =
+            buttons_ready && input_page == APP_PAGE_SETTINGS &&
             manual_sync_ui == MANUAL_SYNC_UI_NONE &&
             !firmware_update_ui_active && !online_update_busy &&
             !online_update_confirmation_active &&
             button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
-            button_hold_ms < APP_PAGE_LOCAL_UPDATE_HOLD_MS;
-        uint8_t reset_seconds_remaining = 0U;
-        if (reset_prompt_active) {
-            reset_seconds_remaining = (uint8_t)(
-                (APP_PAGE_WIFI_RESET_HOLD_MS - button_hold_ms + 999U) /
-                1000U);
-        }
-        uint8_t update_seconds_remaining = 0U;
-        if (firmware_update_prompt_active) {
-            update_seconds_remaining = (uint8_t)(
-                (APP_PAGE_LOCAL_UPDATE_HOLD_MS - button_hold_ms + 999U) /
+            button_hold_ms < APP_PAGE_SETTINGS_HOLD_MS;
+        uint8_t portal_seconds_remaining = 0U;
+        if (settings_portal_prompt_active) {
+            portal_seconds_remaining = (uint8_t)(
+                (APP_PAGE_SETTINGS_HOLD_MS - button_hold_ms + 999U) /
                 1000U);
         }
 
@@ -874,8 +871,8 @@ void app_main(void)
             manual_sync_ui = MANUAL_SYNC_UI_NONE;
             render_requested = true;
         }
-        if (manual_sync_ui == MANUAL_SYNC_UI_NONE && !reset_prompt_active &&
-            !firmware_update_prompt_active && !firmware_update_ui_active &&
+        if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+            !settings_portal_prompt_active && !firmware_update_ui_active &&
             !(input_page == APP_PAGE_ONLINE_UPDATE &&
               (online_update_busy ||
                online_update_confirmation_active)) &&
@@ -906,15 +903,32 @@ void app_main(void)
             now - last_periodic_update >=
                 pdMS_TO_TICKS(APP_PERIODIC_UPDATE_MS);
         if (periodic_update) {
+            const bool first_update = first_periodic_update;
             first_periodic_update = false;
             last_periodic_update = now;
+            const bool status_page_needs_fresh_data =
+                app_page_state_current(&page_state) == APP_PAGE_STATUS &&
+                status_refresh_pending;
+            const bool rtc_read_due =
+                first_update || status_page_needs_fresh_data ||
+                now - last_rtc_read >=
+                    pdMS_TO_TICKS(rtc_read_wait_ms);
+            const bool sensor_read_due =
+                first_update || status_page_needs_fresh_data ||
+                now - last_sensor_read >=
+                    pdMS_TO_TICKS(power_policy.sensor_read_interval_ms);
+            const bool battery_read_due =
+                first_update || status_page_needs_fresh_data ||
+                now - last_battery_read >=
+                    pdMS_TO_TICKS(power_policy.battery_read_interval_ms);
 
             network_time_datetime_t synchronized_time = {0};
             if (network_time_take_datetime(&synchronized_time)) {
                 last_sync_time = synchronized_time;
                 last_sync_valid = true;
-                automatic_update_check_pending = true;
-                network_time_data_changed = true;
+                automatic_update_check_pending =
+                    power_policy.automatic_network;
+                system_status_data_changed = true;
                 esp_err_t rtc_sync_error = ESP_OK;
                 if (!rtc_driver_ready) {
                     rtc_sync_error = ESP_ERR_INVALID_STATE;
@@ -937,17 +951,25 @@ void app_main(void)
                 }
             }
 
-            if (rtc_driver_ready) {
+            if (rtc_driver_ready && rtc_read_due &&
+                !firmware_update_ui_active) {
+                last_rtc_read = now;
                 const esp_err_t error = pcf85063_read(&datetime);
                 if (error == ESP_OK) {
+                    rtc_read_wait_ms =
+                        app_power_policy_next_clock_delay_ms(
+                            &power_policy, datetime.second);
                     const bool rtc_display_changed =
                         dashboard.time_valid != datetime.clock_integrity ||
                         (datetime.clock_integrity &&
                          (dashboard.year != datetime.year ||
                           dashboard.month != datetime.month ||
                           dashboard.day != datetime.day ||
+                          dashboard.weekday != datetime.weekday ||
                           dashboard.hour != datetime.hour ||
-                          dashboard.minute != datetime.minute));
+                          dashboard.minute != datetime.minute ||
+                          (dashboard.show_seconds &&
+                           dashboard.second != datetime.second)));
                     dashboard.time_valid = datetime.clock_integrity;
                     dashboard.year = datetime.year;
                     dashboard.month = datetime.month;
@@ -976,11 +998,12 @@ void app_main(void)
                         }
                     }
                     if (rtc_display_changed) {
+                        dashboard_data_changed = true;
                         calendar_data_changed = true;
-                        device_health_data_changed = true;
-                        network_time_data_changed = true;
+                        system_status_data_changed = true;
                     }
                 } else {
+                    rtc_read_wait_ms = power_policy.rtc_read_interval_ms;
                     const bool rtc_display_changed = dashboard.time_valid;
                     dashboard.time_valid = false;
                     dashboard.lunar_valid = false;
@@ -990,14 +1013,16 @@ void app_main(void)
                                  esp_err_to_name(error));
                     }
                     if (rtc_display_changed) {
+                        dashboard_data_changed = true;
                         calendar_data_changed = true;
-                        device_health_data_changed = true;
-                        network_time_data_changed = true;
+                        system_status_data_changed = true;
                     }
                 }
             }
 
-            if (sensor_driver_ready && (cycle % 5U) == 0U) {
+            if (sensor_driver_ready && sensor_read_due &&
+                !firmware_update_ui_active) {
+                last_sensor_read = now;
                 const esp_err_t error = shtc3_read(&measurement);
                 if (error == ESP_OK) {
                     const bool sensor_display_changed =
@@ -1022,9 +1047,11 @@ void app_main(void)
                                  (double)measurement.temperature_c,
                                  (double)measurement.humidity_percent);
                     }
-                    device_health_data_changed |= sensor_display_changed;
+                    system_status_data_changed |= sensor_display_changed;
+                    dashboard_data_changed |= sensor_display_changed;
                 } else {
-                    device_health_data_changed |=
+                    dashboard_data_changed |= dashboard.environment_valid;
+                    system_status_data_changed |=
                         dashboard.environment_valid;
                     dashboard.environment_valid = false;
                     ESP_LOGW(TAG, "SHTC3 read failed: %s",
@@ -1032,7 +1059,8 @@ void app_main(void)
                 }
             }
 
-            if (battery_driver_ready && (cycle % 30U) == 0U) {
+            if (battery_driver_ready && battery_read_due) {
+                last_battery_read = now;
                 const uint16_t previous_voltage_mv =
                     battery_measurement.voltage_mv;
                 const esp_err_t error = battery_read(&battery_measurement);
@@ -1052,9 +1080,11 @@ void app_main(void)
                                  battery_measurement.calibrated ? "calibrated"
                                                                 : "nominal");
                     }
-                    device_health_data_changed |= battery_display_changed;
+                    system_status_data_changed |= battery_display_changed;
+                    dashboard_data_changed |= battery_display_changed;
                 } else {
-                    device_health_data_changed |= dashboard.battery_valid;
+                    dashboard_data_changed |= dashboard.battery_valid;
+                    system_status_data_changed |= dashboard.battery_valid;
                     dashboard.battery_valid = false;
                     if ((cycle % 300U) == 0U) {
                         ESP_LOGW(TAG, "battery read failed: %s",
@@ -1074,9 +1104,11 @@ void app_main(void)
                     setup_screen_dismissed = false;
                 }
                 previous_network_state = network_status.state;
-                network_time_data_changed = true;
-                wifi_maintenance_data_changed = true;
+                system_status_data_changed = true;
                 render_requested = true;
+            }
+            if (status_page_needs_fresh_data) {
+                status_refresh_pending = false;
             }
             if (manual_sync_ui == MANUAL_SYNC_UI_ACTIVE &&
                 (network_status.state == NETWORK_TIME_STATE_RETRY_WAIT ||
@@ -1115,17 +1147,17 @@ void app_main(void)
         }
 
         const app_page_t active_page = app_page_state_current(&page_state);
-        if (display_ready && firmware_update_prompt_active) {
+        if (display_ready && settings_portal_prompt_active) {
             if (previous_display_mode !=
-                    APP_DISPLAY_FIRMWARE_UPDATE_PROMPT ||
-                update_seconds_remaining != previous_update_seconds) {
+                    APP_DISPLAY_SETTINGS_PORTAL_PROMPT ||
+                portal_seconds_remaining != previous_portal_seconds) {
                 char detail[40];
                 snprintf(detail, sizeof(detail), "Keep holding: %us",
-                         update_seconds_remaining);
-                display_show_status("START LOCAL UPDATE", detail);
+                         portal_seconds_remaining);
+                display_show_status("OPEN SETTINGS", detail);
             }
-            previous_display_mode = APP_DISPLAY_FIRMWARE_UPDATE_PROMPT;
-            previous_update_seconds = update_seconds_remaining;
+            previous_display_mode = APP_DISPLAY_SETTINGS_PORTAL_PROMPT;
+            previous_portal_seconds = portal_seconds_remaining;
         } else if (display_ready && firmware_update_ui_active) {
             app_display_mode_t update_display_mode =
                 APP_DISPLAY_FIRMWARE_UPDATE_RESULT;
@@ -1150,11 +1182,11 @@ void app_main(void)
                 previous_display_mode != update_display_mode) {
                 if (firmware_update_status.state ==
                     FIRMWARE_UPDATE_STATE_STARTING) {
-                    display_show_status("STARTING UPDATE",
+                    display_show_status("STARTING SETTINGS",
                                         "Opening temporary Wi-Fi");
                 } else if (firmware_update_status.state ==
                            FIRMWARE_UPDATE_STATE_READY) {
-                    display_show_firmware_update_ready(
+                    display_show_settings_portal_ready(
                         firmware_update_status.access_point_ssid,
                         firmware_update_status.access_point_password,
                         firmware_update_status.access_url);
@@ -1180,11 +1212,11 @@ void app_main(void)
                                         "Restarting safely");
                 } else if (firmware_update_status.state ==
                            FIRMWARE_UPDATE_STATE_EXPIRED) {
-                    display_show_status("UPDATE CLOSED",
-                                        "No firmware received");
+                    display_show_status("SETTINGS CLOSED",
+                                        "Session expired");
                 } else if (firmware_update_status.state ==
                            FIRMWARE_UPDATE_STATE_CANCELLED) {
-                    display_show_status("UPDATE CLOSED",
+                    display_show_status("SETTINGS CLOSED",
                                         "No changes made");
                 } else {
                     display_show_status(
@@ -1194,19 +1226,7 @@ void app_main(void)
                 }
             }
             previous_display_mode = update_display_mode;
-            previous_reset_seconds = 0U;
-            previous_update_seconds = 0U;
-        } else if (display_ready && reset_prompt_active) {
-            if (previous_display_mode != APP_DISPLAY_WIFI_RESET_PROMPT ||
-                reset_seconds_remaining != previous_reset_seconds) {
-                char detail[40];
-                snprintf(detail, sizeof(detail), "Keep holding: %us",
-                         reset_seconds_remaining);
-                display_show_status("RESET WI-FI", detail);
-            }
-            previous_display_mode = APP_DISPLAY_WIFI_RESET_PROMPT;
-            previous_reset_seconds = reset_seconds_remaining;
-            previous_update_seconds = 0U;
+            previous_portal_seconds = 0U;
         } else if (display_ready && manual_sync_ui != MANUAL_SYNC_UI_NONE) {
             if (manual_sync_ui == MANUAL_SYNC_UI_ACTIVE) {
                 if (previous_display_mode != APP_DISPLAY_MANUAL_SYNC ||
@@ -1241,38 +1261,27 @@ void app_main(void)
                 }
                 previous_display_mode = APP_DISPLAY_MANUAL_SYNC_RESULT;
             }
-            previous_reset_seconds = 0U;
+            previous_portal_seconds = 0U;
         } else if (display_ready && app_page_is_system(active_page)) {
-            app_display_mode_t system_display_mode = APP_DISPLAY_DEVICE_HEALTH;
-            if (active_page == APP_PAGE_NETWORK_TIME) {
-                system_display_mode = APP_DISPLAY_NETWORK_TIME;
-            } else if (active_page == APP_PAGE_AUDIO) {
+            app_display_mode_t system_display_mode = APP_DISPLAY_STATUS;
+            if (active_page == APP_PAGE_AUDIO) {
                 system_display_mode = APP_DISPLAY_AUDIO;
-            } else if (active_page == APP_PAGE_WIFI_MAINTENANCE) {
-                system_display_mode = APP_DISPLAY_WIFI_MAINTENANCE;
+            } else if (active_page == APP_PAGE_SETTINGS) {
+                system_display_mode = APP_DISPLAY_SETTINGS;
             } else if (active_page == APP_PAGE_ONLINE_UPDATE) {
                 system_display_mode = APP_DISPLAY_ONLINE_UPDATE;
-            } else if (active_page == APP_PAGE_LOCAL_UPDATE) {
-                system_display_mode = APP_DISPLAY_LOCAL_UPDATE;
             }
             const bool system_data_changed =
-                (active_page == APP_PAGE_DEVICE_HEALTH &&
-                 device_health_data_changed) ||
-                (active_page == APP_PAGE_NETWORK_TIME &&
-                 network_time_data_changed) ||
+                (active_page == APP_PAGE_STATUS &&
+                 system_status_data_changed) ||
                 (active_page == APP_PAGE_AUDIO &&
                  audio_data_changed) ||
-                (active_page == APP_PAGE_WIFI_MAINTENANCE &&
-                 wifi_maintenance_data_changed) ||
                 (active_page == APP_PAGE_ONLINE_UPDATE &&
                  online_update_data_changed);
             if (render_requested ||
                 previous_display_mode != system_display_mode ||
                 system_data_changed) {
                 const display_system_status_t system_status = {
-                    .firmware_version = app->version,
-                    .idf_version = app->idf_ver,
-                    .psram_kib = (uint32_t)(psram_bytes / 1024U),
                     .rtc_ready = rtc_driver_ready,
                     .time_valid = dashboard.time_valid,
                     .rtc_backup_state =
@@ -1288,6 +1297,8 @@ void app_main(void)
                     .sensor_ready = sensor_driver_ready,
                     .environment_valid = dashboard.environment_valid,
                     .temperature_c = dashboard.temperature_c,
+                    .temperature_fahrenheit =
+                        dashboard.temperature_fahrenheit,
                     .humidity_percent = dashboard.humidity_percent,
                     .battery_ready = battery_driver_ready,
                     .battery_valid = dashboard.battery_valid,
@@ -1298,16 +1309,13 @@ void app_main(void)
                     .network_state =
                         device_network_state_name(&network_status),
                     .last_sync_valid = last_sync_valid,
-                    .last_sync_year = last_sync_time.year,
                     .last_sync_month = last_sync_time.month,
                     .last_sync_day = last_sync_time.day,
                     .last_sync_hour = last_sync_time.hour,
                     .last_sync_minute = last_sync_time.minute,
                 };
-                if (active_page == APP_PAGE_DEVICE_HEALTH) {
-                    display_show_device_health(&system_status);
-                } else if (active_page == APP_PAGE_NETWORK_TIME) {
-                    display_show_network_time(&system_status);
+                if (active_page == APP_PAGE_STATUS) {
+                    display_show_system_status(&system_status);
                 } else if (active_page == APP_PAGE_AUDIO) {
                     audio_diagnostics_get_status(&audio_status);
                     const display_audio_status_t display_audio_status = {
@@ -1345,8 +1353,18 @@ void app_main(void)
                             audio_status.result),
                     };
                     display_show_audio(&display_audio_status);
-                } else if (active_page == APP_PAGE_WIFI_MAINTENANCE) {
-                    display_show_wifi_maintenance(&system_status);
+                } else if (active_page == APP_PAGE_SETTINGS) {
+                    const display_settings_status_t settings_status = {
+                        .low_power_mode =
+                            settings.power_mode == APP_POWER_MODE_SAVING,
+                        .utc_offset_minutes = settings.utc_offset_minutes,
+                        .temperature_fahrenheit =
+                            settings.temperature_unit ==
+                            APP_TEMPERATURE_UNIT_FAHRENHEIT,
+                        .playback_volume_percent =
+                            settings.audio_playback_volume,
+                    };
+                    display_show_settings(&settings_status);
                 } else if (active_page == APP_PAGE_ONLINE_UPDATE) {
                     const char *detail = NULL;
                     if (online_update_status.state ==
@@ -1373,6 +1391,7 @@ void app_main(void)
                     const display_online_update_status_t display_status = {
                         .state = display_online_update_state(
                             online_update_status.state),
+                        .beta_channel = online_update_status.beta_channel,
                         .current_version =
                             online_update_status.current_version,
                         .latest_version =
@@ -1391,24 +1410,20 @@ void app_main(void)
                         .progress_percent = online_update_status.percent,
                     };
                     display_show_online_update(&display_status);
-                } else {
-                    display_show_local_update(&system_status);
                 }
             }
             previous_display_mode = system_display_mode;
-            previous_reset_seconds = 0U;
-            previous_update_seconds = 0U;
+            previous_portal_seconds = 0U;
         } else if (display_ready &&
                    (periodic_update || render_requested ||
-                    previous_display_mode == APP_DISPLAY_DEVICE_HEALTH ||
-                    previous_display_mode == APP_DISPLAY_NETWORK_TIME ||
+                    previous_display_mode == APP_DISPLAY_STATUS ||
                     previous_display_mode == APP_DISPLAY_AUDIO ||
-                    previous_display_mode == APP_DISPLAY_WIFI_MAINTENANCE ||
+                    previous_display_mode == APP_DISPLAY_SETTINGS ||
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||
-                    previous_display_mode == APP_DISPLAY_LOCAL_UPDATE ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC_RESULT ||
-                    previous_display_mode == APP_DISPLAY_WIFI_RESET_PROMPT)) {
+                    previous_display_mode ==
+                        APP_DISPLAY_SETTINGS_PORTAL_PROMPT)) {
             const TickType_t provisioning_elapsed = now - provisioning_started;
             const bool show_setup =
                 app_network_setup_should_overlay(
@@ -1425,7 +1440,10 @@ void app_main(void)
             }
 
             if (display_mode == APP_DISPLAY_DASHBOARD) {
-                display_show_dashboard(&dashboard);
+                if (display_mode != previous_display_mode ||
+                    render_requested || dashboard_data_changed) {
+                    display_show_dashboard(&dashboard);
+                }
             } else if (display_mode == APP_DISPLAY_CALENDAR) {
                 if (display_mode != previous_display_mode ||
                     render_requested || calendar_data_changed) {
@@ -1440,8 +1458,7 @@ void app_main(void)
                                            network_status.setup_url);
             }
             previous_display_mode = display_mode;
-            previous_reset_seconds = 0U;
-            previous_update_seconds = 0U;
+            previous_portal_seconds = 0U;
         }
 
         vTaskDelay(pdMS_TO_TICKS(APP_LOOP_INTERVAL_MS));

@@ -25,10 +25,12 @@ typedef struct {
     uint8_t hour;
     uint8_t minute;
     uint8_t second;
+    bool show_seconds;
     bool lunar_valid;
     const char *lunar_text;
     bool environment_valid;
     float temperature_c;
+    bool temperature_fahrenheit;
     float humidity_percent;
     bool battery_valid;
     uint8_t battery_percent;
@@ -36,9 +38,6 @@ typedef struct {
 } display_dashboard_t;
 
 typedef struct {
-    const char *firmware_version;
-    const char *idf_version;
-    uint32_t psram_kib;
     bool rtc_ready;
     bool time_valid;
     const char *rtc_backup_state;
@@ -50,6 +49,7 @@ typedef struct {
     bool sensor_ready;
     bool environment_valid;
     float temperature_c;
+    bool temperature_fahrenheit;
     float humidity_percent;
     bool battery_ready;
     bool battery_valid;
@@ -59,12 +59,18 @@ typedef struct {
     bool network_configured;
     const char *network_state;
     bool last_sync_valid;
-    uint16_t last_sync_year;
     uint8_t last_sync_month;
     uint8_t last_sync_day;
     uint8_t last_sync_hour;
     uint8_t last_sync_minute;
 } display_system_status_t;
+
+typedef struct {
+    bool low_power_mode;
+    int16_t utc_offset_minutes;
+    bool temperature_fahrenheit;
+    uint8_t playback_volume_percent;
+} display_settings_status_t;
 
 typedef enum {
     DISPLAY_AUDIO_STATE_IDLE = 0,
@@ -115,6 +121,7 @@ typedef enum {
 
 typedef struct {
     display_online_update_state_t state;
+    bool beta_channel;
     const char *current_version;
     const char *latest_version;
     const char *last_checked;
@@ -127,16 +134,15 @@ typedef struct {
 esp_err_t display_init(void);
 void display_show_status(const char *title, const char *detail);
 void display_show_network_setup(const char *ssid, const char *password, const char *url);
-void display_show_firmware_update_ready(const char *ssid, const char *password,
+void display_show_settings_portal_ready(const char *ssid,
+                                        const char *password,
                                         const char *url);
 void display_show_dashboard(const display_dashboard_t *dashboard);
 void display_show_calendar(const display_dashboard_t *dashboard);
-void display_show_device_health(const display_system_status_t *status);
-void display_show_network_time(const display_system_status_t *status);
+void display_show_system_status(const display_system_status_t *status);
 void display_show_audio(const display_audio_status_t *status);
-void display_show_wifi_maintenance(const display_system_status_t *status);
+void display_show_settings(const display_settings_status_t *status);
 void display_show_online_update(const display_online_update_status_t *status);
-void display_show_local_update(const display_system_status_t *status);
 
 #ifdef __cplusplus
 }

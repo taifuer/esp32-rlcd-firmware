@@ -1,0 +1,48 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include "settings_model.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define SETTINGS_RECORD_ENCODED_SIZE 24U
+
+typedef enum {
+    SETTINGS_RECORD_SLOT_NONE = 0,
+    SETTINGS_RECORD_SLOT_A,
+    SETTINGS_RECORD_SLOT_B,
+} settings_record_slot_t;
+
+typedef struct {
+    uint32_t generation;
+    app_settings_t settings;
+} settings_record_t;
+
+typedef struct {
+    settings_record_slot_t source_slot;
+    bool write_slot_a;
+    bool write_slot_b;
+} settings_record_repair_plan_t;
+
+bool settings_record_encode(uint32_t generation,
+                            const app_settings_t *settings,
+                            uint8_t *encoded, size_t encoded_size);
+bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
+                            settings_record_t *record);
+settings_record_slot_t settings_record_select_latest(
+    const settings_record_t *slot_a, const settings_record_t *slot_b);
+bool settings_record_plan_repair(
+    const settings_record_t *slot_a, const settings_record_t *slot_b,
+    settings_record_repair_plan_t *plan);
+bool settings_record_repair_is_usable(
+    const settings_record_repair_plan_t *plan,
+    bool repair_write_succeeded);
+
+#ifdef __cplusplus
+}
+#endif

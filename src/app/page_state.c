@@ -16,19 +16,15 @@ static app_page_t next_daily_page(app_page_t page)
 static app_page_t next_system_page(app_page_t page)
 {
     switch (page) {
-    case APP_PAGE_DEVICE_HEALTH:
-        return APP_PAGE_NETWORK_TIME;
-    case APP_PAGE_NETWORK_TIME:
+    case APP_PAGE_STATUS:
         return APP_PAGE_AUDIO;
     case APP_PAGE_AUDIO:
-        return APP_PAGE_WIFI_MAINTENANCE;
-    case APP_PAGE_WIFI_MAINTENANCE:
+        return APP_PAGE_SETTINGS;
+    case APP_PAGE_SETTINGS:
         return APP_PAGE_ONLINE_UPDATE;
     case APP_PAGE_ONLINE_UPDATE:
-        return APP_PAGE_LOCAL_UPDATE;
-    case APP_PAGE_LOCAL_UPDATE:
     default:
-        return APP_PAGE_DEVICE_HEALTH;
+        return APP_PAGE_STATUS;
     }
 }
 
@@ -53,25 +49,22 @@ bool app_page_is_daily(app_page_t page)
 
 bool app_page_is_system(app_page_t page)
 {
-    return page >= APP_PAGE_DEVICE_HEALTH && page <= APP_PAGE_LOCAL_UPDATE;
+    return page >= APP_PAGE_STATUS && page <= APP_PAGE_ONLINE_UPDATE;
 }
 
 app_page_action_t app_page_key_hold_action(app_page_t page)
 {
-    if (page == APP_PAGE_NETWORK_TIME) {
+    if (page == APP_PAGE_STATUS) {
         return APP_PAGE_ACTION_SYNC_TIME;
     }
     if (page == APP_PAGE_AUDIO) {
         return APP_PAGE_ACTION_TEST_AUDIO;
     }
-    if (page == APP_PAGE_WIFI_MAINTENANCE) {
-        return APP_PAGE_ACTION_RESET_WIFI;
+    if (page == APP_PAGE_SETTINGS) {
+        return APP_PAGE_ACTION_OPEN_SETTINGS;
     }
     if (page == APP_PAGE_ONLINE_UPDATE) {
         return APP_PAGE_ACTION_CHECK_ONLINE_UPDATE;
-    }
-    if (page == APP_PAGE_LOCAL_UPDATE) {
-        return APP_PAGE_ACTION_START_LOCAL_UPDATE;
     }
     return APP_PAGE_ACTION_NONE;
 }
@@ -83,12 +76,10 @@ uint32_t app_page_key_hold_threshold_ms(app_page_t page)
         return APP_PAGE_MANUAL_SYNC_HOLD_MS;
     case APP_PAGE_ACTION_TEST_AUDIO:
         return APP_PAGE_AUDIO_TEST_HOLD_MS;
-    case APP_PAGE_ACTION_RESET_WIFI:
-        return APP_PAGE_WIFI_RESET_HOLD_MS;
+    case APP_PAGE_ACTION_OPEN_SETTINGS:
+        return APP_PAGE_SETTINGS_HOLD_MS;
     case APP_PAGE_ACTION_CHECK_ONLINE_UPDATE:
         return APP_PAGE_ONLINE_UPDATE_CHECK_HOLD_MS;
-    case APP_PAGE_ACTION_START_LOCAL_UPDATE:
-        return APP_PAGE_LOCAL_UPDATE_HOLD_MS;
     case APP_PAGE_ACTION_NONE:
     default:
         return 0U;
@@ -113,7 +104,7 @@ void app_page_state_key_short_press(app_page_state_t *state)
     }
     state->current = app_page_is_system(state->current)
                          ? next_system_page(state->current)
-                         : APP_PAGE_DEVICE_HEALTH;
+                         : APP_PAGE_STATUS;
     state->inactive_ms = 0U;
 }
 

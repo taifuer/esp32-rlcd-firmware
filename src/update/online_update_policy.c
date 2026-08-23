@@ -262,6 +262,25 @@ online_update_error_t online_update_semver_compare(
     return ONLINE_UPDATE_ERROR_NONE;
 }
 
+online_update_channel_t online_update_select_channel(
+    bool beta_updates_enabled)
+{
+    return beta_updates_enabled ? ONLINE_UPDATE_CHANNEL_TESTING
+                                : ONLINE_UPDATE_CHANNEL_STABLE;
+}
+
+const char *online_update_channel_name(online_update_channel_t channel)
+{
+    switch (channel) {
+    case ONLINE_UPDATE_CHANNEL_STABLE:
+        return "stable";
+    case ONLINE_UPDATE_CHANNEL_TESTING:
+        return "testing";
+    default:
+        return NULL;
+    }
+}
+
 static bool string_equals(const char *left, const char *right, size_t maximum)
 {
     const size_t left_length = bounded_string_length(left, maximum + 1U);
@@ -347,6 +366,7 @@ online_update_error_t online_update_manifest_evaluate(
     const char *current_version,
     const char *expected_channel)
 {
+    parsed_semver_t target_version;
     int comparison;
 
     if (manifest == NULL || current_version == NULL ||
@@ -372,10 +392,13 @@ online_update_error_t online_update_manifest_evaluate(
             ONLINE_UPDATE_HARDWARE_MAX_LENGTH)) {
         return ONLINE_UPDATE_ERROR_MANIFEST_HARDWARE;
     }
-    if (online_update_semver_compare(
-            manifest->version, manifest->version, &comparison) !=
-        ONLINE_UPDATE_ERROR_NONE) {
+    if (!parse_semver(manifest->version, &target_version)) {
         return ONLINE_UPDATE_ERROR_MANIFEST_VERSION;
+    }
+    if (string_equals(expected_channel, "stable",
+                      ONLINE_UPDATE_CHANNEL_MAX_LENGTH) &&
+        target_version.prerelease != NULL) {
+        return ONLINE_UPDATE_ERROR_MANIFEST_CHANNEL;
     }
     if (online_update_semver_compare(
             manifest->minimum_ota_version,

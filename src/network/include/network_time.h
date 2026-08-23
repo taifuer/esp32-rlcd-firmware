@@ -40,6 +40,7 @@ typedef struct {
 typedef struct {
     network_time_state_t state;
     bool configured;
+    bool automatic_sync_enabled;
     esp_err_t last_error;
     network_time_failure_t last_failure;
     char setup_ssid[33];
@@ -47,7 +48,7 @@ typedef struct {
     char setup_url[24];
 } network_time_status_t;
 
-esp_err_t network_time_init(void);
+esp_err_t network_time_init(bool automatic_sync_enabled);
 esp_err_t network_time_get_status(network_time_status_t *status);
 bool network_time_take_datetime(network_time_datetime_t *datetime);
 esp_err_t network_time_request_sync(void);

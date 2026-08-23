@@ -42,7 +42,7 @@ enum {
     SETUP_QR_AREA_SIZE = 170,
     SETUP_QR_QUIET_MODULES = 4,
     SETUP_QR_MAX_SCALE = 5,
-    SYSTEM_PAGE_COUNT = 6,
+    SYSTEM_PAGE_COUNT = 4,
     SYSTEM_SIDE_MARGIN = 12,
     SYSTEM_TITLE_BASELINE_Y = 32,
     SYSTEM_DIVIDER_Y = 44,
@@ -530,7 +530,8 @@ void display_show_network_setup(const char *ssid, const char *password, const ch
     u8g2_SendBuffer(s_u8g2);
 }
 
-void display_show_firmware_update_ready(const char *ssid, const char *password,
+void display_show_settings_portal_ready(const char *ssid,
+                                        const char *password,
                                         const char *url)
 {
     if (s_u8g2 == NULL) {
@@ -544,7 +545,7 @@ void display_show_firmware_update_ready(const char *ssid, const char *password,
                    BOARD_DISPLAY_HEIGHT - 6);
 
     u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
-    draw_centered(SETUP_TITLE_BASELINE_Y, "FIRMWARE UPDATE");
+    draw_centered(SETUP_TITLE_BASELINE_Y, "DEVICE SETTINGS");
     u8g2_DrawHLine(s_u8g2, SETUP_SIDE_MARGIN, SETUP_DIVIDER_Y,
                    BOARD_DISPLAY_WIDTH - 2 * SETUP_SIDE_MARGIN);
 
@@ -578,7 +579,7 @@ void display_show_firmware_update_ready(const char *ssid, const char *password,
 
     if (!qr_rendered) {
         u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-        draw_centered(244, "Connect and open the update page");
+        draw_centered(244, "Connect and open the settings page");
     }
     u8g2_SendBuffer(s_u8g2);
 }
@@ -597,11 +598,16 @@ void display_show_dashboard(const display_dashboard_t *dashboard)
     u8g2_DrawHLine(s_u8g2, DASHBOARD_SIDE_MARGIN, TOP_DIVIDER_Y,
                    BOARD_DISPLAY_WIDTH - 2 * DASHBOARD_SIDE_MARGIN);
 
-    if (dashboard->time_valid) {
+    if (dashboard->time_valid && dashboard->show_seconds) {
         snprintf(text, sizeof(text), "%02u:%02u:%02u",
                  dashboard->hour, dashboard->minute, dashboard->second);
-    } else {
+    } else if (dashboard->time_valid) {
+        snprintf(text, sizeof(text), "%02u:%02u",
+                 dashboard->hour, dashboard->minute);
+    } else if (dashboard->show_seconds) {
         snprintf(text, sizeof(text), "--:--:--");
+    } else {
+        snprintf(text, sizeof(text), "--:--");
     }
     u8g2_SetFont(s_u8g2, u8g2_font_logisoso78_tn);
     draw_centered(TIME_BASELINE_Y, text);
@@ -611,10 +617,16 @@ void display_show_dashboard(const display_dashboard_t *dashboard)
 
     char temperature_text[24];
     if (dashboard->environment_valid) {
-        snprintf(temperature_text, sizeof(temperature_text), "%.1f °C",
-                 (double)dashboard->temperature_c);
+        const double temperature = dashboard->temperature_fahrenheit
+                                       ? (double)dashboard->temperature_c *
+                                                 9.0 / 5.0 + 32.0
+                                       : (double)dashboard->temperature_c;
+        snprintf(temperature_text, sizeof(temperature_text), "%.1f °%c",
+                 temperature,
+                 dashboard->temperature_fahrenheit ? 'F' : 'C');
     } else {
-        snprintf(temperature_text, sizeof(temperature_text), "--.- °C");
+        snprintf(temperature_text, sizeof(temperature_text), "--.- °%c",
+                 dashboard->temperature_fahrenheit ? 'F' : 'C');
     }
 
     char humidity_text[24];
@@ -717,14 +729,14 @@ void display_show_calendar(const display_dashboard_t *dashboard)
     u8g2_SendBuffer(s_u8g2);
 }
 
-void display_show_device_health(const display_system_status_t *status)
+void display_show_system_status(const display_system_status_t *status)
 {
     if (s_u8g2 == NULL || status == NULL) {
         return;
     }
 
     char value[64];
-    draw_system_header("DEVICE HEALTH", 1U);
+    draw_system_header("STATUS", 1U);
 
     if (!status->rtc_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");
@@ -735,7 +747,7 @@ void display_show_device_health(const display_system_status_t *status)
                  status->year, status->month, status->day,
                  status->hour, status->minute);
     }
-    draw_system_row(76, "RTC", value);
+    draw_system_row(72, "TIME", value);
 
     if (!status->rtc_ready) {
         snprintf(value, sizeof(value), "NOT AVAILABLE");
@@ -745,18 +757,23 @@ void display_show_device_health(const display_system_status_t *status)
                      ? status->rtc_backup_state
                      : "NOT READY");
     }
-    draw_system_row(113, "RTC BACKUP", value);
+    draw_system_row(108, "RTC BACKUP", value);
 
     if (!status->sensor_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");
     } else if (!status->environment_valid) {
         snprintf(value, sizeof(value), "READ ERROR");
     } else {
-        snprintf(value, sizeof(value), "OK | %.1f C | %.0f %%",
-                 (double)status->temperature_c,
+        const double temperature = status->temperature_fahrenheit
+                                       ? (double)status->temperature_c *
+                                                 9.0 / 5.0 + 32.0
+                                       : (double)status->temperature_c;
+        snprintf(value, sizeof(value), "OK | %.1f %c | %.0f %%",
+                 temperature,
+                 status->temperature_fahrenheit ? 'F' : 'C',
                  (double)status->humidity_percent);
     }
-    draw_system_row(150, "SENSOR", value);
+    draw_system_row(144, "SENSOR", value);
 
     if (!status->battery_ready) {
         snprintf(value, sizeof(value), "NOT READY");
@@ -766,57 +783,24 @@ void display_show_device_health(const display_system_status_t *status)
         snprintf(value, sizeof(value), "OK | %u %% | %u mV",
                  status->battery_percent, status->battery_voltage_mv);
     }
-    draw_system_row(187, "BATTERY", value);
-
-    snprintf(value, sizeof(value), "%u KiB | OK",
-             (unsigned)status->psram_kib);
-    draw_system_row(224, "PSRAM", value);
-
-    draw_system_footer("BOOT: HOME | KEY: NEXT");
-    u8g2_SendBuffer(s_u8g2);
-}
-
-void display_show_network_time(const display_system_status_t *status)
-{
-    if (s_u8g2 == NULL || status == NULL) {
-        return;
-    }
-
-    char value[64];
-    draw_system_header("NETWORK & TIME", 2U);
+    draw_system_row(180, "BATTERY", value);
 
     if (!status->network_ready) {
-        snprintf(value, sizeof(value), "NOT READY");
+        snprintf(value, sizeof(value), "NETWORK NOT READY");
     } else if (!status->network_configured) {
         snprintf(value, sizeof(value), "NOT CONFIGURED");
+    } else if (status->last_sync_valid) {
+        snprintf(value, sizeof(value), "%02u-%02u %02u:%02u | %s",
+                 status->last_sync_month, status->last_sync_day,
+                 status->last_sync_hour, status->last_sync_minute,
+                 status->network_state != NULL ? status->network_state
+                                               : "SYNCED");
     } else {
         snprintf(value, sizeof(value), "%s",
                  status->network_state != NULL ? status->network_state
-                                               : "UNKNOWN");
+                                               : "NOT SYNCED");
     }
-    draw_system_row(82, "NETWORK", value);
-
-    if (!status->rtc_ready) {
-        snprintf(value, sizeof(value), "NOT FOUND");
-    } else if (!status->time_valid) {
-        snprintf(value, sizeof(value), "INVALID TIME");
-    } else {
-        snprintf(value, sizeof(value), "%04u-%02u-%02u %02u:%02u",
-                 status->year, status->month, status->day,
-                 status->hour, status->minute);
-    }
-    draw_system_row(126, "RTC", value);
-
-    if (status->last_sync_valid) {
-        snprintf(value, sizeof(value), "%04u-%02u-%02u %02u:%02u",
-                 status->last_sync_year, status->last_sync_month,
-                 status->last_sync_day, status->last_sync_hour,
-                 status->last_sync_minute);
-    } else {
-        snprintf(value, sizeof(value), "--");
-    }
-    draw_system_row(170, "LAST SYNC", value);
-    draw_system_row(214, "AUTO SYNC", "EVERY 24 HOURS");
+    draw_system_row(216, "TIME SYNC", value);
 
     draw_system_footer(
         "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: SYNC");
@@ -830,7 +814,7 @@ void display_show_audio(const display_audio_status_t *status)
     }
 
     char value[80];
-    draw_system_header("AUDIO", 3U);
+    draw_system_header("AUDIO", 2U);
 
     if (status->state == DISPLAY_AUDIO_STATE_PLAYING_TONE) {
         u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
@@ -942,34 +926,57 @@ void display_show_audio(const display_audio_status_t *status)
     u8g2_SendBuffer(s_u8g2);
 }
 
-void display_show_wifi_maintenance(const display_system_status_t *status)
+static void format_utc_offset(char *buffer, size_t capacity,
+                              int16_t offset_minutes)
+{
+    if (buffer == NULL || capacity == 0U) {
+        return;
+    }
+
+    const int32_t signed_minutes = offset_minutes;
+    if (signed_minutes == 0) {
+        snprintf(buffer, capacity, "UTC");
+        return;
+    }
+
+    const uint32_t absolute_minutes =
+        (uint32_t)(signed_minutes < 0 ? -signed_minutes : signed_minutes);
+    snprintf(buffer, capacity, "UTC%c%02u:%02u",
+             signed_minutes < 0 ? '-' : '+',
+             (unsigned)(absolute_minutes / 60U),
+             (unsigned)(absolute_minutes % 60U));
+}
+
+void display_show_settings(const display_settings_status_t *status)
 {
     if (s_u8g2 == NULL || status == NULL) {
         return;
     }
 
-    draw_system_header("WI-FI MAINTENANCE", 4U);
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
-    if (!status->network_ready) {
-        draw_centered(105, "NOT READY");
-    } else if (status->network_configured) {
-        draw_centered(105, "CONFIGURED");
-    } else {
-        draw_centered(105, "NOT CONFIGURED");
-    }
+    char value[40];
+    draw_system_header("SETTINGS", 3U);
 
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
-    if (status->network_configured) {
-        draw_centered(155, "Saved home Wi-Fi is available");
-        draw_centered(190, "Hold KEY for 5 seconds to clear it");
-        draw_centered(218, "Device restarts in setup mode");
+    draw_system_row(72, "POWER",
+                    status->low_power_mode ? "SAVING" : "NORMAL");
+    format_utc_offset(value, sizeof(value), status->utc_offset_minutes);
+    draw_system_row(108, "TIME ZONE", value);
+    draw_system_row(144, "TEMP UNIT",
+                    status->temperature_fahrenheit ? "FAHRENHEIT"
+                                                   : "CELSIUS");
+    if (status->playback_volume_percent <= 100U) {
+        snprintf(value, sizeof(value), "%u %%",
+                 status->playback_volume_percent);
     } else {
-        draw_centered(155, "No saved network settings");
-        draw_centered(190, "Follow the setup QR after restart");
+        snprintf(value, sizeof(value), "NOT SET");
     }
+    draw_system_row(180, "VOLUME", value);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    u8g2_DrawStr(s_u8g2, SYSTEM_LABEL_X, 216, "PORTAL");
+    u8g2_DrawStr(s_u8g2, SYSTEM_VALUE_X, 216,
+                 "CONFIG | RTC | WI-FI | LOCAL OTA");
 
     draw_system_footer(
-        "BOOT: HOME | KEY: NEXT | HOLD KEY 5s: RESET");
+        "BOOT: HOME | KEY: NEXT | HOLD KEY 3s: OPEN PORTAL");
     u8g2_SendBuffer(s_u8g2);
 }
 
@@ -987,7 +994,7 @@ void display_show_online_update(const display_online_update_status_t *status)
     format_version(latest_version, sizeof(latest_version),
                    status->latest_version);
 
-    draw_system_header("ONLINE UPDATE", 5U);
+    draw_system_header("ONLINE UPDATE", 4U);
     switch (status->state) {
     case DISPLAY_ONLINE_UPDATE_STATE_CHECKING:
         draw_online_update_modal(
@@ -1046,7 +1053,9 @@ void display_show_online_update(const display_online_update_status_t *status)
             footer = "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: REVIEW";
         }
         draw_system_row(82, "CURRENT", current_version);
-        draw_system_row(126, "LATEST", latest_version);
+        draw_system_row(126,
+                        status->beta_channel ? "BETA LATEST" : "LATEST",
+                        latest_version);
         draw_system_row(170, "STATUS", state_text);
         draw_system_row(
             214, "LAST CHECK",
@@ -1060,28 +1069,5 @@ void display_show_online_update(const display_online_update_status_t *status)
             "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: CHECK");
         break;
     }
-    u8g2_SendBuffer(s_u8g2);
-}
-
-void display_show_local_update(const display_system_status_t *status)
-{
-    if (s_u8g2 == NULL || status == NULL) {
-        return;
-    }
-
-    char version_text[40];
-    char idf_text[48];
-    format_version(version_text, sizeof(version_text),
-                   status->firmware_version);
-    snprintf(idf_text, sizeof(idf_text), "ESP-IDF %s",
-             status->idf_version != NULL ? status->idf_version : "--");
-
-    draw_system_header("LOCAL UPDATE", 6U);
-    draw_system_row(82, "CURRENT", version_text);
-    draw_system_row(126, "RUNTIME", idf_text);
-    draw_system_row(170, "METHOD", "WI-FI + BROWSER");
-    draw_system_row(214, "RECOVERY", "USB DOWNLOAD MODE");
-    draw_system_footer(
-        "BOOT: HOME | KEY: NEXT | HOLD KEY 3s: START");
     u8g2_SendBuffer(s_u8g2);
 }

@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "audio_diagnostics.h"
+#include "app_settings.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_log.h"
@@ -91,7 +92,31 @@ static void log_datetime(const char *prefix, const pcf85063_datetime_t *datetime
 static void process_line(const char *line, bool rtc_available)
 {
     if (strcmp(line, "HELP") == 0) {
-        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | GET_AUDIO | RESET_WIFI | HELP");
+        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | GET_AUDIO | GET_SETTINGS | RESET_WIFI | HELP");
+        return;
+    }
+
+    if (strcmp(line, "GET_SETTINGS") == 0) {
+        app_settings_t settings = {0};
+        const esp_err_t error = app_settings_get(&settings);
+        if (error == ESP_OK) {
+            ESP_LOGI(TAG,
+                     "SETTINGS power=%s utc_offset_minutes=%d unit=%s playback_volume=%u updates=%s",
+                     settings.power_mode == APP_POWER_MODE_SAVING
+                         ? "saving"
+                         : "normal",
+                     settings.utc_offset_minutes,
+                     settings.temperature_unit ==
+                             APP_TEMPERATURE_UNIT_FAHRENHEIT
+                         ? "F"
+                         : "C",
+                     settings.audio_playback_volume,
+                     settings.update_channel == APP_UPDATE_CHANNEL_BETA
+                         ? "beta"
+                         : "stable");
+        } else {
+            ESP_LOGW(TAG, "SETTINGS_ERROR %s", esp_err_to_name(error));
+        }
         return;
     }
 
@@ -123,9 +148,10 @@ static void process_line(const char *line, bool rtc_available)
         const esp_err_t error = network_time_get_status(&status);
         if (error == ESP_OK) {
             ESP_LOGI(TAG,
-                     "NETWORK state=%s configured=%s failure=%s last_error=%s",
+                     "NETWORK state=%s configured=%s automatic=%s failure=%s last_error=%s",
                      network_time_state_name(status.state),
                      status.configured ? "yes" : "no",
+                     status.automatic_sync_enabled ? "yes" : "no",
                      network_time_failure_name(status.last_failure),
                      esp_err_to_name(status.last_error));
         } else {
