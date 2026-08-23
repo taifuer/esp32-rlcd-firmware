@@ -112,6 +112,7 @@ cd ../..
 - [自动配网与网络校时](docs/network-time.md)：配网、NVS、SNTP 与离线行为；
 - [界面与按键](docs/home-screen.md)：首屏、月历、系统中心和实体按键；
 - [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉与交互原则；
+- [开发计划](docs/roadmap.md)：已经确定的后续版本范围与验收边界；
 - [开发与发布指南](docs/development.md)：依赖、版本、测试和 Release 流程；
 - [实机验证记录](docs/bringup-log.md)：已完成的硬件验收结果；
 - [版本变更记录](CHANGELOG.md)：各正式版本的功能变化。
