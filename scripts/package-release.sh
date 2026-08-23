@@ -36,7 +36,7 @@ install -m 0644 "${version_dir}/SHA256SUMS" "${release_dir}/SHA256SUMS"
 install -m 0644 "${RLCD_PROJECT_DIR}/LICENSE" "${release_dir}/LICENSE"
 install -m 0644 "${RLCD_PROJECT_DIR}/NOTICE.md" "${release_dir}/NOTICE.md"
 for preview_name in \
-    home-screen.svg calendar-screen.svg \
+    home-screen.svg calendar-screen.svg image-screen.svg \
     device-health.svg network-time.svg audio.svg \
     wifi-maintenance.svg online-update.svg local-update.svg \
     status.svg settings.svg settings-portal.svg \

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "monochrome_image.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -139,6 +140,8 @@ void display_show_settings_portal_ready(const char *ssid,
                                         const char *url);
 void display_show_dashboard(const display_dashboard_t *dashboard);
 void display_show_calendar(const display_dashboard_t *dashboard);
+void display_show_monochrome_image(
+    const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES]);
 void display_show_system_status(const display_system_status_t *status);
 void display_show_audio(const display_audio_status_t *status);
 void display_show_settings(const display_settings_status_t *status);

@@ -8,7 +8,7 @@
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.11.0/`](../dist/v0.11.0/)。
+[`dist/v0.12.0/`](../dist/v0.12.0/)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
 v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明。
 从 v0.2.0 开始，版本目录还包含对应的界面效果图。
@@ -20,12 +20,12 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 
 | 文件 | 用途 | 安装方式 |
 | --- | --- | --- |
-| `esp32-rlcd-firmware-v0.11.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
-| `esp32-rlcd-firmware-v0.11.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
+| `esp32-rlcd-firmware-v0.12.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
+| `esp32-rlcd-firmware-v0.12.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
 
 目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
 参数；两类文件的 SHA-256 见
-[`dist/v0.11.0/SHA256SUMS`](../dist/v0.11.0/SHA256SUMS)。
+[`dist/v0.12.0/SHA256SUMS`](../dist/v0.12.0/SHA256SUMS)。
 
 不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
 镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
@@ -34,8 +34,8 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 ### 从旧版本升级
 
 v0.7.0—v0.9.0 没有在线更新客户端，可从原系统中心最后一页的本地更新入口上传
-v0.11.0 `-ota.bin`，或使用 USB 写入。v0.10.0 可直接从 `ONLINE UPDATE` 升级；v0.6.0
-及更早版本必须使用 Factory 固件完整安装。
+v0.12.0 `-ota.bin`，或使用 USB 写入。v0.10.0 与 v0.11.0 可直接从 `ONLINE UPDATE`
+升级；v0.6.0 及更早版本必须使用 Factory 固件完整安装。
 
 设备默认只检查 `stable.json`；只有在设置门户明确开启 Beta 更新后才检查
 `testing.json`，版本名本身不会切换通道。联网后的自动流程只记录检查结果，不会自动下载
@@ -53,7 +53,7 @@ v0.11.0 `-ota.bin`，或使用 USB 写入。v0.10.0 可直接从 `ONLINE UPDATE`
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.11.0
+cd dist/v0.12.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -61,16 +61,16 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.11.0/esp32-rlcd-firmware-v0.11.0-factory.bin
-shasum -a 256 dist/v0.11.0/esp32-rlcd-firmware-v0.11.0-ota.bin
+shasum -a 256 dist/v0.12.0/esp32-rlcd-firmware-v0.12.0-factory.bin
+shasum -a 256 dist/v0.12.0/esp32-rlcd-firmware-v0.12.0-ota.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.11.0\esp32-rlcd-firmware-v0.11.0-factory.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.11.0\esp32-rlcd-firmware-v0.11.0-ota.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.11.0\SHA256SUMS
+(Get-FileHash .\dist\v0.12.0\esp32-rlcd-firmware-v0.12.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.12.0\esp32-rlcd-firmware-v0.12.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.12.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -90,7 +90,7 @@ Get-Content .\dist\v0.11.0\SHA256SUMS
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.11.0/esp32-rlcd-firmware-v0.11.0-factory.bin \
+  --firmware dist/v0.12.0/esp32-rlcd-firmware-v0.12.0-factory.bin \
   --confirm
 ```
 
@@ -131,7 +131,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.11.0\esp32-rlcd-firmware-v0.11.0-factory.bin
+  0x0 .\dist\v0.12.0\esp32-rlcd-firmware-v0.12.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -149,7 +149,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.11.0/esp32-rlcd-firmware-v0.11.0-factory.bin
+  0x0 dist/v0.12.0/esp32-rlcd-firmware-v0.12.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -212,12 +212,12 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 
 | 按键 | 正常运行时的用途 |
 | --- | --- |
-| `BOOT` | 日常页面中短按切换首屏和月历；系统中心中短按返回首屏；运行时长按无操作 |
+| `BOOT` | 日常页面中短按切换首屏和月历；microSD 有有效图片时条件加入图片页；系统中心中短按返回首屏；运行时长按无操作 |
 | `KEY` | 日常页面中短按进入系统中心；系统中心中短按依次切换“状态 → 音频 → 设置 → 在线更新” |
 | `KEY` 长按 | “状态”页按住 2 秒立即校时；“音频”页按住 2 秒开始临时语音回放测试；“设置”页按住 3 秒开启设置门户；“在线更新”页按住 2 秒检查或进入 `REVIEW`，确认页按住 3 秒安装；其他页面无操作 |
 | `PWR` | 开机或长按关机 |
 
-月历和系统页停留 30 秒会自动回到首屏。在线更新的检查、连接和确认阶段可按 `BOOT`
+月历、图片和系统页停留 30 秒会自动回到首屏。在线更新的检查、连接和确认阶段可按 `BOOT`
 取消；开始写入后按键不再中断。“状态”页集中显示 RTC、RTC 备用电池、传感器、电池和
 网络校时摘要。
 

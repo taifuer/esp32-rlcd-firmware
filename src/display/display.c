@@ -50,6 +50,9 @@ enum {
     SYSTEM_VALUE_X = 116,
     SYSTEM_FOOTER_DIVIDER_Y = 250,
     SYSTEM_FOOTER_BASELINE_Y = 280,
+    DAILY_SIDE_MARGIN = 12,
+    DAILY_FOOTER_DIVIDER_Y = 250,
+    DAILY_FOOTER_BASELINE_Y = 280,
     CALENDAR_SIDE_MARGIN = 11,
     CALENDAR_HEADER_BASELINE_Y = 30,
     CALENDAR_HEADER_DIVIDER_Y = 43,
@@ -58,8 +61,6 @@ enum {
     CALENDAR_GRID_TOP_Y = 78,
     CALENDAR_ROW_HEIGHT = 28,
     CALENDAR_COLUMN_WIDTH = 54,
-    CALENDAR_FOOTER_DIVIDER_Y = 250,
-    CALENDAR_FOOTER_BASELINE_Y = 280,
 };
 
 /*
@@ -146,6 +147,15 @@ static void draw_system_footer(const char *text)
                    BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(SYSTEM_FOOTER_BASELINE_Y, text);
+}
+
+static void draw_daily_footer(const char *text)
+{
+    u8g2_DrawHLine(s_u8g2, DAILY_SIDE_MARGIN,
+                   DAILY_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(DAILY_FOOTER_BASELINE_Y, text);
 }
 
 static void format_version(char *buffer, size_t capacity,
@@ -720,12 +730,29 @@ void display_show_calendar(const display_dashboard_t *dashboard)
         }
     }
 
-    u8g2_DrawHLine(s_u8g2, CALENDAR_SIDE_MARGIN,
-                   CALENDAR_FOOTER_DIVIDER_Y,
-                   BOARD_DISPLAY_WIDTH - 2 * CALENDAR_SIDE_MARGIN);
-    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    draw_centered(CALENDAR_FOOTER_BASELINE_Y,
-                  "BOOT: PAGE | KEY: SYSTEM");
+    draw_daily_footer("BOOT: PAGE | KEY: SYSTEM");
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_monochrome_image(
+    const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES])
+{
+    if (s_u8g2 == NULL || bitmap == NULL) {
+        return;
+    }
+
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    u8g2_SetBitmapMode(s_u8g2, 0);
+    u8g2_DrawBitmap(s_u8g2, 0, 0, MONO_IMAGE_ROW_BYTES,
+                    MONO_IMAGE_HEIGHT, bitmap);
+
+    u8g2_SetDrawColor(s_u8g2, 0);
+    u8g2_DrawBox(s_u8g2, 0, DAILY_FOOTER_DIVIDER_Y,
+                 BOARD_DISPLAY_WIDTH,
+                 BOARD_DISPLAY_HEIGHT - DAILY_FOOTER_DIVIDER_Y);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    draw_daily_footer("BOOT: PAGE | KEY: SYSTEM");
     u8g2_SendBuffer(s_u8g2);
 }
 

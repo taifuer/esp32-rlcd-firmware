@@ -65,7 +65,7 @@ rlcd_firmware_ota.bin      # 在线更新、设置门户本地 OTA 或保留配�
 4. 短按 `PWR` 开机。
 5. 等约 2 秒，松开 `BOOT`。
 
-不需要进入电脑 BIOS，也不需要重启 Windows 或 WSL。
+这只会让开发板进入 ESP32-S3 的 ROM 下载模式，不需要重启 Windows 或 WSL。
 
 ### 3. 首次安装、分区迁移或恢复
 
@@ -119,10 +119,10 @@ ROM 下载模式。完整步骤见[固件安装与更新](firmware-update.md)。
 
 ### 构建版本与在线通道
 
-仓库默认生成 `0.11.0`。构建后续预发布候选时使用环境变量，例如：
+仓库默认生成 `0.12.0`。构建后续预发布候选时使用环境变量，例如：
 
 ```bash
-RLCD_PROJECT_VERSION=0.12.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.13.0-dev.1 ./scripts/build.sh
 ```
 
 所有版本默认读取 `stable.json`，只有在设备设置中显式开启 Beta 更新后才读取

@@ -28,6 +28,7 @@
 #include "page_state.h"
 #include "pcf85063.h"
 #include "rtc_backup.h"
+#include "sd_image.h"
 #include "shtc3.h"
 #include "settings_power_policy.h"
 #include "usb_commands.h"
@@ -38,6 +39,7 @@ typedef enum {
     APP_DISPLAY_DASHBOARD,
     APP_DISPLAY_NETWORK_SETUP,
     APP_DISPLAY_CALENDAR,
+    APP_DISPLAY_MONOCHROME_IMAGE,
     APP_DISPLAY_STATUS,
     APP_DISPLAY_AUDIO,
     APP_DISPLAY_SETTINGS,
@@ -73,6 +75,8 @@ static const char *page_name(app_page_t page)
     switch (page) {
     case APP_PAGE_CALENDAR:
         return "calendar";
+    case APP_PAGE_IMAGE:
+        return "image";
     case APP_PAGE_STATUS:
         return "status";
     case APP_PAGE_AUDIO:
@@ -533,6 +537,18 @@ void app_main(void)
                              BUTTON_LONG_PRESS_DISABLED_MS);
     app_page_state_t page_state;
     app_page_state_init(&page_state);
+    const esp_err_t sd_image_init_error = sd_image_store_init();
+    if (sd_image_init_error != ESP_OK) {
+        ESP_LOGW(TAG, "microSD image service unavailable: %s",
+                 esp_err_to_name(sd_image_init_error));
+    }
+    sd_image_status_t initial_sd_image_status = {0};
+    sd_image_store_get_status(&initial_sd_image_status);
+    app_page_state_set_image_available(
+        &page_state,
+        initial_sd_image_status.state == SD_IMAGE_STATE_READY);
+    sd_image_state_t previous_sd_image_state =
+        initial_sd_image_status.state;
     const TickType_t initial_tick = xTaskGetTickCount();
     TickType_t last_button_update = initial_tick;
     TickType_t last_periodic_update = initial_tick;
@@ -572,6 +588,17 @@ void app_main(void)
         bool calendar_data_changed = false;
         bool system_status_data_changed = false;
         bool online_update_data_changed = false;
+        sd_image_status_t latest_sd_image_status = {0};
+        sd_image_store_get_status(&latest_sd_image_status);
+        if (latest_sd_image_status.state != previous_sd_image_state) {
+            const bool image_ready =
+                latest_sd_image_status.state == SD_IMAGE_STATE_READY;
+            app_page_state_set_image_available(&page_state, image_ready);
+            previous_sd_image_state = latest_sd_image_status.state;
+            render_requested = true;
+            ESP_LOGI(TAG, "microSD image state changed: %s",
+                     sd_image_state_name(latest_sd_image_status.state));
+        }
         audio_diagnostics_status_t latest_audio_status = {0};
         audio_diagnostics_get_status(&latest_audio_status);
         const bool audio_data_changed =
@@ -827,7 +854,7 @@ void app_main(void)
                 ESP_LOGI(TAG, "BOOT short press ignored while time sync is active");
             } else if (previous_display_mode == APP_DISPLAY_NETWORK_SETUP) {
                 setup_screen_dismissed = true;
-                app_page_state_init(&page_state);
+                app_page_state_go_home(&page_state);
                 render_requested = true;
                 ESP_LOGI(TAG,
                          "BOOT short press: continuing with offline dashboard");
@@ -1420,6 +1447,7 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_AUDIO ||
                     previous_display_mode == APP_DISPLAY_SETTINGS ||
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||
+                    previous_display_mode == APP_DISPLAY_MONOCHROME_IMAGE ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC_RESULT ||
                     previous_display_mode ==
@@ -1434,6 +1462,8 @@ void app_main(void)
             app_display_mode_t display_mode = APP_DISPLAY_DASHBOARD;
             if (active_page == APP_PAGE_CALENDAR) {
                 display_mode = APP_DISPLAY_CALENDAR;
+            } else if (active_page == APP_PAGE_IMAGE) {
+                display_mode = APP_DISPLAY_MONOCHROME_IMAGE;
             }
             if (show_setup) {
                 display_mode = APP_DISPLAY_NETWORK_SETUP;
@@ -1448,6 +1478,19 @@ void app_main(void)
                 if (display_mode != previous_display_mode ||
                     render_requested || calendar_data_changed) {
                     display_show_calendar(&dashboard);
+                }
+            } else if (display_mode == APP_DISPLAY_MONOCHROME_IMAGE) {
+                if (display_mode != previous_display_mode ||
+                    render_requested) {
+                    sd_image_view_t image_view = {0};
+                    if (sd_image_store_get(&image_view)) {
+                        display_show_monochrome_image(image_view.bitmap);
+                    } else {
+                        app_page_state_set_image_available(&page_state,
+                                                           false);
+                        display_show_dashboard(&dashboard);
+                        display_mode = APP_DISPLAY_DASHBOARD;
+                    }
                 }
             } else if (display_mode == previous_display_mode &&
                        !render_requested) {

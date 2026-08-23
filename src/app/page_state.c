@@ -8,9 +8,15 @@ static uint32_t add_saturating(uint32_t value, uint32_t increment)
     return increment > UINT32_MAX - value ? UINT32_MAX : value + increment;
 }
 
-static app_page_t next_daily_page(app_page_t page)
+static app_page_t next_daily_page(const app_page_state_t *state)
 {
-    return page == APP_PAGE_HOME ? APP_PAGE_CALENDAR : APP_PAGE_HOME;
+    if (state->current == APP_PAGE_HOME) {
+        return APP_PAGE_CALENDAR;
+    }
+    if (state->current == APP_PAGE_CALENDAR && state->image_available) {
+        return APP_PAGE_IMAGE;
+    }
+    return APP_PAGE_HOME;
 }
 
 static app_page_t next_system_page(app_page_t page)
@@ -37,6 +43,27 @@ void app_page_state_init(app_page_state_t *state)
     state->current = APP_PAGE_HOME;
 }
 
+void app_page_state_go_home(app_page_state_t *state)
+{
+    if (state == NULL) {
+        return;
+    }
+    state->current = APP_PAGE_HOME;
+    state->inactive_ms = 0U;
+}
+
+void app_page_state_set_image_available(app_page_state_t *state,
+                                        bool available)
+{
+    if (state == NULL) {
+        return;
+    }
+    state->image_available = available;
+    if (!available && state->current == APP_PAGE_IMAGE) {
+        app_page_state_go_home(state);
+    }
+}
+
 app_page_t app_page_state_current(const app_page_state_t *state)
 {
     return state != NULL ? state->current : APP_PAGE_HOME;
@@ -44,7 +71,8 @@ app_page_t app_page_state_current(const app_page_state_t *state)
 
 bool app_page_is_daily(app_page_t page)
 {
-    return page == APP_PAGE_HOME || page == APP_PAGE_CALENDAR;
+    return page == APP_PAGE_HOME || page == APP_PAGE_CALENDAR ||
+           page == APP_PAGE_IMAGE;
 }
 
 bool app_page_is_system(app_page_t page)
@@ -92,7 +120,7 @@ void app_page_state_boot_short_press(app_page_state_t *state)
         return;
     }
     state->current = app_page_is_daily(state->current)
-                         ? next_daily_page(state->current)
+                         ? next_daily_page(state)
                          : APP_PAGE_HOME;
     state->inactive_ms = 0U;
 }

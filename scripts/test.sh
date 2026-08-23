@@ -71,6 +71,17 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_page_state"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/image/include \
+  src/image/monochrome_image.c tests/test_monochrome_image.c \
+  -o "${RLCD_TEST_TMP}/test_monochrome_image"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/image/include -Isrc/sd_image \
+  src/sd_image/image_catalog.c tests/test_image_catalog.c \
+  -o "${RLCD_TEST_TMP}/test_image_catalog"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/settings/include \
   src/settings/settings_model.c src/settings/settings_power_policy.c \
   tests/test_app_settings.c \
@@ -141,6 +152,8 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_network_qr"
 "${RLCD_TEST_TMP}/test_button_state"
 "${RLCD_TEST_TMP}/test_page_state"
+"${RLCD_TEST_TMP}/test_monochrome_image"
+"${RLCD_TEST_TMP}/test_image_catalog"
 "${RLCD_TEST_TMP}/test_app_settings"
 "${RLCD_TEST_TMP}/test_settings_record"
 "${RLCD_TEST_TMP}/test_network_screen_policy"
@@ -151,3 +164,4 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_clock_service_policy"
 "${RLCD_TEST_TMP}/test_audio_level"
 "${RLCD_TEST_TMP}/test_audio_session_state"
+python3 tests/test_rlcd_image_tool.py
