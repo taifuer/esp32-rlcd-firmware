@@ -5,14 +5,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.12.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.13.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
-以下界面反映 v0.12.0 正式版。
+以下界面反映 v0.13.0 正式版。
 
 | 首屏 | 月历 |
 | :---: | :---: |
@@ -28,8 +28,8 @@
 
 ## 当前功能
 
-- 三段式首屏显示公历、农历、星期、温湿度、电量和网络结果；`NORMAL` 等大显示
-  `HH:MM:SS`，`SAVING` 显示 `HH:MM`；
+- 三段式首屏显示公历、农历、星期、温湿度、三态环境舒适度、电量和网络结果；`NORMAL`
+  等大显示 `HH:MM:SS`，`SAVING` 显示 `HH:MM`；
 - PCF85063 RTC、SHTC3、GPIO4 电池采样和 8 MB Octal PSRAM；
 - 首次启动使用临时 WPA2 热点配网，凭据保存在 NVS，随后自动 SNTP 校时；
 - 网络不可用时继续使用 RTC、月历、传感器、按键和音频；`NORMAL` 后台退避重试，
@@ -51,26 +51,26 @@
 3 秒才安装。正式固件默认只检查稳定版；开发者可在“设置”门户主动加入测试通道。完整说明见
 [界面与按键](docs/home-screen.md)和[固件安装与更新](docs/firmware-update.md)。
 
-已安装 v0.10.0 或 v0.11.0 的设备可直接从“在线更新”页升级；v0.7.0—v0.9.0 可通过
-原有本地更新入口上传 v0.12.0 OTA 固件，v0.6.0 及更早版本需使用 Factory 固件完整安装。
+已安装 v0.10.0—v0.12.0 的设备可直接从“在线更新”页升级；v0.7.0—v0.9.0 可通过
+原有本地更新入口上传 v0.13.0 OTA 固件，v0.6.0 及更早版本需使用 Factory 固件完整安装。
 microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 [microSD 图片准备](docs/microsd-images.md)。
 
 ## 安装使用
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
-中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`。v0.12.0 的离线更新
+中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`。v0.13.0 的离线更新
 位于“设置”门户。下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
 
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.12.0
+cd dist/v0.13.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.12.0/esp32-rlcd-firmware-v0.12.0-factory.bin \
+  --firmware dist/v0.13.0/esp32-rlcd-firmware-v0.13.0-factory.bin \
   --confirm
 ```
 
@@ -96,6 +96,7 @@ cd ../..
 │   ├── network/         # 配网、NVS、SNTP 与联网会话
 │   ├── rtc/             # PCF85063 与备用电池保持判定
 │   ├── sd_image/        # SDMMC/FatFs 只读 microSD 图片源
+│   ├── sensors/         # SHTC3 与环境舒适度判定
 │   ├── settings/        # 持久化偏好、输入校验与省电策略
 │   ├── storage/         # NVS 持久化存储初始化
 │   └── update/          # 在线更新、设置门户、本地 OTA 与双槽回滚

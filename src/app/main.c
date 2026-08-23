@@ -13,6 +13,7 @@
 #include "button_state.h"
 #include "chinese_lunar.h"
 #include "display.h"
+#include "environment_comfort.h"
 #include "esp_app_desc.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
@@ -169,6 +170,22 @@ static display_network_state_t dashboard_network_state(
                                   : DISPLAY_NETWORK_UNCONFIGURED;
     default:
         return DISPLAY_NETWORK_ERROR;
+    }
+}
+
+static display_environment_comfort_t dashboard_environment_comfort(
+    environment_comfort_level_t comfort)
+{
+    switch (comfort) {
+    case ENVIRONMENT_COMFORT_COMFORTABLE:
+        return DISPLAY_ENVIRONMENT_COMFORT_COMFORTABLE;
+    case ENVIRONMENT_COMFORT_FAIR:
+        return DISPLAY_ENVIRONMENT_COMFORT_FAIR;
+    case ENVIRONMENT_COMFORT_NEEDS_ADJUSTMENT:
+        return DISPLAY_ENVIRONMENT_COMFORT_NEEDS_ADJUSTMENT;
+    case ENVIRONMENT_COMFORT_UNKNOWN:
+    default:
+        return DISPLAY_ENVIRONMENT_COMFORT_UNKNOWN;
     }
 }
 
@@ -515,6 +532,8 @@ void app_main(void)
     };
     pcf85063_datetime_t datetime = {0};
     shtc3_measurement_t measurement = {0};
+    environment_comfort_tracker_t comfort_tracker;
+    environment_comfort_init(&comfort_tracker);
     battery_measurement_t battery_measurement = {0};
     chinese_lunar_date_t lunar_date = {0};
     char lunar_text[64] = {0};
@@ -1052,14 +1071,25 @@ void app_main(void)
                 last_sensor_read = now;
                 const esp_err_t error = shtc3_read(&measurement);
                 if (error == ESP_OK) {
+                    const environment_comfort_level_t comfort =
+                        environment_comfort_update(
+                            &comfort_tracker,
+                            measurement.temperature_c,
+                            measurement.humidity_percent,
+                            (uint32_t)((uint64_t)now *
+                                       portTICK_PERIOD_MS));
+                    const display_environment_comfort_t display_comfort =
+                        dashboard_environment_comfort(comfort);
                     const bool sensor_display_changed =
                         !dashboard.environment_valid ||
                         dashboard.temperature_c != measurement.temperature_c ||
                         dashboard.humidity_percent !=
-                            measurement.humidity_percent;
+                            measurement.humidity_percent ||
+                        dashboard.environment_comfort != display_comfort;
                     dashboard.environment_valid = true;
                     dashboard.temperature_c = measurement.temperature_c;
                     dashboard.humidity_percent = measurement.humidity_percent;
+                    dashboard.environment_comfort = display_comfort;
                     if (dashboard.time_valid) {
                         ESP_LOGI(
                             TAG,
@@ -1080,7 +1110,10 @@ void app_main(void)
                     dashboard_data_changed |= dashboard.environment_valid;
                     system_status_data_changed |=
                         dashboard.environment_valid;
+                    environment_comfort_mark_invalid(&comfort_tracker);
                     dashboard.environment_valid = false;
+                    dashboard.environment_comfort =
+                        DISPLAY_ENVIRONMENT_COMFORT_UNKNOWN;
                     ESP_LOGW(TAG, "SHTC3 read failed: %s",
                              esp_err_to_name(error));
                 }

@@ -17,6 +17,13 @@ typedef enum {
     DISPLAY_NETWORK_ERROR,
 } display_network_state_t;
 
+typedef enum {
+    DISPLAY_ENVIRONMENT_COMFORT_UNKNOWN = 0,
+    DISPLAY_ENVIRONMENT_COMFORT_COMFORTABLE,
+    DISPLAY_ENVIRONMENT_COMFORT_FAIR,
+    DISPLAY_ENVIRONMENT_COMFORT_NEEDS_ADJUSTMENT,
+} display_environment_comfort_t;
+
 typedef struct {
     bool time_valid;
     uint16_t year;
@@ -33,6 +40,7 @@ typedef struct {
     float temperature_c;
     bool temperature_fahrenheit;
     float humidity_percent;
+    display_environment_comfort_t environment_comfort;
     bool battery_valid;
     uint8_t battery_percent;
     display_network_state_t network_state;

@@ -81,20 +81,20 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 
 ### 构建版本与更新通道
 
-仓库默认构建版本为 `0.12.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
+仓库默认构建版本为 `0.13.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
 候选构建修改 `CMakeLists.txt`：
 
 ```bash
-RLCD_PROJECT_VERSION=0.13.0-dev.1 ./scripts/build.sh
-RLCD_PROJECT_VERSION=0.13.0 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.14.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.14.0 ./scripts/build.sh
 ```
 
 版本必须是固件可比较的 SemVer，且不带文件名使用的前导 `v`：
 
 - 设备默认读取 `https://mcu.taifua.com/esp32-rlcd/firmware/stable.json`；只有设备偏好中
   显式启用开发者测试通道后才读取 `testing.json`；
-- SemVer 不自动选择通道。稳定清单只允许 `0.12.0` 这类正式目标，测试清单用于
-  `0.13.0-dev.1`、`0.13.0-rc.1` 等候选，也可在转正式期间指向正式目标。
+- SemVer 不自动选择通道。稳定清单只允许 `0.13.0` 这类正式目标，测试清单用于
+  `0.14.0-dev.1`、`0.14.0-rc.1` 等候选，也可在转正式期间指向正式目标。
 
 预发布验证先上传版本化 `-ota.bin`，核对大小和 SHA-256，再更新 `testing.json`。正式
 发布必须从同一份已实机验收的源码构建正式版本，重新核对产物差异、大小与 SHA-256 后

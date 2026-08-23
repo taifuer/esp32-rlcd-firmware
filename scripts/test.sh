@@ -38,6 +38,12 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_battery_level"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/sensors/include \
+  src/sensors/environment_comfort.c tests/test_environment_comfort.c -lm \
+  -o "${RLCD_TEST_TMP}/test_environment_comfort"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/network/include \
   src/network/network_credentials.c tests/test_network_credentials.c \
   -o "${RLCD_TEST_TMP}/test_network_credentials"
@@ -146,6 +152,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_chinese_lunar"
 "${RLCD_TEST_TMP}/test_calendar_month"
 "${RLCD_TEST_TMP}/test_battery_level"
+"${RLCD_TEST_TMP}/test_environment_comfort"
 "${RLCD_TEST_TMP}/test_network_credentials"
 "${RLCD_TEST_TMP}/test_network_retry_policy"
 "${RLCD_TEST_TMP}/test_network_session_policy"

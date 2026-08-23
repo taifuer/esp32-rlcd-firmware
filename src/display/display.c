@@ -28,7 +28,7 @@ enum {
     TIME_BASELINE_Y = 179,
     BOTTOM_DIVIDER_Y = 244,
     ENVIRONMENT_BASELINE_Y = 280,
-    HEART_CENTER_Y = 272,
+    COMFORT_FACE_CENTER_Y = 272,
     STATUS_GROUP_WIDTH = 86,
     WIFI_ICON_WIDTH = 18,
     WIFI_ICON_HEIGHT = 14,
@@ -333,12 +333,40 @@ static bool draw_qr_payload(const char *payload, display_qr_context_t *context,
     return context->rendered;
 }
 
-static void draw_heart(int center_x, int center_y)
+static void draw_comfort_face(int center_x, int center_y,
+                              display_environment_comfort_t comfort)
 {
-    u8g2_DrawDisc(s_u8g2, center_x - 4, center_y - 3, 4, U8G2_DRAW_ALL);
-    u8g2_DrawDisc(s_u8g2, center_x + 4, center_y - 3, 4, U8G2_DRAW_ALL);
-    u8g2_DrawTriangle(s_u8g2, center_x - 8, center_y - 2,
-                      center_x + 8, center_y - 2, center_x, center_y + 8);
+    if (comfort == DISPLAY_ENVIRONMENT_COMFORT_UNKNOWN) {
+        return;
+    }
+
+    u8g2_DrawBox(s_u8g2, center_x - 9, center_y - 8, 3, 3);
+    u8g2_DrawBox(s_u8g2, center_x + 7, center_y - 8, 3, 3);
+
+    if (comfort == DISPLAY_ENVIRONMENT_COMFORT_COMFORTABLE) {
+        u8g2_DrawLine(s_u8g2, center_x - 9, center_y,
+                      center_x - 4, center_y + 5);
+        u8g2_DrawLine(s_u8g2, center_x - 8, center_y,
+                      center_x - 3, center_y + 5);
+        u8g2_DrawHLine(s_u8g2, center_x - 3, center_y + 5, 7);
+        u8g2_DrawLine(s_u8g2, center_x + 3, center_y + 5,
+                      center_x + 8, center_y);
+        u8g2_DrawLine(s_u8g2, center_x + 4, center_y + 5,
+                      center_x + 9, center_y);
+    } else if (comfort == DISPLAY_ENVIRONMENT_COMFORT_FAIR) {
+        u8g2_DrawBox(s_u8g2, center_x - 9, center_y + 3, 19, 2);
+    } else if (comfort ==
+               DISPLAY_ENVIRONMENT_COMFORT_NEEDS_ADJUSTMENT) {
+        u8g2_DrawLine(s_u8g2, center_x - 9, center_y + 6,
+                      center_x - 4, center_y + 1);
+        u8g2_DrawLine(s_u8g2, center_x - 8, center_y + 6,
+                      center_x - 3, center_y + 1);
+        u8g2_DrawHLine(s_u8g2, center_x - 3, center_y + 1, 7);
+        u8g2_DrawLine(s_u8g2, center_x + 3, center_y + 1,
+                      center_x + 8, center_y + 6);
+        u8g2_DrawLine(s_u8g2, center_x + 4, center_y + 1,
+                      center_x + 9, center_y + 6);
+    }
 }
 
 static void draw_utf8_centered_in_region(int left, int width, int baseline_y,
@@ -649,7 +677,10 @@ void display_show_dashboard(const display_dashboard_t *dashboard)
     u8g2_SetFont(s_u8g2, u8g2_font_logisoso20_tf);
     draw_utf8_centered_in_region(0, BOARD_DISPLAY_WIDTH / 2,
                                  ENVIRONMENT_BASELINE_Y, temperature_text);
-    draw_heart(BOARD_DISPLAY_WIDTH / 2, HEART_CENTER_Y);
+    draw_comfort_face(BOARD_DISPLAY_WIDTH / 2, COMFORT_FACE_CENTER_Y,
+                      dashboard->environment_valid
+                          ? dashboard->environment_comfort
+                          : DISPLAY_ENVIRONMENT_COMFORT_UNKNOWN);
     draw_utf8_centered_in_region(BOARD_DISPLAY_WIDTH / 2, BOARD_DISPLAY_WIDTH / 2,
                                  ENVIRONMENT_BASELINE_Y, humidity_text);
     u8g2_SendBuffer(s_u8g2);
