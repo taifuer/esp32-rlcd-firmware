@@ -37,6 +37,7 @@ bool sd_image_catalog_build_path(const char *base_path,
                                  const char *name,
                                  char *path,
                                  size_t path_capacity);
+int sd_image_catalog_compare_names(const char *left, const char *right);
 
 #ifdef __cplusplus
 }

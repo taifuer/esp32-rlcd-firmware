@@ -18,8 +18,10 @@
 #define SETTINGS_AUDIO_VOLUME_KEY "audio_vol"
 #define SETTINGS_SCHEMA2_RECORD_SLOT_A_KEY "cfg_a"
 #define SETTINGS_SCHEMA2_RECORD_SLOT_B_KEY "cfg_b"
-#define SETTINGS_RECORD_SLOT_A_KEY "cfg3_a"
-#define SETTINGS_RECORD_SLOT_B_KEY "cfg3_b"
+#define SETTINGS_SCHEMA3_RECORD_SLOT_A_KEY "cfg3_a"
+#define SETTINGS_SCHEMA3_RECORD_SLOT_B_KEY "cfg3_b"
+#define SETTINGS_RECORD_SLOT_A_KEY "cfg4_a"
+#define SETTINGS_RECORD_SLOT_B_KEY "cfg4_b"
 
 static const char *TAG = "app_settings";
 static SemaphoreHandle_t s_mutex;
@@ -163,6 +165,88 @@ static const char *schema2_record_slot_key(settings_record_slot_t slot)
     return NULL;
 }
 
+static const char *schema3_record_slot_key(settings_record_slot_t slot)
+{
+    if (slot == SETTINGS_RECORD_SLOT_A) {
+        return SETTINGS_SCHEMA3_RECORD_SLOT_A_KEY;
+    }
+    if (slot == SETTINGS_RECORD_SLOT_B) {
+        return SETTINGS_SCHEMA3_RECORD_SLOT_B_KEY;
+    }
+    return NULL;
+}
+
+static esp_err_t read_schema3_record_slot(
+    nvs_handle_t handle, settings_record_slot_t slot,
+    settings_record_t *record, bool *valid)
+{
+    const char *key = schema3_record_slot_key(slot);
+    if (key == NULL || record == NULL || valid == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *valid = false;
+
+    size_t encoded_size = 0U;
+    esp_err_t error = nvs_get_blob(handle, key, NULL, &encoded_size);
+    if (recoverable_field_error(error)) {
+        return ESP_OK;
+    }
+    if (error != ESP_OK) {
+        return error;
+    }
+    if (encoded_size != SETTINGS_RECORD_SCHEMA3_ENCODED_SIZE) {
+        return ESP_OK;
+    }
+
+    uint8_t encoded[SETTINGS_RECORD_SCHEMA3_ENCODED_SIZE];
+    error = nvs_get_blob(handle, key, encoded, &encoded_size);
+    if (recoverable_field_error(error) ||
+        error == ESP_ERR_NVS_INVALID_LENGTH) {
+        return ESP_OK;
+    }
+    if (error != ESP_OK) {
+        return error;
+    }
+    *valid = settings_record_decode_schema3(encoded, encoded_size, record);
+    return ESP_OK;
+}
+
+static esp_err_t load_schema3_fields(nvs_handle_t handle,
+                                     app_settings_t *settings,
+                                     bool *found)
+{
+    if (settings == NULL || found == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *found = false;
+
+    settings_record_t slot_a = {0};
+    settings_record_t slot_b = {0};
+    bool slot_a_valid = false;
+    bool slot_b_valid = false;
+    esp_err_t error = read_schema3_record_slot(
+        handle, SETTINGS_RECORD_SLOT_A, &slot_a, &slot_a_valid);
+    if (error == ESP_OK) {
+        error = read_schema3_record_slot(
+            handle, SETTINGS_RECORD_SLOT_B, &slot_b, &slot_b_valid);
+    }
+    if (error != ESP_OK) {
+        return error;
+    }
+
+    const settings_record_slot_t latest = settings_record_select_latest(
+        slot_a_valid ? &slot_a : NULL,
+        slot_b_valid ? &slot_b : NULL);
+    if (latest == SETTINGS_RECORD_SLOT_A) {
+        *settings = slot_a.settings;
+        *found = true;
+    } else if (latest == SETTINGS_RECORD_SLOT_B) {
+        *settings = slot_b.settings;
+        *found = true;
+    }
+    return ESP_OK;
+}
+
 static esp_err_t read_schema2_record_slot(
     nvs_handle_t handle, settings_record_slot_t slot,
     settings_record_t *record, bool *valid)
@@ -270,19 +354,28 @@ static esp_err_t load_current_schema_candidate(
     return ESP_OK;
 }
 
-static esp_err_t recover_schema2_or_v1(nvs_handle_t handle,
-                                       app_settings_t *settings)
+static esp_err_t recover_legacy_settings(nvs_handle_t handle,
+                                         app_settings_t *settings)
 {
+    bool schema3_found = false;
+    esp_err_t error = load_schema3_fields(handle, settings,
+                                          &schema3_found);
+    if (error != ESP_OK) {
+        return error;
+    }
     bool schema2_found = false;
-    esp_err_t error = load_schema2_fields(handle, settings,
-                                          &schema2_found);
+    if (!schema3_found) {
+        error = load_schema2_fields(handle, settings, &schema2_found);
+    }
     if (error != ESP_OK) {
         return error;
     }
 
     const settings_migration_source_t source =
-        settings_record_select_migration_source(false, schema2_found);
-    return source == SETTINGS_MIGRATION_SOURCE_SCHEMA2_RECORD
+        settings_record_select_migration_source(
+            false, schema3_found, schema2_found);
+    return source == SETTINGS_MIGRATION_SOURCE_SCHEMA3_RECORD ||
+                   source == SETTINGS_MIGRATION_SOURCE_SCHEMA2_RECORD
                ? ESP_OK
                : load_v1_fields(handle, settings);
 }
@@ -301,7 +394,7 @@ static esp_err_t recover_settings_without_schema(
     if (!current_found) {
         *active_slot = SETTINGS_RECORD_SLOT_NONE;
         *generation = 0U;
-        return recover_schema2_or_v1(handle, settings);
+        return recover_legacy_settings(handle, settings);
     }
     return ESP_OK;
 }
@@ -535,8 +628,9 @@ esp_err_t app_settings_init(void)
         } else if (error == ESP_OK && schema == 1U) {
             error = load_v1_fields(handle, &loaded);
             needs_migration = error == ESP_OK;
-        } else if (error == ESP_OK && schema == 2U) {
-            error = recover_schema2_or_v1(handle, &loaded);
+        } else if (error == ESP_OK &&
+                   (schema == 2U || schema == 3U)) {
+            error = recover_legacy_settings(handle, &loaded);
             needs_migration = error == ESP_OK;
         } else if (error == ESP_OK &&
                    schema < APP_SETTINGS_SCHEMA_VERSION) {
@@ -555,7 +649,7 @@ esp_err_t app_settings_init(void)
                 error = load_current_schema(handle, &loaded, &active_slot,
                                             &generation);
             } else if (error == ESP_OK) {
-                error = recover_schema2_or_v1(handle, &loaded);
+                error = recover_legacy_settings(handle, &loaded);
                 needs_migration = error == ESP_OK;
             }
         }
@@ -608,9 +702,9 @@ esp_err_t app_settings_init(void)
     return error;
 }
 
-esp_err_t app_settings_get(app_settings_t *settings)
+esp_err_t app_settings_get_snapshot(app_settings_snapshot_t *snapshot)
 {
-    if (settings == NULL) {
+    if (snapshot == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
     if (!s_initialized || s_mutex == NULL) {
@@ -619,9 +713,23 @@ esp_err_t app_settings_get(app_settings_t *settings)
     if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
-    *settings = s_settings;
+    snapshot->settings = s_settings;
+    snapshot->generation = s_generation;
     xSemaphoreGive(s_mutex);
     return ESP_OK;
+}
+
+esp_err_t app_settings_get(app_settings_t *settings)
+{
+    if (settings == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    app_settings_snapshot_t snapshot = {0};
+    const esp_err_t error = app_settings_get_snapshot(&snapshot);
+    if (error == ESP_OK) {
+        *settings = snapshot.settings;
+    }
+    return error;
 }
 
 esp_err_t app_settings_save(const app_settings_t *settings)

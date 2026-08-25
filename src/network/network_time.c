@@ -99,10 +99,32 @@ static network_time_status_t s_status = {
 
 static bool exclusive_session_active(void);
 static esp_err_t load_credentials(network_credentials_t *credentials);
+static bool credentials_are_missing(void);
 static esp_err_t stop_wifi(void);
 static esp_err_t start_station(const network_credentials_t *credentials,
                                uint32_t timeout_ms,
                                network_time_failure_t *failure);
+
+static void set_starting_unconfigured_status_locked(void)
+{
+    s_status.state = NETWORK_TIME_STATE_STARTING;
+    s_status.configured = false;
+    s_status.automatic_sync_enabled = s_automatic_sync_enabled;
+    s_status.last_error = ESP_OK;
+    s_status.last_failure = NETWORK_TIME_FAILURE_NONE;
+    memset(s_status.setup_ssid, 0, sizeof(s_status.setup_ssid));
+    memset(s_status.setup_password, 0, sizeof(s_status.setup_password));
+    memset(s_status.setup_url, 0, sizeof(s_status.setup_url));
+}
+
+static bool get_automatic_sync_enabled(void)
+{
+    bool enabled;
+    portENTER_CRITICAL(&s_status_lock);
+    enabled = s_automatic_sync_enabled;
+    portEXIT_CRITICAL(&s_status_lock);
+    return enabled;
+}
 
 static void set_status(network_time_state_t state, bool configured, esp_err_t error)
 {
@@ -220,6 +242,41 @@ esp_err_t network_time_request_sync(void)
     return ESP_OK;
 }
 
+esp_err_t network_time_set_automatic_sync_enabled(bool enabled)
+{
+    if (!s_initialized || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    bool wake_task = false;
+    bool changed = false;
+    portENTER_CRITICAL(&s_status_lock);
+    changed = s_automatic_sync_enabled != enabled;
+    s_automatic_sync_enabled = enabled;
+    s_status.automatic_sync_enabled = enabled;
+    if (changed && enabled && !s_session_policy.task_active &&
+        s_status.configured &&
+        (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
+         s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
+        if (s_session_policy.owner == NETWORK_SESSION_OWNER_NONE) {
+            wake_task = network_session_policy_request_task(&s_session_policy);
+        } else {
+            /* The event remains queued until the exclusive owner releases. */
+            wake_task = true;
+        }
+    }
+    portEXIT_CRITICAL(&s_status_lock);
+
+    if (wake_task) {
+        xEventGroupSetBits(s_events, NETWORK_EVENT_SYNC_REQUEST);
+    }
+    if (changed) {
+        ESP_LOGI(TAG, "automatic time synchronization %s",
+                 enabled ? "enabled" : "disabled");
+    }
+    return ESP_OK;
+}
+
 esp_err_t network_time_begin_maintenance(void)
 {
     if (!s_initialized || s_events == NULL) {
@@ -261,6 +318,35 @@ void network_time_end_maintenance(void)
     }
 }
 
+esp_err_t network_time_end_maintenance_and_request_provisioning(void)
+{
+    if (!s_initialized || !s_storage_ready || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!credentials_are_missing()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    bool accepted = false;
+    portENTER_CRITICAL(&s_status_lock);
+    if (!s_station_active && s_http_server == NULL) {
+        accepted = network_session_policy_release_to_task(
+            &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
+        if (accepted) {
+            set_starting_unconfigured_status_locked();
+        }
+    }
+    portEXIT_CRITICAL(&s_status_lock);
+    if (!accepted) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xEventGroupSetBits(s_events, NETWORK_EVENT_SYNC_REQUEST |
+                                    NETWORK_EVENT_MAINTENANCE_CHANGED);
+    ESP_LOGI(TAG, "network maintenance handed off to provisioning");
+    return ESP_OK;
+}
+
 static bool exclusive_session_active(void)
 {
     bool active;
@@ -295,6 +381,21 @@ static bool online_session_acquire(void)
          s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
         accepted = network_session_policy_try_acquire(
             &s_session_policy, NETWORK_SESSION_OWNER_ONLINE);
+    }
+    portEXIT_CRITICAL(&s_status_lock);
+    return accepted;
+}
+
+static bool maintenance_session_transfer_to_online(void)
+{
+    bool accepted = false;
+    portENTER_CRITICAL(&s_status_lock);
+    if (!s_station_active && s_http_server == NULL && s_status.configured &&
+        (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
+         s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
+        accepted = network_session_policy_transfer(
+            &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE,
+            NETWORK_SESSION_OWNER_ONLINE);
     }
     portEXIT_CRITICAL(&s_status_lock);
     return accepted;
@@ -342,6 +443,14 @@ static esp_err_t load_credentials(network_credentials_t *credentials)
     return error;
 }
 
+static bool credentials_are_missing(void)
+{
+    network_credentials_t credentials = {0};
+    const esp_err_t error = load_credentials(&credentials);
+    memset(&credentials, 0, sizeof(credentials));
+    return error == ESP_ERR_NVS_NOT_FOUND;
+}
+
 static esp_err_t save_credentials(const network_credentials_t *credentials)
 {
     if (!s_storage_ready || !network_credentials_are_valid(credentials)) {
@@ -383,9 +492,41 @@ esp_err_t network_time_clear_credentials(void)
         nvs_close(handle);
     }
     if (error == ESP_OK) {
-        set_status(NETWORK_TIME_STATE_STARTING, false, ESP_OK);
+        portENTER_CRITICAL(&s_status_lock);
+        if (s_status.state == NETWORK_TIME_STATE_PROVISIONING) {
+            s_status.configured = false;
+            s_status.automatic_sync_enabled = s_automatic_sync_enabled;
+        } else {
+            set_starting_unconfigured_status_locked();
+        }
+        portEXIT_CRITICAL(&s_status_lock);
     }
     return error;
+}
+
+esp_err_t network_time_request_provisioning(void)
+{
+    if (!s_initialized || !s_storage_ready || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!credentials_are_missing()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    bool accepted = false;
+    portENTER_CRITICAL(&s_status_lock);
+    accepted = network_session_policy_request_task(&s_session_policy);
+    if (accepted && s_status.state != NETWORK_TIME_STATE_PROVISIONING) {
+        set_starting_unconfigured_status_locked();
+    }
+    portEXIT_CRITICAL(&s_status_lock);
+    if (!accepted) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xEventGroupSetBits(s_events, NETWORK_EVENT_SYNC_REQUEST);
+    ESP_LOGI(TAG, "network provisioning requested");
+    return ESP_OK;
 }
 
 static esp_err_t send_html(httpd_req_t *request, const char *status, const char *html)
@@ -827,18 +968,8 @@ static esp_err_t connect_and_synchronize(
     return error;
 }
 
-esp_err_t network_time_begin_online_session(uint32_t timeout_ms)
+static esp_err_t connect_acquired_online_session(uint32_t timeout_ms)
 {
-    if (timeout_ms == 0U) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (!s_initialized || !s_storage_ready || s_events == NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (!online_session_acquire()) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
     network_credentials_t credentials = {0};
     esp_err_t error = load_credentials(&credentials);
     if (error == ESP_OK) {
@@ -857,6 +988,35 @@ esp_err_t network_time_begin_online_session(uint32_t timeout_ms)
 
     ESP_LOGI(TAG, "online network session acquired");
     return ESP_OK;
+}
+
+esp_err_t network_time_begin_online_session(uint32_t timeout_ms)
+{
+    if (timeout_ms == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_initialized || !s_storage_ready || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!online_session_acquire()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return connect_acquired_online_session(timeout_ms);
+}
+
+esp_err_t network_time_begin_online_session_from_maintenance(
+    uint32_t timeout_ms)
+{
+    if (timeout_ms == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_initialized || !s_storage_ready || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!maintenance_session_transfer_to_online()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return connect_acquired_online_session(timeout_ms);
 }
 
 esp_err_t network_time_end_online_session(void)
@@ -949,7 +1109,7 @@ static void network_task(void *argument)
                 set_status(NETWORK_TIME_STATE_RETRY_WAIT, false, error);
                 network_task_activity_end();
                 ESP_LOGI(TAG,
-                         "setup window closed; local features remain available until restart");
+                         "setup window closed; local features remain available offline");
                 (void)wait_for_sync_request(portMAX_DELAY);
                 continue;
             }
@@ -970,7 +1130,8 @@ static void network_task(void *argument)
         if (wait_for_sync_request(0U)) {
             user_requested_sync = true;
         }
-        if (!s_automatic_sync_enabled && !user_requested_sync) {
+        const bool automatic_sync = get_automatic_sync_enabled();
+        if (!automatic_sync && !user_requested_sync) {
             set_status(NETWORK_TIME_STATE_RETRY_WAIT, true, ESP_OK);
             network_task_activity_end();
             user_requested_sync = wait_for_sync_request(portMAX_DELAY);
@@ -984,7 +1145,7 @@ static void network_task(void *argument)
             set_status(NETWORK_TIME_STATE_SYNCHRONIZED, true, ESP_OK);
             network_task_activity_end();
             user_requested_sync = wait_for_sync_request(
-                s_automatic_sync_enabled
+                get_automatic_sync_enabled()
                     ? pdMS_TO_TICKS(NETWORK_RESYNC_INTERVAL_MS)
                     : portMAX_DELAY);
             continue;
@@ -1001,7 +1162,8 @@ static void network_task(void *argument)
         }
         const uint32_t retry_delay_ms =
             network_retry_delay_ms(consecutive_failures);
-        if (s_automatic_sync_enabled) {
+        const bool retry_automatically = get_automatic_sync_enabled();
+        if (retry_automatically) {
             ESP_LOGW(TAG, "%s unavailable; retrying in %u seconds",
                      network_time_failure_name(failure),
                      (unsigned)(retry_delay_ms / 1000U));
@@ -1015,8 +1177,8 @@ static void network_task(void *argument)
         }
         network_task_activity_end();
         user_requested_sync = wait_for_sync_request(
-            s_automatic_sync_enabled ? pdMS_TO_TICKS(retry_delay_ms)
-                                     : portMAX_DELAY);
+            retry_automatically ? pdMS_TO_TICKS(retry_delay_ms)
+                                : portMAX_DELAY);
     }
 }
 
@@ -1092,7 +1254,7 @@ esp_err_t network_time_init(bool automatic_sync_enabled)
     }
     ESP_LOGI(TAG,
              "network time service ready; automatic sync %s; credentials are never written to logs",
-             s_automatic_sync_enabled ? "enabled" : "disabled");
+             get_automatic_sync_enabled() ? "enabled" : "disabled");
     return ESP_OK;
 }
 

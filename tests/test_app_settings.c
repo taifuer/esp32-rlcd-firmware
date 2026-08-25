@@ -170,6 +170,7 @@ static void test_form_parser(void)
         "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=0",
         "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=128",
         "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=62&alarm_days=62",
+        "power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=62&images=fixed",
     };
     for (size_t index = 0U; index < sizeof(invalid) / sizeof(invalid[0]);
          ++index) {

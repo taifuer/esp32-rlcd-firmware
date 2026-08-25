@@ -30,6 +30,9 @@ typedef struct {
 
 esp_err_t online_firmware_update_init(const char *current_version,
                                       bool beta_updates_enabled);
+/* Change the manifest channel while the updater is idle. */
+esp_err_t online_firmware_update_set_beta_channel(
+    bool beta_updates_enabled);
 esp_err_t online_firmware_update_request_check(void);
 esp_err_t online_firmware_update_request_confirmation(void);
 esp_err_t online_firmware_update_start_install(void);

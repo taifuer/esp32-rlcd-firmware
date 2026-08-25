@@ -47,6 +47,11 @@ int main(void)
                                         "../test.pbm", path,
                                         sizeof(path)));
 
+    assert(sd_image_catalog_compare_names("Alpha.pbm", "alpha.pbm") < 0);
+    assert(sd_image_catalog_compare_names("z.pbm", "Alpha.pbm") > 0);
+    assert(sd_image_catalog_compare_names(NULL, NULL) == 0);
+    assert(sd_image_catalog_compare_names(NULL, "a.pbm") < 0);
+
     sd_image_catalog_init(&catalog);
     char name[32];
     for (size_t index = 0U; index < SD_IMAGE_CATALOG_MAX_FILES; ++index) {

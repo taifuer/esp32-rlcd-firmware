@@ -106,6 +106,18 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_image_catalog"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/sd_image \
+  src/sd_image/image_import_policy.c \
+  tests/test_sd_image_import_policy.c \
+  -o "${RLCD_TEST_TMP}/test_sd_image_import_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/sd_image \
+  src/sd_image/image_delete_policy.c \
+  tests/test_sd_image_delete_policy.c \
+  -o "${RLCD_TEST_TMP}/test_sd_image_delete_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/settings/include \
   src/settings/settings_model.c src/settings/settings_power_policy.c \
   tests/test_app_settings.c \
@@ -147,6 +159,14 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_online_update_policy"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/gallery -Isrc/image/include \
+  -I"${RLCD_CJSON_DIR}" \
+  src/gallery/gallery_manifest.c \
+  tests/test_gallery_manifest.c \
+  "${RLCD_TEST_TMP}/cJSON.o" -lm \
+  -o "${RLCD_TEST_TMP}/test_gallery_manifest"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/rtc/include \
   src/rtc/rtc_backup_policy.c tests/test_rtc_backup_policy.c \
   -o "${RLCD_TEST_TMP}/test_rtc_backup_policy"
@@ -182,12 +202,15 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_page_state"
 "${RLCD_TEST_TMP}/test_monochrome_image"
 "${RLCD_TEST_TMP}/test_image_catalog"
+"${RLCD_TEST_TMP}/test_sd_image_import_policy"
+"${RLCD_TEST_TMP}/test_sd_image_delete_policy"
 "${RLCD_TEST_TMP}/test_app_settings"
 "${RLCD_TEST_TMP}/test_settings_record"
 "${RLCD_TEST_TMP}/test_network_screen_policy"
 "${RLCD_TEST_TMP}/test_firmware_update_policy"
 "${RLCD_TEST_TMP}/test_settings_portal_policy"
 "${RLCD_TEST_TMP}/test_online_update_policy"
+"${RLCD_TEST_TMP}/test_gallery_manifest"
 "${RLCD_TEST_TMP}/test_rtc_backup_policy"
 "${RLCD_TEST_TMP}/test_clock_service_policy"
 "${RLCD_TEST_TMP}/test_audio_level"

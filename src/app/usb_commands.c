@@ -9,9 +9,6 @@
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_log.h"
-#include "esp_system.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "network_time.h"
 #include "pcf85063.h"
 
@@ -167,14 +164,17 @@ static void process_line(const char *line, bool rtc_available)
     }
 
     if (strcmp(line, "RESET_WIFI") == 0) {
-        const esp_err_t error = network_time_clear_credentials();
+        esp_err_t error = network_time_clear_credentials();
         if (error != ESP_OK) {
             ESP_LOGW(TAG, "WIFI_RESET_ERROR %s", esp_err_to_name(error));
             return;
         }
-        ESP_LOGI(TAG, "WIFI_RESET_OK restarting into setup mode");
-        vTaskDelay(pdMS_TO_TICKS(150));
-        esp_restart();
+        error = network_time_request_provisioning();
+        if (error != ESP_OK) {
+            ESP_LOGW(TAG, "WIFI_SETUP_ERROR %s", esp_err_to_name(error));
+            return;
+        }
+        ESP_LOGI(TAG, "WIFI_RESET_OK entering setup mode without restart");
         return;
     }
 

@@ -9,6 +9,7 @@
 #include "clock_service.h"
 #include "esp_app_format.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -20,18 +21,21 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
+#include "gallery_download.h"
 #include "network_credentials.h"
 #include "network_time.h"
+#include "sd_image.h"
 #include "settings_portal_policy.h"
 
 #define UPDATE_EVENT_COMPLETE BIT1
 #define UPDATE_EVENT_FAILED BIT2
 #define UPDATE_EVENT_CANCEL BIT3
-#define UPDATE_EVENT_RESTART_REQUEST BIT4
+#define UPDATE_EVENT_REPROVISION BIT4
 #define UPDATE_EVENT_MUTATION_ENDED BIT5
+#define UPDATE_EVENT_GALLERY_INSTALL BIT6
 #define UPDATE_EVENT_SESSION                                                    \
     (UPDATE_EVENT_COMPLETE | UPDATE_EVENT_FAILED | UPDATE_EVENT_CANCEL |       \
-     UPDATE_EVENT_RESTART_REQUEST)
+     UPDATE_EVENT_REPROVISION | UPDATE_EVENT_GALLERY_INSTALL)
 #define UPDATE_EVENT_ALL                                                       \
     (UPDATE_EVENT_SESSION | UPDATE_EVENT_MUTATION_ENDED)
 
@@ -40,8 +44,13 @@
 #define UPDATE_RESTART_DELAY_MS 1800U
 #define UPDATE_SERVER_STOP_DELAY_MS 250U
 #define UPDATE_HTTP_BUFFER_SIZE 4096U
+#define SETTINGS_IMAGE_UPLOAD_BYTES \
+    (MONO_IMAGE_BITMAP_BYTES + sizeof("P4\n400 300\n") - 1U)
 #define SETTINGS_PORTAL_FORM_CAPACITY (APP_SETTINGS_FORM_MAX_LENGTH + 1U)
 #define SETTINGS_PORTAL_SMALL_FORM_CAPACITY 64U
+#define SETTINGS_IMAGE_FORM_CAPACITY 96U
+#define SETTINGS_IMAGE_LIST_JSON_CAPACITY                                  \
+    (128U + SD_IMAGE_MAX_IMAGES * (SD_IMAGE_FILENAME_CAPACITY + 3U))
 #define SETTINGS_PORTAL_TOKEN_HEADER "X-RLCD-Token"
 
 static const char *TAG = "firmware_update";
@@ -56,7 +65,7 @@ static const char SETTINGS_PAGE[] =
     ":root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
     "color:#171717;background:#f5f6f7}*{box-sizing:border-box}body{margin:0}main{width:calc(100% - 2rem);max-width:34rem;"
     "margin:0 auto;padding:2rem 0 3rem}header{padding:.4rem 0 1rem}h1{font-size:1.85rem;margin:0 0 .55rem}"
-    "h2{font-size:1.15rem;margin:0 0 .9rem}p{line-height:1.55;margin:.45rem 0;color:#555}section{background:#fff;"
+    "h2{font-size:1.15rem;margin:0 0 .9rem}h3{font-size:1rem;margin:0 0 .65rem}p{line-height:1.55;margin:.45rem 0;color:#555}section{background:#fff;"
     "border:1px solid #e2e4e7;border-radius:.8rem;padding:1.15rem;margin:1rem 0}label{display:block;font-weight:600;"
     "margin:.9rem 0 .35rem}input,select,button{width:100%;font:inherit;border-radius:.55rem;padding:.72rem .8rem;"
     "border:1px solid #a9adb2;background:#fff}input[type=range]{padding:.35rem 0;border:0}.days{display:grid;"
@@ -66,6 +75,17 @@ static const char SETTINGS_PAGE[] =
     "button.danger{background:#fff;color:#a32626;border-color:#c96c6c}small,.note{font-size:.88rem;color:#676b70}"
     ".row{display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:center}.row output{min-width:3ch;text-align:right}"
     "progress{width:100%;height:1rem;margin-top:1rem}.message{min-height:1.5rem;margin-top:.75rem;color:#333}"
+    "button:disabled,input:disabled{cursor:not-allowed;opacity:.48}.sd-state{padding:.75rem .85rem;border-radius:.55rem;background:#f2f3f4;color:#333}"
+    ".sd-state[data-state=ready]{background:#eef6f0;color:#235b31}.sd-state[data-state=full]{background:#fff5df;color:#6e4c0c}"
+    ".image-preview{margin-top:1rem}.canvas-shell{position:relative;overflow:hidden;"
+    "border:1px solid #cfd2d6;border-radius:.55rem;background:#000;aspect-ratio:4/3}.canvas-shell canvas{display:block;width:100%;height:100%;image-rendering:pixelated}"
+    ".reserved{position:absolute;left:0;right:0;bottom:0;height:16.6667%;display:grid;place-items:center;border-top:1px dashed #8a8a8a;"
+    "color:#ddd;background:rgba(0,0,0,.72);font-size:.72rem;letter-spacing:.02em;pointer-events:none}.advanced{margin-top:.9rem;"
+    "border:1px solid #e2e4e7;border-radius:.55rem;padding:.7rem .8rem}.advanced summary{cursor:pointer;font-weight:600}.advanced label{font-weight:500}"
+    ".check{display:flex;align-items:center;gap:.55rem}.check input{width:auto;margin:0;padding:0;accent-color:#171717}.divider{border:0;border-top:1px solid #e5e7e9;margin:1.15rem 0}"
+    ".stored-manager{margin-top:1rem}.image-meta{display:flex;align-items:baseline;justify-content:space-between;gap:.8rem;margin:.65rem 0 0}"
+    ".image-meta strong{white-space:nowrap}.image-meta small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}"
+    ".button-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.button-row button{margin-top:.7rem}"
     "</style></head><body><main><header><h1>设备设置</h1>"
     "<p>设置只保存在设备中。临时热点关闭后，本页面将无法继续访问。</p></header>"
     "<section><h2>偏好设置</h2><form id=\"settings\">"
@@ -102,9 +122,35 @@ static const char SETTINGS_PAGE[] =
     "<section><h2>日期与时间</h2><p>无需互联网，使用当前手机时间校准设备 RTC。</p>"
     "<button id=\"setTime\" type=\"button\" class=\"secondary\">使用手机时间校准</button>"
     "<p id=\"timeMessage\" class=\"message\"></p></section>"
+    "<section><h2>microSD 图片</h2><p id=\"sdState\" class=\"sd-state\" data-state=\"loading\" aria-live=\"polite\">正在检测 microSD…</p>"
+    "<div id=\"storedManager\" class=\"stored-manager\" hidden><div class=\"canvas-shell\">"
+    "<canvas id=\"storedCanvas\" width=\"400\" height=\"300\" aria-label=\"microSD 当前图片预览\"></canvas>"
+    "<div class=\"reserved\">设备保留操作区 · 50 px</div></div>"
+    "<div class=\"image-meta\"><strong id=\"storedPosition\">-- / --</strong><small id=\"storedFilename\"></small></div>"
+    "<div class=\"button-row\"><button id=\"storedPrevious\" type=\"button\" class=\"secondary\">上一张</button>"
+    "<button id=\"storedNext\" type=\"button\" class=\"secondary\">下一张</button></div>"
+    "<div class=\"button-row\"><button id=\"storedSelect\" type=\"button\">设为当前</button>"
+    "<button id=\"storedDelete\" type=\"button\" class=\"danger\">删除</button></div></div>"
+    "<p id=\"storedMessage\" class=\"message\"></p><hr class=\"divider\">"
+    "<label for=\"imageFile\">从手机选择图片</label><input id=\"imageFile\" type=\"file\" accept=\"image/jpeg,image/png,.jpg,.jpeg,.png\" disabled>"
+    "<p class=\"note\">JPEG/PNG 只在当前浏览器中转换，不会上传原图。支持最大 32 MiB、4000 万像素。</p>"
+    "<div id=\"imagePreview\" class=\"image-preview\" hidden><div class=\"canvas-shell\">"
+    "<canvas id=\"imageCanvas\" width=\"400\" height=\"300\" aria-label=\"图片在设备上的黑白预览\"></canvas>"
+    "<div class=\"reserved\">设备保留操作区 · 50 px</div></div>"
+    "<details class=\"advanced\"><summary>高级转换设置</summary><label for=\"threshold\">黑白阈值</label>"
+    "<div class=\"row\"><input id=\"threshold\" type=\"range\" min=\"1\" max=\"254\" value=\"128\" step=\"1\">"
+    "<output id=\"thresholdValue\">128</output></div><label class=\"check\"><input id=\"dither\" type=\"checkbox\">"
+    "Floyd–Steinberg 抖动</label></details></div>"
+    "<button id=\"imageUpload\" type=\"button\" disabled>写入 microSD</button>"
+    "<progress id=\"imageProgress\" max=\"100\" value=\"0\" hidden></progress>"
+    "<p id=\"imageMessage\" class=\"message\">请先选择图片</p><hr class=\"divider\">"
+    "<h3>演示图集</h3><p>将公共演示图下载到 microSD。需要设备已保存可用的 Wi-Fi。</p>"
+    "<button id=\"starterImages\" type=\"button\" class=\"secondary\" disabled>安装演示图集</button>"
+    "<p id=\"starterMessage\" class=\"message\"></p>"
+    "<small>若当前页面无法选择图片，请在手机系统浏览器中打开 192.168.4.1。</small></section>"
     "<section><h2>维护</h2><button id=\"defaults\" type=\"button\" class=\"secondary\">恢复偏好默认值</button>"
     "<button id=\"forgetWifi\" type=\"button\" class=\"danger\">清除 Wi-Fi 配置</button>"
-    "<p class=\"note\">清除后设备会重启，并进入现有配网流程；其他偏好不会被删除。</p>"
+    "<p class=\"note\">清除后设备会关闭设置热点并进入配网；其他偏好不会被删除。</p>"
     "<p id=\"maintenanceMessage\" class=\"message\"></p></section>"
     "<section><h2>本地固件升级</h2><p>请选择本项目发布的 <strong>OTA 固件</strong>。升级不会清除设置。</p>"
     "<input id=\"file\" type=\"file\" accept=\".bin,application/octet-stream\">"
@@ -112,9 +158,80 @@ static const char SETTINGS_PAGE[] =
     "<progress id=\"progress\" max=\"100\" value=\"0\"></progress>"
     "<p id=\"updateMessage\" class=\"message\">等待选择固件</p>"
     "<small>写入期间请保持设备供电。校验成功后设备会自动重启。</small></section>"
-    "<script>let token='',initialUpdates='stable';const $=id=>document.getElementById(id);"
+    "<script>let token='',initialUpdates='stable',sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
+    "storedImages=[],storedIndex=0,storedSelected='',storedBusy=false,storedRequest=0;"
+    "const $=id=>document.getElementById(id);const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
+    "const SOURCE_MAX_BYTES=32*1024*1024,SOURCE_MAX_PIXELS=40000000;"
     "const show=(id,text)=>{$(id).textContent=text};const alarmDays=()=>document.querySelectorAll('.alarm-day');"
     "const unix=()=>String(Math.floor(Date.now()/1000));"
+    "function storedControls(){const available=storedImages.length>0&&!imageBusy&&!storedBusy;"
+    "$('storedPrevious').disabled=!available||storedImages.length<2;$('storedNext').disabled=!available||storedImages.length<2;"
+    "$('storedSelect').disabled=!available||storedImages[storedIndex]===storedSelected;$('storedDelete').disabled=!available}"
+    "function imageControls(){const blocked=!sdReady||imageBusy;$('imageFile').disabled=blocked;$('starterImages').disabled=blocked;"
+    "$('imageUpload').disabled=blocked||!imagePbm;$('threshold').disabled=imageBusy||!imageGray;$('dither').disabled=imageBusy||!imageGray;storedControls()}"
+    "function imageBusyState(value){imageBusy=value;imageControls()}"
+    "function setSdState(value,count){const state=String(value||'unknown').toLowerCase(),total=Number.isFinite(Number(count))?Math.max(0,Math.floor(Number(count))):0;"
+    "const output=$('sdState');if(state==='ready'||state==='available'||state==='ok'){sdReady=true;output.dataset.state='ready';"
+    "output.textContent=total>0?'microSD 可用，现有 '+total+' 张图片。':'microSD 可用，尚无图片。'}"
+    "else if(state==='missing'||state==='no_card'||state==='not_present'){sdReady=false;output.dataset.state='missing';"
+    "output.textContent='未检测到可用的 microSD。未安装时可忽略；如需使用，请关机插卡后再开机。'}"
+    "else if(state==='full'){sdReady=false;output.dataset.state='full';"
+    "output.textContent='microSD 已有 '+total+' 张有效图片，达到固件上限。请先删除不需要的图片。'}"
+    "else if(state==='overflow'){sdReady=false;output.dataset.state='full';"
+    "output.textContent='microSD 中的图片超过固件上限，当前可管理 '+total+' 张。删除后请重启设备重新扫描。'}"
+    "else if(state==='unavailable'||state==='error'||state==='unreadable'){sdReady=false;output.dataset.state='error';"
+    "output.textContent='microSD 暂不可用。请确认使用 FAT32，并在关机状态下重新插卡。'}"
+    "else{sdReady=false;output.dataset.state='unknown';output.textContent='当前无法读取 microSD 状态，图片导入暂不可用。'}"
+    "if(!imageGray)show('imageMessage',sdReady?'请先选择图片':'microSD 可用后即可导入图片。');imageControls()}"
+    "function drawStoredPbm(data){const header=[80,52,10,52,48,48,32,51,48,48,10];if(data.length!==header.length+15000||"
+    "header.some((value,index)=>data[index]!==value))throw new Error('设备返回的图片预览无效');const canvas=$('storedCanvas'),"
+    "context=canvas.getContext('2d'),preview=context.createImageData(IMAGE_WIDTH,IMAGE_HEIGHT),offset=header.length;"
+    "for(let index=0;index<IMAGE_WIDTH*IMAGE_HEIGHT;index++){const black=(data[offset+(index>>3)]&(1<<(7-(index&7))))!==0,value=black?0:255,pixel=index*4;"
+    "preview.data[pixel]=value;preview.data[pixel+1]=value;preview.data[pixel+2]=value;preview.data[pixel+3]=255}context.putImageData(preview,0,0)}"
+    "async function renderStored(){if(storedImages.length===0){$('storedManager').hidden=true;storedControls();return}"
+    "storedIndex=Math.max(0,Math.min(storedIndex,storedImages.length-1));const name=storedImages[storedIndex],requestId=++storedRequest;"
+    "$('storedManager').hidden=false;$('storedPosition').textContent=(storedIndex+1)+' / '+storedImages.length;"
+    "$('storedFilename').textContent=name;const canvas=$('storedCanvas'),context=canvas.getContext('2d');context.fillStyle='#000';"
+    "context.fillRect(0,0,canvas.width,canvas.height);storedBusy=true;storedControls();show('storedMessage','正在载入预览…');try{"
+    "const response=await fetch('/api/images/preview?name='+encodeURIComponent(name),{cache:'no-store'});if(!response.ok)throw new Error(await response.text()||'无法读取图片预览');"
+    "const data=new Uint8Array(await response.arrayBuffer());if(requestId!==storedRequest)return;drawStoredPbm(data);"
+    "show('storedMessage',name===storedSelected?'当前正在显示这张图片。':'')}catch(error){if(requestId===storedRequest)show('storedMessage',error.message)}"
+    "finally{if(requestId===storedRequest){storedBusy=false;storedControls()}}}"
+    "async function loadStoredImages(preferred){const previous=preferred||storedImages[storedIndex]||'';const response=await fetch('/api/images',{cache:'no-store'});"
+    "if(!response.ok)throw new Error(await response.text()||'无法读取图片列表');const state=await response.json();"
+    "if(!Array.isArray(state.images)||state.images.some(name=>typeof name!=='string'))throw new Error('设备返回的图片列表无效');"
+    "storedImages=state.images;storedSelected=typeof state.selected==='string'?state.selected:'';const position=storedImages.indexOf(previous);"
+    "storedIndex=position>=0?position:Math.max(0,storedImages.indexOf(storedSelected));await renderStored()}"
+    "async function browseStored(step){if(storedBusy||imageBusy||storedImages.length<2)return;storedIndex=(storedIndex+step+storedImages.length)%storedImages.length;await renderStored()}"
+    "function fallbackImage(file){return new Promise((resolve,reject)=>{const url=URL.createObjectURL(file),source=new Image();"
+    "source.onload=()=>resolve({source,width:source.naturalWidth,height:source.naturalHeight,close:()=>URL.revokeObjectURL(url)});"
+    "source.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('无法解码这张图片'))};source.src=url})}"
+    "async function decodeImage(file){const name=file.name.toLowerCase(),type=file.type.toLowerCase();"
+    "if(file.size===0)throw new Error('图片文件为空');if(file.size>SOURCE_MAX_BYTES)throw new Error('图片不能超过 32 MiB');"
+    "if(type!=='image/jpeg'&&type!=='image/png'&&!name.endsWith('.jpg')&&!name.endsWith('.jpeg')&&!name.endsWith('.png'))"
+    "throw new Error('请选择 JPEG 或 PNG 图片');let decoded;if(window.createImageBitmap){try{const source=await createImageBitmap(file,{imageOrientation:'from-image'});"
+    "decoded={source,width:source.width,height:source.height,close:()=>source.close()}}catch(error){decoded=await fallbackImage(file)}}"
+    "else decoded=await fallbackImage(file);if(decoded.width<1||decoded.height<1||decoded.width>SOURCE_MAX_PIXELS/decoded.height){decoded.close();"
+    "throw new Error('图片像素不能超过 4000 万')}return decoded}"
+    "function renderImage(){if(!imageGray)return;const threshold=Number($('threshold').value),useDither=$('dither').checked;"
+    "const values=useDither?new Float32Array(imageGray):imageGray,result=new Uint8Array(IMAGE_WIDTH*IMAGE_HEIGHT);"
+    "for(let y=0;y<CONTENT_HEIGHT;y++){for(let x=0;x<IMAGE_WIDTH;x++){const index=y*IMAGE_WIDTH+x,oldValue=values[index];"
+    "const next=oldValue>=threshold?255:0;result[index]=next;if(useDither){const error=oldValue-next;"
+    "if(x+1<IMAGE_WIDTH)values[index+1]+=error*7/16;if(y+1<CONTENT_HEIGHT){if(x>0)values[index+IMAGE_WIDTH-1]+=error*3/16;"
+    "values[index+IMAGE_WIDTH]+=error*5/16;if(x+1<IMAGE_WIDTH)values[index+IMAGE_WIDTH+1]+=error/16}}}}"
+    "const canvas=$('imageCanvas'),context=canvas.getContext('2d'),preview=context.createImageData(IMAGE_WIDTH,IMAGE_HEIGHT),packed=new Uint8Array(15000);"
+    "for(let index=0;index<result.length;index++){const value=result[index],offset=index*4;preview.data[offset]=value;preview.data[offset+1]=value;"
+    "preview.data[offset+2]=value;preview.data[offset+3]=255;if(value===0)packed[index>>3]|=1<<(7-(index&7))}context.putImageData(preview,0,0);"
+    "const header=new Uint8Array([80,52,10,52,48,48,32,51,48,48,10]);imagePbm=new Blob([header,packed],{type:'application/octet-stream'});"
+    "$('thresholdValue').value=String(threshold);show('imageMessage','黑白预览已生成，可以写入 microSD。');imageControls()}"
+    "function scheduleImageRender(){cancelAnimationFrame(imageFrame);imageFrame=requestAnimationFrame(renderImage)}"
+    "async function prepareImage(file){const decoded=await decodeImage(file),canvas=$('imageCanvas'),context=canvas.getContext('2d',{willReadFrequently:true});"
+    "context.fillStyle='#000';context.fillRect(0,0,IMAGE_WIDTH,IMAGE_HEIGHT);const scale=Math.min(IMAGE_WIDTH/decoded.width,CONTENT_HEIGHT/decoded.height),"
+    "width=Math.max(1,Math.round(decoded.width*scale)),height=Math.max(1,Math.round(decoded.height*scale));"
+    "context.drawImage(decoded.source,Math.floor((IMAGE_WIDTH-width)/2),Math.floor((CONTENT_HEIGHT-height)/2),width,height);decoded.close();"
+    "const pixels=context.getImageData(0,0,IMAGE_WIDTH,IMAGE_HEIGHT).data;imageGray=new Uint8Array(IMAGE_WIDTH*IMAGE_HEIGHT);"
+    "for(let index=0;index<imageGray.length;index++){const offset=index*4;imageGray[index]=Math.round(pixels[offset]*.2126+pixels[offset+1]*.7152+pixels[offset+2]*.0722)}"
+    "$('imagePreview').hidden=false;renderImage()}"
     "function zones(){const select=$('timezone');for(let minutes=-720;minutes<=840;minutes+=15){const option=document.createElement('option');"
     "const sign=minutes>=0?'+':'-';const absolute=Math.abs(minutes),hours=String(Math.floor(absolute/60)).padStart(2,'0'),"
     "remainder=String(absolute%60).padStart(2,'0');option.value=minutes;option.textContent='UTC'+sign+hours+':'+remainder+"
@@ -122,11 +239,12 @@ static const char SETTINGS_PAGE[] =
     "async function post(path,body){const headers={'Content-Type':'application/x-www-form-urlencoded',"
     "'X-RLCD-Token':token};const response=await fetch(path,{method:'POST',"
     "headers,body});const text=await response.text();if(!response.ok)throw new Error(text||'操作失败');return text;}"
-    "async function load(){const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw new Error('无法读取设备设置');"
+    "async function load(preferred){const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw new Error('无法读取设备设置');"
     "const state=await response.json();token=state.token;$('power').value=state.power;$('timezone').value=state.timezone;"
     "$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume;$('updates').value=state.updates;"
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
-    "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});initialUpdates=state.updates;}"
+    "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});initialUpdates=state.updates;"
+    "setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}"
     "$('volume').oninput=()=>{$('volumeValue').value=$('volume').value};"
     "$('settings').onsubmit=async event=>{event.preventDefault();const match=/^(\\d{2}):(\\d{2})$/.exec($('alarmTime').value);"
     "const days=Array.from(alarmDays()).reduce((mask,input)=>input.checked?mask|Number(input.dataset.bit):mask,0);"
@@ -134,15 +252,43 @@ static const char SETTINGS_PAGE[] =
     "if(days===0||(days&~127)!==0){show('settingsMessage','请至少选择一个重复日期。');return}"
     "$('alarmHour').value=String(Number(match[1]));$('alarmMinute').value=String(Number(match[2]));$('alarmDays').value=String(days);"
     "if(initialUpdates!=='beta'&&$('updates').value==='beta'&&!confirm('开启 Beta 更新？测试固件可能不稳定，请确认你能够使用本地 OTA 或 USB 恢复设备。'))return;show('settingsMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();"
-    "show('settingsMessage',await post('/api/settings',body));}catch(error){show('settingsMessage',error.message)}};"
+    "const message=await post('/api/settings',body);await load();show('settingsMessage',message)}catch(error){show('settingsMessage',error.message)}};"
     "$('setTime').onclick=async()=>{show('timeMessage','正在校准…');try{show('timeMessage',await post('/api/time','unix='+unix()))}"
     "catch(error){show('timeMessage',error.message)}};"
     "$('defaults').onclick=async()=>{if(!confirm('恢复偏好默认值？Wi-Fi 配置不会被删除。'))return;"
-    "show('maintenanceMessage','正在恢复…');try{show('maintenanceMessage',await post('/api/settings/defaults','confirm=DEFAULTS'))}"
+    "show('maintenanceMessage','正在恢复…');try{const message=await post('/api/settings/defaults','confirm=DEFAULTS');await load();show('maintenanceMessage',message)}"
     "catch(error){show('maintenanceMessage',error.message)}};"
-    "$('forgetWifi').onclick=async()=>{if(!confirm('清除 Wi-Fi 配置并重启？之后需要重新配网。'))return;"
+    "$('forgetWifi').onclick=async()=>{if(!confirm('清除 Wi-Fi 配置？设置热点随后会关闭，并进入配网。'))return;"
     "show('maintenanceMessage','正在清除…');try{show('maintenanceMessage',await post('/api/wifi/clear','confirm=FORGET'))}"
     "catch(error){show('maintenanceMessage',error.message)}};"
+    "$('storedPrevious').onclick=()=>browseStored(-1);$('storedNext').onclick=()=>browseStored(1);"
+    "$('storedSelect').onclick=async()=>{const name=storedImages[storedIndex];if(!name||imageBusy||storedBusy)return;imageBusyState(true);"
+    "show('storedMessage','正在设置…');try{const message=await post('/api/images/select','name='+encodeURIComponent(name));"
+    "storedSelected=name;show('storedMessage',message);storedControls()}catch(error){show('storedMessage',error.message)}finally{imageBusyState(false)}};"
+    "$('storedDelete').onclick=async()=>{const name=storedImages[storedIndex];if(!name||imageBusy||storedBusy)return;"
+    "if(!confirm('删除“'+name+'”？此操作无法撤销。'))return;const next=storedImages.length>1?storedImages[(storedIndex+1)%storedImages.length]:'';"
+    "imageBusyState(true);show('storedMessage','正在删除…');try{const message=await post('/api/images/delete','name='+encodeURIComponent(name)+'&confirm=DELETE');"
+    "await load(next);show('storedMessage',message)}catch(error){show('storedMessage',error.message)}finally{imageBusyState(false)}};"
+    "$('threshold').oninput=()=>{ $('thresholdValue').value=$('threshold').value;scheduleImageRender()};"
+    "$('dither').onchange=scheduleImageRender;"
+    "$('imageFile').onchange=async event=>{const file=event.target.files[0];imagePbm=null;imageGray=null;$('imagePreview').hidden=true;"
+    "$('imageProgress').hidden=true;$('imageProgress').value=0;imageControls();if(!file){show('imageMessage','请先选择图片');return}"
+    "imageBusyState(true);show('imageMessage','正在本地转换图片…');try{await prepareImage(file)}catch(error){event.target.value='';"
+    "show('imageMessage',error.message)}finally{imageBusyState(false)}};"
+    "$('imageUpload').onclick=()=>{if(!sdReady){show('imageMessage','microSD 当前不可用');return}if(!imagePbm){show('imageMessage','请先选择并预览图片');return}"
+    "if(!confirm('将当前黑白预览写入 microSD？写入期间请保持供电并勿拔卡。'))return;const request=new XMLHttpRequest(),"
+    "progress=$('imageProgress');imageBusyState(true);progress.hidden=false;progress.value=0;show('imageMessage','正在写入…');"
+    "request.open('POST','/api/images/upload');request.setRequestHeader('Content-Type','application/octet-stream');"
+    "request.setRequestHeader('X-RLCD-Token',token);request.upload.onprogress=event=>{if(event.lengthComputable){const value=Math.round(event.loaded*100/event.total);"
+    "progress.value=value;show('imageMessage','正在上传 '+value+'%')}};request.onload=()=>{imageBusyState(false);show('imageMessage',request.responseText||"
+    "(request.status>=200&&request.status<300?'图片已写入 microSD':'写入失败'));if(request.status>=200&&request.status<300){progress.value=100;"
+    "load().catch(()=>{})}};"
+    "request.onerror=()=>{imageBusyState(false);show('imageMessage','连接中断，请确认设备仍在设置模式')};request.send(imagePbm)};"
+    "$('starterImages').onclick=async()=>{if(!sdReady){show('starterMessage','microSD 当前不可用');return}"
+    "if(!confirm('安装公共演示图集？设备将关闭设置热点并连接已保存的 Wi-Fi。请随后查看设备屏幕。'))return;"
+    "imageBusyState(true);show('starterMessage','正在提交下载请求…');try{const result=await post('/api/images/starter','confirm=STARTER');"
+    "show('starterMessage',result||'请求已提交，请查看设备屏幕')}catch(error){show('starterMessage',error.name==='TypeError'?"
+    "'连接已断开，请查看设备屏幕上的下载结果。':error.message)}finally{imageBusyState(false)}};"
     "$('upload').onclick=()=>{const file=$('file'),button=$('upload'),progress=$('progress');if(!file.files.length){"
     "show('updateMessage','请先选择 OTA 固件');return}if(!confirm('开始写入固件？写入期间请保持供电。'))return;"
     "button.disabled=true;file.disabled=true;const request=new XMLHttpRequest();request.open('POST','/update');"
@@ -151,7 +297,7 @@ static const char SETTINGS_PAGE[] =
     "progress.value=value;show('updateMessage','正在上传 '+value+'%')}};request.onload=()=>{show('updateMessage',request.responseText||"
     "(request.status===200?'升级成功，设备即将重启':'升级失败'));if(request.status!==200){button.disabled=false;file.disabled=false}};"
     "request.onerror=()=>show('updateMessage','连接中断，请查看设备屏幕');request.send(file.files[0])};"
-    "zones();load().catch(error=>show('settingsMessage',error.message));</script></main></body></html>";
+    "zones();load().catch(error=>{show('settingsMessage',error.message);setSdState('unknown',0)});</script></main></body></html>";
 
 static const char UPDATE_SUCCESS_PAGE[] =
     "升级成功。固件已校验，设备即将自动重启。";
@@ -163,7 +309,6 @@ static httpd_handle_t s_http_server;
 static bool s_initialized;
 static bool s_upload_started;
 static bool s_mutation_active;
-static bool s_restart_requested;
 static bool s_session_closing;
 static bool s_session_deadline_active;
 static uint32_t s_session_started_tick;
@@ -180,7 +325,6 @@ static void reset_status_locked(firmware_update_state_t state,
     memset(&s_status, 0, sizeof(s_status));
     memset(s_session_token, 0, sizeof(s_session_token));
     s_mutation_active = false;
-    s_restart_requested = false;
     s_session_closing = false;
     s_session_deadline_active = false;
     s_session_started_tick = 0U;
@@ -253,7 +397,12 @@ static esp_err_t send_page(httpd_req_t *request, const char *status,
     httpd_resp_set_hdr(request, "Cache-Control", "no-store");
     httpd_resp_set_hdr(
         request, "Content-Security-Policy",
-        "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'");
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+        "form-action 'self'; style-src 'unsafe-inline'; "
+        "script-src 'unsafe-inline'; connect-src 'self'; img-src blob:");
+    httpd_resp_set_hdr(request, "X-Content-Type-Options", "nosniff");
+    httpd_resp_set_hdr(request, "X-Frame-Options", "DENY");
+    httpd_resp_set_hdr(request, "Referrer-Policy", "no-referrer");
     return httpd_resp_send(request, body, HTTPD_RESP_USE_STRLEN);
 }
 
@@ -359,8 +508,7 @@ static bool portal_is_ready(void)
     (void)refresh_session_deadline_locked(now);
     ready = settings_portal_write_is_available(
         s_status.state == FIRMWARE_UPDATE_STATE_READY && !s_session_closing,
-        s_upload_started,
-        s_mutation_active, s_restart_requested);
+        s_upload_started, s_mutation_active, false);
     portEXIT_CRITICAL(&s_status_lock);
     return ready;
 }
@@ -414,7 +562,7 @@ static bool begin_regular_mutation(void)
     if (settings_portal_write_is_available(
             s_status.state == FIRMWARE_UPDATE_STATE_READY &&
                 !s_session_closing,
-            s_upload_started, s_mutation_active, s_restart_requested)) {
+            s_upload_started, s_mutation_active, false)) {
         s_mutation_active = true;
         accepted = true;
     }
@@ -449,7 +597,7 @@ static bool begin_upload(size_t total)
     if (settings_portal_write_is_available(
             s_status.state == FIRMWARE_UPDATE_STATE_READY &&
                 !s_session_closing,
-            s_upload_started, s_mutation_active, s_restart_requested)) {
+            s_upload_started, s_mutation_active, false)) {
         s_upload_started = true;
         s_status.state = FIRMWARE_UPDATE_STATE_RECEIVING;
         s_status.received_bytes = 0U;
@@ -495,6 +643,278 @@ static esp_err_t receive_form(httpd_req_t *request, char *body,
     return ESP_OK;
 }
 
+static bool image_filename_is_safe(const char *filename)
+{
+    if (filename == NULL || filename[0] == '\0' || filename[0] == '.') {
+        return false;
+    }
+    size_t length = 0U;
+    while (length < SD_IMAGE_FILENAME_CAPACITY &&
+           filename[length] != '\0') {
+        const char character = filename[length];
+        const bool allowed =
+            (character >= 'A' && character <= 'Z') ||
+            (character >= 'a' && character <= 'z') ||
+            (character >= '0' && character <= '9') ||
+            character == '-' || character == '_' || character == '.';
+        if (!allowed) {
+            return false;
+        }
+        ++length;
+    }
+    return length > 0U && length < SD_IMAGE_FILENAME_CAPACITY;
+}
+
+static bool parse_image_name_form(
+    const char *body, size_t length, bool require_delete_confirmation,
+    char filename[SD_IMAGE_FILENAME_CAPACITY])
+{
+    static const char prefix[] = "name=";
+    static const char delete_suffix[] = "&confirm=DELETE";
+    if (body == NULL || filename == NULL ||
+        length <= sizeof(prefix) - 1U) {
+        return false;
+    }
+
+    size_t suffix_length = 0U;
+    if (require_delete_confirmation) {
+        suffix_length = sizeof(delete_suffix) - 1U;
+        if (length <= sizeof(prefix) - 1U + suffix_length ||
+            memcmp(body + length - suffix_length, delete_suffix,
+                   suffix_length) != 0) {
+            return false;
+        }
+    }
+    const size_t filename_length =
+        length - (sizeof(prefix) - 1U) - suffix_length;
+    if (memcmp(body, prefix, sizeof(prefix) - 1U) != 0 ||
+        filename_length == 0U ||
+        filename_length >= SD_IMAGE_FILENAME_CAPACITY) {
+        return false;
+    }
+    memcpy(filename, body + sizeof(prefix) - 1U, filename_length);
+    filename[filename_length] = '\0';
+    if (!image_filename_is_safe(filename)) {
+        memset(filename, 0, SD_IMAGE_FILENAME_CAPACITY);
+        return false;
+    }
+    return true;
+}
+
+static bool request_image_name(
+    httpd_req_t *request,
+    char filename[SD_IMAGE_FILENAME_CAPACITY])
+{
+    static const char prefix[] = "name=";
+    if (request == NULL || filename == NULL) {
+        return false;
+    }
+    const size_t query_length = httpd_req_get_url_query_len(request);
+    if (query_length <= sizeof(prefix) - 1U ||
+        query_length >= SETTINGS_IMAGE_FORM_CAPACITY) {
+        return false;
+    }
+    char query[SETTINGS_IMAGE_FORM_CAPACITY] = {0};
+    if (httpd_req_get_url_query_str(request, query, sizeof(query)) !=
+        ESP_OK) {
+        return false;
+    }
+    const size_t filename_length = query_length - (sizeof(prefix) - 1U);
+    if (memcmp(query, prefix, sizeof(prefix) - 1U) != 0 ||
+        filename_length == 0U ||
+        filename_length >= SD_IMAGE_FILENAME_CAPACITY) {
+        return false;
+    }
+    memcpy(filename, query + sizeof(prefix) - 1U, filename_length);
+    filename[filename_length] = '\0';
+    if (!image_filename_is_safe(filename)) {
+        memset(filename, 0, SD_IMAGE_FILENAME_CAPACITY);
+        return false;
+    }
+    return true;
+}
+
+static bool cached_image_exists(const char *filename)
+{
+    if (!image_filename_is_safe(filename)) {
+        return false;
+    }
+    const size_t count = sd_image_store_count();
+    for (size_t index = 0U; index < count; ++index) {
+        char candidate[SD_IMAGE_FILENAME_CAPACITY] = {0};
+        if (sd_image_store_filename_at(index, candidate,
+                                       sizeof(candidate)) &&
+            strcmp(candidate, filename) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static esp_err_t image_list_get_handler(httpd_req_t *request)
+{
+    if (!portal_is_ready()) {
+        return send_page(request, "409 Conflict",
+                         "text/plain; charset=utf-8",
+                         "设置会话已关闭。\n");
+    }
+
+    typedef struct {
+        sd_image_catalog_snapshot_t catalog;
+        char json[SETTINGS_IMAGE_LIST_JSON_CAPACITY];
+    } image_list_response_t;
+    image_list_response_t *const response = heap_caps_calloc(
+        1U, sizeof(*response), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (response == NULL) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8",
+                         "设备内存不足，暂时无法读取图片列表。\n");
+    }
+    if (!sd_image_store_catalog_snapshot(&response->catalog)) {
+        heap_caps_free(response);
+        return send_page(request, "500 Internal Server Error",
+                         "text/plain; charset=utf-8",
+                         "图片列表暂不可用。\n");
+    }
+    const size_t count = response->catalog.count;
+    const size_t selected_index = response->catalog.selected_index;
+    size_t length = 0U;
+    int written = snprintf(
+        response->json, sizeof(response->json),
+        "{\"count\":%u,\"selected\":\"%s\",\"images\":[",
+        (unsigned int)count,
+        selected_index < count
+            ? response->catalog.filenames[selected_index]
+            : "");
+    if (written <= 0 || (size_t)written >= sizeof(response->json)) {
+        heap_caps_free(response);
+        return send_page(request, "500 Internal Server Error",
+                         "text/plain; charset=utf-8",
+                         "图片列表暂不可用。\n");
+    }
+    length = (size_t)written;
+    for (size_t index = 0U; index < count; ++index) {
+        const char *const filename = response->catalog.filenames[index];
+        if (!image_filename_is_safe(filename)) {
+            heap_caps_free(response);
+            return send_page(request, "500 Internal Server Error",
+                             "text/plain; charset=utf-8",
+                             "图片列表暂不可用。\n");
+        }
+        written = snprintf(response->json + length,
+                           sizeof(response->json) - length,
+                           "%s\"%s\"", index > 0U ? "," : "",
+                           filename);
+        if (written <= 0 ||
+            (size_t)written >= sizeof(response->json) - length) {
+            heap_caps_free(response);
+            return send_page(request, "500 Internal Server Error",
+                             "text/plain; charset=utf-8",
+                             "图片列表暂不可用。\n");
+        }
+        length += (size_t)written;
+    }
+    written = snprintf(response->json + length,
+                       sizeof(response->json) - length, "]}");
+    if (written != 2) {
+        heap_caps_free(response);
+        return send_page(request, "500 Internal Server Error",
+                         "text/plain; charset=utf-8",
+                         "图片列表暂不可用。\n");
+    }
+    const esp_err_t send_error = send_page(
+        request, "200 OK", "application/json; charset=utf-8",
+        response->json);
+    heap_caps_free(response);
+    return send_error;
+}
+
+static esp_err_t image_preview_get_handler(httpd_req_t *request)
+{
+    if (!portal_is_ready()) {
+        return send_page(request, "409 Conflict",
+                         "text/plain; charset=utf-8",
+                         "设置会话已关闭。\n");
+    }
+    char filename[SD_IMAGE_FILENAME_CAPACITY] = {0};
+    if (!request_image_name(request, filename)) {
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         "图片名称无效。\n");
+    }
+    uint8_t *const bitmap = heap_caps_malloc(
+        MONO_IMAGE_BITMAP_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (bitmap == NULL) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8",
+                         "设备内存不足，暂时无法生成图片预览。\n");
+    }
+    if (sd_image_store_copy_bitmap(
+            filename, bitmap, MONO_IMAGE_BITMAP_BYTES) != ESP_OK) {
+        heap_caps_free(bitmap);
+        return send_page(request, "404 Not Found",
+                         "text/plain; charset=utf-8",
+                         "没有找到这张图片。\n");
+    }
+
+    static const char pbm_header[] = "P4\n400 300\n";
+    httpd_resp_set_status(request, "200 OK");
+    httpd_resp_set_type(request, "image/x-portable-bitmap");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(request, "Content-Disposition",
+                       "inline; filename=preview.pbm");
+    if (httpd_resp_send_chunk(request, pbm_header,
+                              sizeof(pbm_header) - 1U) != ESP_OK) {
+        heap_caps_free(bitmap);
+        return ESP_FAIL;
+    }
+    uint8_t encoded[256];
+    for (size_t offset = 0U; offset < MONO_IMAGE_BITMAP_BYTES;
+         offset += sizeof(encoded)) {
+        const size_t remaining = MONO_IMAGE_BITMAP_BYTES - offset;
+        const size_t chunk_size = remaining < sizeof(encoded)
+                                      ? remaining
+                                      : sizeof(encoded);
+        for (size_t index = 0U; index < chunk_size; ++index) {
+            encoded[index] = (uint8_t)~bitmap[offset + index];
+        }
+        if (httpd_resp_send_chunk(request, (const char *)encoded,
+                                  chunk_size) != ESP_OK) {
+            memset(encoded, 0, sizeof(encoded));
+            heap_caps_free(bitmap);
+            return ESP_FAIL;
+        }
+    }
+    memset(encoded, 0, sizeof(encoded));
+    heap_caps_free(bitmap);
+    return httpd_resp_send_chunk(request, NULL, 0U);
+}
+
+static const char *settings_sd_state(const sd_image_status_t *status)
+{
+    if (status == NULL ||
+        status->state == SD_IMAGE_STATE_NOT_INITIALIZED ||
+        status->state == SD_IMAGE_STATE_LOADING) {
+        return "unknown";
+    }
+    if (status->card_capacity_bytes == 0U) {
+        return "missing";
+    }
+    if (status->catalog_truncated && status->last_io_error == ESP_OK) {
+        return "overflow";
+    }
+    if (status->image_count >= SD_IMAGE_MAX_IMAGES ||
+        status->state == SD_IMAGE_STATE_TOO_MANY_FILES) {
+        return "full";
+    }
+    if (status->catalog_truncated ||
+        status->state == SD_IMAGE_STATE_NO_MEMORY ||
+        status->state == SD_IMAGE_STATE_INTERNAL_ERROR) {
+        return "unavailable";
+    }
+    return "ready";
+}
+
 static esp_err_t settings_state_get_handler(httpd_req_t *request)
 {
     if (!portal_is_ready()) {
@@ -514,12 +934,16 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
     portENTER_CRITICAL(&s_status_lock);
     memcpy(token, s_session_token, sizeof(token));
     portEXIT_CRITICAL(&s_status_lock);
-    char json[384];
+    sd_image_status_t sd_status = {0};
+    sd_image_store_get_status(&sd_status);
+    char json[512];
     const int written = snprintf(
         json, sizeof(json),
         "{\"power\":\"%s\",\"timezone\":%d,\"unit\":\"%s\","
-        "\"volume\":%u,\"updates\":\"%s\",\"alarm\":\"%s\","
+        "\"volume\":%u,\"updates\":\"%s\","
+        "\"alarm\":\"%s\","
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
+        "\"sd_state\":\"%s\",\"image_count\":%u,"
         "\"token\":\"%s\"}",
         settings.power_mode == APP_POWER_MODE_SAVING ? "saving" : "normal",
         settings.utc_offset_minutes,
@@ -532,6 +956,8 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         (unsigned int)settings.alarm_hour,
         (unsigned int)settings.alarm_minute,
         (unsigned int)settings.alarm_weekdays,
+        settings_sd_state(&sd_status),
+        (unsigned int)sd_status.image_count,
         token);
     memset(token, 0, sizeof(token));
     if (written <= 0 || (size_t)written >= sizeof(json)) {
@@ -640,16 +1066,16 @@ static esp_err_t save_settings(
     return ESP_OK;
 }
 
-static esp_err_t finish_restarting_request(httpd_req_t *request,
-                                           const char *message)
+static esp_err_t finish_reprovisioning_request(httpd_req_t *request,
+                                               const char *message)
 {
     const esp_err_t response_error = send_page(
         request, "200 OK", "text/plain; charset=utf-8", message);
     portENTER_CRITICAL(&s_status_lock);
     s_mutation_active = false;
-    s_restart_requested = true;
+    s_session_closing = true;
     portEXIT_CRITICAL(&s_status_lock);
-    xEventGroupSetBits(s_events, UPDATE_EVENT_RESTART_REQUEST);
+    xEventGroupSetBits(s_events, UPDATE_EVENT_REPROVISION);
     return response_error;
 }
 
@@ -688,12 +1114,13 @@ static esp_err_t settings_post_handler(httpd_req_t *request)
             "设置未能完整保存，原设置已尽量恢复。\n");
     }
     if (time_needs_calibration) {
-        return finish_restarting_request(
+        return finish_regular_request(
             request,
-            "设置已保存，但 RTC 未能随时区可靠更新。设备重启后请重新打开设置门户，使用手机时间校准。\n");
+            "200 OK",
+            "设置已保存，但 RTC 未能随时区可靠更新。请使用手机时间校准。\n");
     }
-    return finish_restarting_request(
-        request, "设置已保存，设备即将重启。\n");
+    return finish_regular_request(
+        request, "200 OK", "设置已保存并立即生效。\n");
 }
 
 static esp_err_t time_post_handler(httpd_req_t *request)
@@ -771,12 +1198,13 @@ static esp_err_t defaults_post_handler(httpd_req_t *request)
             "默认设置未能完整恢复，原设置已尽量保留。\n");
     }
     if (time_needs_calibration) {
-        return finish_restarting_request(
+        return finish_regular_request(
             request,
-            "偏好已恢复默认值，但 RTC 未能随默认时区可靠更新。设备重启后请重新打开设置门户，使用手机时间校准。\n");
+            "200 OK",
+            "偏好已恢复默认值，但 RTC 未能随默认时区可靠更新。请使用手机时间校准。\n");
     }
-    return finish_restarting_request(
-        request, "偏好已恢复默认值，设备即将重启。\n");
+    return finish_regular_request(
+        request, "200 OK", "偏好已恢复默认值并立即生效。\n");
 }
 
 static esp_err_t wifi_clear_post_handler(httpd_req_t *request)
@@ -811,8 +1239,265 @@ static esp_err_t wifi_clear_post_handler(httpd_req_t *request)
         return finish_regular_request(request, "500 Internal Server Error",
                                       "Wi-Fi 配置未能清除。\n");
     }
-    return finish_restarting_request(
-        request, "Wi-Fi 配置已清除，设备即将重启并进入配网。\n");
+    return finish_reprovisioning_request(
+        request,
+        "Wi-Fi 配置已清除，设置热点将关闭并切换到配网；设备不会重启。\n");
+}
+
+static esp_err_t image_select_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    char body[SETTINGS_IMAGE_FORM_CAPACITY] = {0};
+    char filename[SD_IMAGE_FILENAME_CAPACITY] = {0};
+    size_t length = 0U;
+    const esp_err_t receive_error = receive_form(
+        request, body, sizeof(body), &length);
+    const bool valid = receive_error == ESP_OK &&
+                       parse_image_name_form(body, length, false,
+                                             filename);
+    memset(body, 0, sizeof(body));
+    if (receive_error == ESP_ERR_TIMEOUT) {
+        return send_deadline_response(request);
+    }
+    if (!valid) {
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         "图片名称无效。\n");
+    }
+    if (!cached_image_exists(filename)) {
+        return send_page(request, "404 Not Found",
+                         "text/plain; charset=utf-8",
+                         "没有找到这张图片，请刷新列表。\n");
+    }
+    if (!begin_regular_mutation()) {
+        return send_mutation_unavailable(request);
+    }
+
+    const esp_err_t error = sd_image_store_select_preferred(filename);
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "could not select microSD image %s: %s",
+                 filename, esp_err_to_name(error));
+        return finish_regular_request(
+            request, "500 Internal Server Error",
+            "图片未能设为当前，请重试。\n");
+    }
+    ESP_LOGI(TAG, "microSD image selected from settings: %s", filename);
+    return finish_regular_request(
+        request, "200 OK", "已设为当前图片并保存。\n");
+}
+
+static esp_err_t image_delete_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    char body[SETTINGS_IMAGE_FORM_CAPACITY] = {0};
+    char filename[SD_IMAGE_FILENAME_CAPACITY] = {0};
+    size_t length = 0U;
+    const esp_err_t receive_error = receive_form(
+        request, body, sizeof(body), &length);
+    const bool valid = receive_error == ESP_OK &&
+                       parse_image_name_form(body, length, true,
+                                             filename);
+    memset(body, 0, sizeof(body));
+    if (receive_error == ESP_ERR_TIMEOUT) {
+        return send_deadline_response(request);
+    }
+    if (!valid) {
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         "删除图片需要重新确认，并使用列表中的精确名称。\n");
+    }
+    if (!cached_image_exists(filename)) {
+        return send_page(request, "404 Not Found",
+                         "text/plain; charset=utf-8",
+                         "图片已不存在，请刷新列表。\n");
+    }
+    if (!begin_regular_mutation()) {
+        return send_mutation_unavailable(request);
+    }
+
+    const esp_err_t error = sd_image_store_delete(filename);
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "could not delete microSD image %s: %s",
+                 filename, esp_err_to_name(error));
+        if (error == ESP_ERR_NOT_FOUND) {
+            return finish_regular_request(
+                request, "404 Not Found",
+                "图片已不存在，请刷新列表。\n");
+        }
+        if (error == ESP_ERR_INVALID_ARG) {
+            return finish_regular_request(
+                request, "400 Bad Request", "图片名称无效。\n");
+        }
+        return finish_regular_request(
+            request, "409 Conflict",
+            "microSD 当前无法删除图片，原有图片仍可使用。\n");
+    }
+    ESP_LOGI(TAG, "microSD image deleted from settings: %s", filename);
+    return finish_regular_request(
+        request, "200 OK", "图片已删除，设备无需重启。\n");
+}
+
+static esp_err_t image_upload_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    const size_t total = request->content_len > 0
+                             ? (size_t)request->content_len
+                             : 0U;
+    if (total != SETTINGS_IMAGE_UPLOAD_BYTES) {
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         "图片数据无效，请重新生成黑白预览后上传。\n");
+    }
+    if (!begin_regular_mutation()) {
+        return send_mutation_unavailable(request);
+    }
+
+    const sd_image_import_options_t options = {
+        .expected_size = total,
+        .verify_sha256 = false,
+    };
+    sd_image_import_t *import = NULL;
+    esp_err_t error = sd_image_import_begin(&options, &import);
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "microSD image import unavailable: %s",
+                 esp_err_to_name(error));
+        return finish_regular_request(
+            request, "409 Conflict",
+            "microSD 当前不可写。请确认使用 FAT32，并在关机状态下重新插卡。\n");
+    }
+    bool import_open = true;
+    uint8_t *buffer = malloc(UPDATE_HTTP_BUFFER_SIZE);
+    if (buffer == NULL) {
+        error = ESP_ERR_NO_MEM;
+        goto failed;
+    }
+    size_t received_total = 0U;
+    while (received_total < total) {
+        const size_t remaining = total - received_total;
+        const size_t chunk_size = remaining < UPDATE_HTTP_BUFFER_SIZE
+                                      ? remaining
+                                      : UPDATE_HTTP_BUFFER_SIZE;
+        size_t chunk_received = 0U;
+        error = receive_exact(request, buffer, chunk_size,
+                              &chunk_received);
+        if (error != ESP_OK) {
+            break;
+        }
+        error = sd_image_import_write(import, buffer, chunk_received);
+        if (error != ESP_OK) {
+            break;
+        }
+        received_total += chunk_received;
+    }
+    free(buffer);
+    buffer = NULL;
+    if (error == ESP_OK && received_total != total) {
+        error = ESP_ERR_INVALID_SIZE;
+    }
+    sd_image_import_result_t result = {0};
+    if (error == ESP_OK) {
+        error = sd_image_import_commit(import, &result);
+        import_open = false;
+    }
+    if (error != ESP_OK) {
+        goto failed;
+    }
+
+    ESP_LOGI(TAG, "phone image %s: %s",
+             result.duplicate ? "already present" : "installed",
+             result.filename);
+    const esp_err_t preferred_error =
+        sd_image_store_select_preferred(result.filename);
+    if (preferred_error != ESP_OK) {
+        ESP_LOGW(TAG, "could not remember preferred image: %s",
+                 esp_err_to_name(preferred_error));
+    }
+    return finish_regular_request(
+        request, "200 OK",
+        preferred_error != ESP_OK
+            ? "图片已写入 microSD，但未能保存为当前图片；请在图片管理中重试。\n"
+            : result.duplicate
+                  ? "这张图片已经在 microSD 中，现已选中。\n"
+                  : "图片已校验并写入 microSD，可以立即查看。\n");
+
+failed:
+    free(buffer);
+    if (import_open) {
+        (void)sd_image_import_abort(import);
+    }
+    ESP_LOGW(TAG, "phone image import failed: %s",
+             esp_err_to_name(error));
+    return finish_regular_request(
+        request,
+        error == ESP_ERR_TIMEOUT ? "408 Request Timeout"
+                                 : "400 Bad Request",
+        error == ESP_ERR_TIMEOUT
+            ? "设置会话已到期，未完成的图片已丢弃。\n"
+            : "图片校验或写入失败，原有图片未受影响。\n");
+}
+
+static esp_err_t starter_gallery_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    char body[SETTINGS_PORTAL_SMALL_FORM_CAPACITY] = {0};
+    size_t length = 0U;
+    const esp_err_t receive_error = receive_form(
+        request, body, sizeof(body), &length);
+    const bool confirmed = receive_error == ESP_OK &&
+                           settings_portal_confirmation_matches(
+                               body, length, "STARTER");
+    memset(body, 0, sizeof(body));
+    if (receive_error == ESP_ERR_TIMEOUT) {
+        return send_deadline_response(request);
+    }
+    if (!confirmed) {
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         "安装演示图集需要重新确认。\n");
+    }
+
+    sd_image_status_t sd_status = {0};
+    sd_image_store_get_status(&sd_status);
+    const char *sd_state = settings_sd_state(&sd_status);
+    if (strcmp(sd_state, "ready") != 0) {
+        return send_page(request, "409 Conflict",
+                         "text/plain; charset=utf-8",
+                         strcmp(sd_state, "full") == 0 ||
+                                 strcmp(sd_state, "overflow") == 0
+                             ? "microSD 图片数量已达到或超过 32 张上限，请先删除不需要的图片。\n"
+                             : "microSD 当前不可用，请关机检查存储卡。\n");
+    }
+    network_time_status_t network_status = {0};
+    if (network_time_get_status(&network_status) != ESP_OK ||
+        !network_status.configured) {
+        return send_page(request, "409 Conflict",
+                         "text/plain; charset=utf-8",
+                         "请先完成 Wi-Fi 配置，再安装演示图集。\n");
+    }
+    if (!begin_regular_mutation()) {
+        return send_mutation_unavailable(request);
+    }
+
+    const esp_err_t response_error = send_page(
+        request, "200 OK", "text/plain; charset=utf-8",
+        "请求已接收。设置热点即将关闭，请查看设备屏幕。\n");
+    /* Keep the mutation owned until update_task consumes this terminal event.
+     * A concurrent fixed-deadline cleanup will therefore wait for the gallery
+     * bit instead of observing an artificial idle gap. The next portal start
+     * resets the mutation state together with the rest of the session. */
+    portENTER_CRITICAL(&s_status_lock);
+    s_session_closing = true;
+    portEXIT_CRITICAL(&s_status_lock);
+    xEventGroupSetBits(s_events, UPDATE_EVENT_GALLERY_INSTALL);
+    return response_error;
 }
 
 static esp_err_t update_post_handler(httpd_req_t *request)
@@ -990,7 +1675,7 @@ static esp_err_t start_web_server(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192U;
-    config.max_uri_handlers = 10U;
+    config.max_uri_handlers = 16U;
     config.max_open_sockets = 2U;
     config.recv_wait_timeout = 15U;
     config.lru_purge_enable = true;
@@ -1029,6 +1714,36 @@ static esp_err_t start_web_server(void)
         .method = HTTP_POST,
         .handler = wifi_clear_post_handler,
     };
+    const httpd_uri_t image_list_uri = {
+        .uri = "/api/images",
+        .method = HTTP_GET,
+        .handler = image_list_get_handler,
+    };
+    const httpd_uri_t image_preview_uri = {
+        .uri = "/api/images/preview",
+        .method = HTTP_GET,
+        .handler = image_preview_get_handler,
+    };
+    const httpd_uri_t image_select_uri = {
+        .uri = "/api/images/select",
+        .method = HTTP_POST,
+        .handler = image_select_post_handler,
+    };
+    const httpd_uri_t image_delete_uri = {
+        .uri = "/api/images/delete",
+        .method = HTTP_POST,
+        .handler = image_delete_post_handler,
+    };
+    const httpd_uri_t image_upload_uri = {
+        .uri = "/api/images/upload",
+        .method = HTTP_POST,
+        .handler = image_upload_post_handler,
+    };
+    const httpd_uri_t starter_gallery_uri = {
+        .uri = "/api/images/starter",
+        .method = HTTP_POST,
+        .handler = starter_gallery_post_handler,
+    };
     const httpd_uri_t update_uri = {
         .uri = "/update",
         .method = HTTP_POST,
@@ -1049,6 +1764,30 @@ static esp_err_t start_web_server(void)
     }
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &wifi_clear_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &image_list_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &image_preview_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &image_select_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &image_delete_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &image_upload_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &starter_gallery_uri);
     }
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &update_uri);
@@ -1206,10 +1945,14 @@ static EventBits_t finish_active_request_after_timeout(void)
     portEXIT_CRITICAL(&s_status_lock);
     xEventGroupClearBits(s_events, UPDATE_EVENT_MUTATION_ENDED);
 
+    const EventBits_t pending_session_bits =
+        xEventGroupGetBits(s_events) & UPDATE_EVENT_SESSION;
+    if (pending_session_bits != 0U) {
+        return pending_session_bits;
+    }
+
     portENTER_CRITICAL(&s_status_lock);
-    if (s_restart_requested) {
-        terminal_bits = UPDATE_EVENT_RESTART_REQUEST;
-    } else if (s_status.state == FIRMWARE_UPDATE_STATE_SUCCESS) {
+    if (s_status.state == FIRMWARE_UPDATE_STATE_SUCCESS) {
         terminal_bits = UPDATE_EVENT_COMPLETE;
     } else if (s_status.state == FIRMWARE_UPDATE_STATE_FAILED ||
                s_status.state == FIRMWARE_UPDATE_STATE_EXPIRED) {
@@ -1218,7 +1961,7 @@ static EventBits_t finish_active_request_after_timeout(void)
         terminal_bits = UPDATE_EVENT_CANCEL;
     }
     action = settings_portal_timeout_action(
-        s_upload_started, s_mutation_active, s_restart_requested);
+        s_upload_started, s_mutation_active, false);
     if (action == SETTINGS_PORTAL_TIMEOUT_EXPIRE &&
         terminal_bits == 0U &&
         s_status.state == FIRMWARE_UPDATE_STATE_READY) {
@@ -1230,16 +1973,13 @@ static EventBits_t finish_active_request_after_timeout(void)
     if (terminal_bits != 0U) {
         return terminal_bits;
     }
-    if (action == SETTINGS_PORTAL_TIMEOUT_RESTART) {
-        return UPDATE_EVENT_RESTART_REQUEST;
-    }
-
     EventBits_t wait_for = 0U;
     if (action == SETTINGS_PORTAL_TIMEOUT_WAIT_FOR_UPLOAD) {
         wait_for = UPDATE_EVENT_COMPLETE | UPDATE_EVENT_FAILED;
     } else if (action == SETTINGS_PORTAL_TIMEOUT_WAIT_FOR_MUTATION) {
         wait_for = UPDATE_EVENT_MUTATION_ENDED |
-                   UPDATE_EVENT_RESTART_REQUEST;
+                   UPDATE_EVENT_REPROVISION |
+                   UPDATE_EVENT_GALLERY_INSTALL;
     }
     if (wait_for == 0U) {
         return 0U;
@@ -1281,17 +2021,40 @@ static void update_task(void *argument)
     if (bits == 0U) {
         bits = finish_active_request_after_timeout();
     }
+    if ((bits & UPDATE_EVENT_GALLERY_INSTALL) != 0U) {
+        vTaskDelay(pdMS_TO_TICKS(UPDATE_SERVER_STOP_DELAY_MS));
+        stop_web_server();
+        (void)stop_update_ap();
+        set_state(FIRMWARE_UPDATE_STATE_IDLE, ESP_OK);
+        const esp_err_t gallery_error = gallery_download_start();
+        if (gallery_error != ESP_OK) {
+            network_time_end_maintenance();
+            ESP_LOGW(TAG, "could not start gallery installation: %s",
+                     esp_err_to_name(gallery_error));
+        }
+        vTaskDelete(NULL);
+        return;
+    }
+    if ((bits & UPDATE_EVENT_REPROVISION) != 0U) {
+        vTaskDelay(pdMS_TO_TICKS(UPDATE_SERVER_STOP_DELAY_MS));
+        stop_web_server();
+        (void)stop_update_ap();
+        set_state(FIRMWARE_UPDATE_STATE_IDLE, ESP_OK);
+        const esp_err_t reprovision_error =
+            network_time_end_maintenance_and_request_provisioning();
+        if (reprovision_error != ESP_OK) {
+            network_time_end_maintenance();
+            ESP_LOGW(TAG, "could not enter provisioning mode: %s",
+                     esp_err_to_name(reprovision_error));
+        }
+        vTaskDelete(NULL);
+        return;
+    }
     if ((bits & UPDATE_EVENT_COMPLETE) != 0U) {
         ESP_LOGI(TAG, "firmware image verified; restarting into new OTA slot");
         vTaskDelay(pdMS_TO_TICKS(UPDATE_RESTART_DELAY_MS));
         esp_restart();
     }
-    if ((bits & UPDATE_EVENT_RESTART_REQUEST) != 0U) {
-        ESP_LOGI(TAG, "settings operation complete; restarting");
-        vTaskDelay(pdMS_TO_TICKS(UPDATE_RESTART_DELAY_MS));
-        esp_restart();
-    }
-
     if ((bits & UPDATE_EVENT_FAILED) != 0U) {
         vTaskDelay(pdMS_TO_TICKS(UPDATE_SERVER_STOP_DELAY_MS));
     } else if ((bits & UPDATE_EVENT_CANCEL) != 0U) {
@@ -1373,7 +2136,7 @@ esp_err_t firmware_update_cancel(void)
 {
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (!s_session_closing && !s_restart_requested && !s_mutation_active &&
+    if (!s_session_closing && !s_mutation_active &&
         (s_status.state == FIRMWARE_UPDATE_STATE_STARTING ||
          s_status.state == FIRMWARE_UPDATE_STATE_READY)) {
         s_status.state = FIRMWARE_UPDATE_STATE_CANCELLED;

@@ -52,11 +52,19 @@ esp_err_t network_time_init(bool automatic_sync_enabled);
 esp_err_t network_time_get_status(network_time_status_t *status);
 bool network_time_take_datetime(network_time_datetime_t *datetime);
 esp_err_t network_time_request_sync(void);
+esp_err_t network_time_set_automatic_sync_enabled(bool enabled);
 esp_err_t network_time_clear_credentials(void);
+/* Wake an idle network task after credentials were cleared without maintenance. */
+esp_err_t network_time_request_provisioning(void);
 esp_err_t network_time_begin_maintenance(void);
 void network_time_end_maintenance(void);
+/* Release maintenance directly to the network task after its portal/AP stopped. */
+esp_err_t network_time_end_maintenance_and_request_provisioning(void);
 /* Acquire an exclusive STA session and return only after IPv4 is ready. */
 esp_err_t network_time_begin_online_session(uint32_t timeout_ms);
+/* Atomically hand an active settings-maintenance session to an online task. */
+esp_err_t network_time_begin_online_session_from_maintenance(
+    uint32_t timeout_ms);
 /* End a successful online session; calling it again after release is harmless. */
 esp_err_t network_time_end_online_session(void);
 const char *network_time_state_name(network_time_state_t state);

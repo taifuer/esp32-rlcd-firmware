@@ -19,8 +19,14 @@ static char ascii_lower(char character)
     return character;
 }
 
-static int name_compare(const char *left, const char *right)
+int sd_image_catalog_compare_names(const char *left, const char *right)
 {
+    if (left == NULL || right == NULL) {
+        if (left == right) {
+            return 0;
+        }
+        return left == NULL ? -1 : 1;
+    }
     size_t index = 0U;
     while (left[index] != '\0' && right[index] != '\0') {
         const unsigned char folded_left =
@@ -121,7 +127,8 @@ void sd_image_catalog_sort(sd_image_catalog_t *catalog)
         memcpy(current, catalog->names[index], sizeof(current));
         size_t position = index;
         while (position > 0U &&
-               name_compare(current, catalog->names[position - 1U]) < 0) {
+               sd_image_catalog_compare_names(
+                   current, catalog->names[position - 1U]) < 0) {
             memcpy(catalog->names[position],
                    catalog->names[position - 1U],
                    sizeof(catalog->names[position]));

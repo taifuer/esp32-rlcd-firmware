@@ -28,6 +28,7 @@
 #include "firmware_update.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "gallery_download.h"
 #include "network_time.h"
 #include "network_screen_policy.h"
 #include "online_firmware_update.h"
@@ -59,6 +60,7 @@ typedef enum {
     APP_DISPLAY_FIRMWARE_UPDATE_RECEIVING,
     APP_DISPLAY_FIRMWARE_UPDATE_VERIFYING,
     APP_DISPLAY_FIRMWARE_UPDATE_RESULT,
+    APP_DISPLAY_GALLERY_DOWNLOAD,
 } app_display_mode_t;
 
 typedef enum {
@@ -74,6 +76,7 @@ enum {
     APP_PERIODIC_UPDATE_MS = 1000,
     APP_MANUAL_SYNC_RESULT_MS = 2000,
     APP_FIRMWARE_UPDATE_RESULT_MS = 2500,
+    APP_GALLERY_RESULT_MS = 3000,
     APP_OTA_CONFIRM_DELAY_MS = 5000,
 };
 
@@ -427,6 +430,12 @@ void app_main(void)
     ESP_LOGI(TAG, "PSRAM available: %u KiB", (unsigned)(psram_bytes / 1024U));
     ESP_LOGI(TAG, "dashboard with SoftAP provisioning, NVS Wi-Fi settings, and SNTP RTC sync");
 
+    uint8_t *const image_bitmap_snapshot = heap_caps_malloc(
+        MONO_IMAGE_BITMAP_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (image_bitmap_snapshot == NULL) {
+        ESP_LOGW(TAG, "microSD image display snapshot unavailable");
+    }
+
     const bool display_ready = display_init() == ESP_OK;
     if (display_ready) {
         display_show_status("RLCD FIRMWARE", "Starting dashboard");
@@ -442,14 +451,22 @@ void app_main(void)
 
     app_settings_t settings;
     app_settings_defaults(&settings);
+    uint32_t settings_generation = 0U;
     esp_err_t settings_error = storage_error == ESP_OK
                                    ? app_settings_init()
                                    : storage_error;
-    if ((settings_error == ESP_OK ||
-         settings_error == ESP_ERR_NOT_SUPPORTED) &&
-        app_settings_get(&settings) != ESP_OK) {
-        app_settings_defaults(&settings);
-        settings_error = ESP_FAIL;
+    if (settings_error == ESP_OK ||
+        settings_error == ESP_ERR_NOT_SUPPORTED) {
+        app_settings_snapshot_t snapshot = {0};
+        const esp_err_t snapshot_error =
+            app_settings_get_snapshot(&snapshot);
+        if (snapshot_error == ESP_OK) {
+            settings = snapshot.settings;
+            settings_generation = snapshot.generation;
+        } else {
+            app_settings_defaults(&settings);
+            settings_error = snapshot_error;
+        }
     }
     if (settings_error != ESP_OK) {
         ESP_LOGW(TAG, "using safe settings defaults: %s",
@@ -587,6 +604,11 @@ void app_main(void)
                  esp_err_to_name(usb_commands_error));
     }
 
+    const esp_err_t gallery_error = gallery_download_init();
+    if (gallery_error != ESP_OK) {
+        ESP_LOGW(TAG, "gallery service unavailable: %s",
+                 esp_err_to_name(gallery_error));
+    }
     const esp_err_t firmware_update_error = firmware_update_init();
     if (firmware_update_error != ESP_OK) {
         ESP_LOGW(TAG, "firmware update service unavailable: %s",
@@ -625,6 +647,8 @@ void app_main(void)
     (void)firmware_update_get_status(&firmware_update_status);
     online_firmware_update_status_t online_update_status = {0};
     (void)online_firmware_update_get_status(&online_update_status);
+    gallery_download_status_t gallery_status = {0};
+    (void)gallery_download_get_status(&gallery_status);
     button_state_t key_button_state;
     button_state_t boot_button_state;
     button_state_init_custom(&key_button_state,
@@ -646,10 +670,13 @@ void app_main(void)
     sd_image_store_get_status(&initial_sd_image_status);
     app_page_state_set_image_available(
         &page_state,
-        initial_sd_image_status.state == SD_IMAGE_STATE_READY);
+        image_bitmap_snapshot != NULL &&
+            initial_sd_image_status.state == SD_IMAGE_STATE_READY);
     sd_image_state_t previous_sd_image_state =
         initial_sd_image_status.state;
-    const alarm_schedule_t alarm_schedule =
+    uint32_t previous_sd_image_revision =
+        initial_sd_image_status.revision;
+    alarm_schedule_t alarm_schedule =
         alarm_schedule_from_settings(&settings);
     alarm_scheduler_t alarm_scheduler;
     alarm_scheduler_init(&alarm_scheduler);
@@ -681,6 +708,7 @@ void app_main(void)
     uint32_t rtc_read_wait_ms = 0U;
     TickType_t manual_sync_ui_started = initial_tick;
     TickType_t firmware_update_result_started = initial_tick;
+    TickType_t gallery_result_started = initial_tick;
     network_time_state_t previous_network_state = NETWORK_TIME_STATE_UNINITIALIZED;
     network_time_state_t previous_manual_sync_network_state =
         NETWORK_TIME_STATE_UNINITIALIZED;
@@ -698,6 +726,9 @@ void app_main(void)
     online_update_state_t previous_online_update_state =
         ONLINE_UPDATE_STATE_IDLE;
     uint8_t previous_online_update_percent = 0U;
+    gallery_download_state_t previous_gallery_state =
+        GALLERY_DOWNLOAD_STATE_IDLE;
+    uint8_t previous_gallery_percent = 0U;
     bool automatic_update_check_pending = false;
     uint32_t cycle = 0;
 
@@ -713,14 +744,30 @@ void app_main(void)
         bool online_update_data_changed = false;
         sd_image_status_t latest_sd_image_status = {0};
         sd_image_store_get_status(&latest_sd_image_status);
-        if (latest_sd_image_status.state != previous_sd_image_state) {
+        if (latest_sd_image_status.state != previous_sd_image_state ||
+            latest_sd_image_status.revision !=
+                previous_sd_image_revision) {
             const bool image_ready =
+                image_bitmap_snapshot != NULL &&
                 latest_sd_image_status.state == SD_IMAGE_STATE_READY;
             app_page_state_set_image_available(&page_state, image_ready);
+            const bool state_changed =
+                latest_sd_image_status.state != previous_sd_image_state;
             previous_sd_image_state = latest_sd_image_status.state;
+            previous_sd_image_revision =
+                latest_sd_image_status.revision;
             render_requested = true;
-            ESP_LOGI(TAG, "microSD image state changed: %s",
-                     sd_image_state_name(latest_sd_image_status.state));
+            if (state_changed) {
+                ESP_LOGI(TAG, "microSD image state changed: %s",
+                         sd_image_state_name(
+                             latest_sd_image_status.state));
+            } else {
+                ESP_LOGI(TAG,
+                         "microSD image cache changed: revision=%u, "
+                         "images=%u",
+                         (unsigned)latest_sd_image_status.revision,
+                         (unsigned)latest_sd_image_status.image_count);
+            }
         }
         audio_diagnostics_status_t latest_audio_status = {0};
         audio_diagnostics_get_status(&latest_audio_status);
@@ -755,6 +802,31 @@ void app_main(void)
         bool firmware_update_ui_active =
             firmware_update_status.state != FIRMWARE_UPDATE_STATE_IDLE;
 
+        (void)gallery_download_get_status(&gallery_status);
+        if (gallery_status.state != previous_gallery_state ||
+            gallery_status.percent != previous_gallery_percent) {
+            if ((gallery_status.state == GALLERY_DOWNLOAD_STATE_FAILED ||
+                 gallery_status.state == GALLERY_DOWNLOAD_STATE_SUCCESS) &&
+                gallery_status.state != previous_gallery_state) {
+                gallery_result_started = now;
+            }
+            previous_gallery_state = gallery_status.state;
+            previous_gallery_percent = gallery_status.percent;
+            render_requested = true;
+        }
+        if ((gallery_status.state == GALLERY_DOWNLOAD_STATE_FAILED ||
+             gallery_status.state == GALLERY_DOWNLOAD_STATE_SUCCESS) &&
+            now - gallery_result_started >=
+                pdMS_TO_TICKS(APP_GALLERY_RESULT_MS)) {
+            (void)gallery_download_dismiss_result();
+            (void)gallery_download_get_status(&gallery_status);
+            previous_gallery_state = gallery_status.state;
+            previous_gallery_percent = gallery_status.percent;
+            render_requested = true;
+        }
+        const bool gallery_download_ui_active =
+            gallery_download_state_is_active(gallery_status.state);
+
         (void)online_firmware_update_get_status(&online_update_status);
         if (online_update_status.state != previous_online_update_state ||
             online_update_status.percent != previous_online_update_percent) {
@@ -775,7 +847,83 @@ void app_main(void)
             first_periodic_update ||
             now - last_periodic_update >=
                 pdMS_TO_TICKS(APP_PERIODIC_UPDATE_MS);
+        bool runtime_settings_changed = false;
+        if (periodic_update &&
+            (settings_error == ESP_OK ||
+             settings_error == ESP_ERR_NOT_SUPPORTED)) {
+            app_settings_snapshot_t snapshot = {0};
+            const esp_err_t snapshot_error =
+                app_settings_get_snapshot(&snapshot);
+            if (snapshot_error == ESP_OK &&
+                snapshot.generation != settings_generation) {
+                app_power_policy_t next_power_policy = {0};
+                esp_err_t apply_error =
+                    app_power_policy_for_mode(
+                        snapshot.settings.power_mode,
+                        &next_power_policy)
+                        ? ESP_OK
+                        : ESP_ERR_INVALID_ARG;
+                if (apply_error == ESP_OK &&
+                    snapshot.settings.audio_playback_volume !=
+                        settings.audio_playback_volume) {
+                    apply_error =
+                        audio_diagnostics_set_playback_volume(
+                            snapshot.settings.audio_playback_volume);
+                }
+                if (apply_error == ESP_OK &&
+                    snapshot.settings.utc_offset_minutes !=
+                        settings.utc_offset_minutes) {
+                    apply_error = app_settings_apply_timezone(
+                        &snapshot.settings);
+                }
+                if (apply_error == ESP_OK && network_error == ESP_OK &&
+                    next_power_policy.automatic_network !=
+                        power_policy.automatic_network) {
+                    apply_error =
+                        network_time_set_automatic_sync_enabled(
+                            next_power_policy.automatic_network);
+                }
+                if (apply_error == ESP_OK &&
+                    online_update_error == ESP_OK &&
+                    snapshot.settings.update_channel !=
+                        settings.update_channel) {
+                    apply_error =
+                        online_firmware_update_set_beta_channel(
+                            snapshot.settings.update_channel ==
+                            APP_UPDATE_CHANNEL_BETA);
+                }
 
+                if (apply_error == ESP_OK) {
+                    settings = snapshot.settings;
+                    settings_generation = snapshot.generation;
+                    power_policy = next_power_policy;
+                    alarm_schedule =
+                        alarm_schedule_from_settings(&settings);
+                    dashboard.show_seconds = power_policy.show_seconds;
+                    dashboard.temperature_fahrenheit =
+                        settings.temperature_unit ==
+                        APP_TEMPERATURE_UNIT_FAHRENHEIT;
+                    rtc_read_wait_ms = 0U;
+                    runtime_settings_changed = true;
+                    dashboard_data_changed = true;
+                    calendar_data_changed = true;
+                    system_status_data_changed = true;
+                    online_update_data_changed = true;
+                    render_requested = true;
+                    ESP_LOGI(TAG,
+                             "saved settings applied without restart "
+                             "(generation=%u)",
+                             (unsigned)settings_generation);
+                } else if (apply_error != ESP_ERR_INVALID_STATE) {
+                    ESP_LOGW(TAG,
+                             "saved settings are pending runtime apply: %s",
+                             esp_err_to_name(apply_error));
+                }
+            } else if (snapshot_error != ESP_OK) {
+                ESP_LOGW(TAG, "could not refresh saved settings: %s",
+                         esp_err_to_name(snapshot_error));
+            }
+        }
         button_event_t key_event = BUTTON_EVENT_NONE;
         button_event_t boot_event = BUTTON_EVENT_NONE;
         bool key_pressed = false;
@@ -972,6 +1120,14 @@ void app_main(void)
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
         }
+        if (gallery_download_ui_active) {
+            if (key_event != BUTTON_EVENT_NONE ||
+                boot_event != BUTTON_EVENT_NONE) {
+                app_page_state_note_activity(&page_state);
+            }
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
+        }
         if (key_event == BUTTON_EVENT_SHORT_PRESS) {
             if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                 !firmware_update_ui_active &&
@@ -981,13 +1137,50 @@ void app_main(void)
                 if (previous_display_mode == APP_DISPLAY_NETWORK_SETUP) {
                     setup_screen_dismissed = true;
                 }
-                app_page_state_key_short_press(&page_state);
-                if (app_page_state_current(&page_state) == APP_PAGE_STATUS) {
-                    status_refresh_pending = true;
+                const bool image_next_available =
+                    input_page == APP_PAGE_IMAGE &&
+                    previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
+                    latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
+                    latest_sd_image_status.image_count > 1U;
+                if (image_next_available) {
+                    const size_t current_image =
+                        sd_image_store_selected_index();
+                    const size_t selected_image =
+                        current_image <
+                                latest_sd_image_status.image_count - 1U
+                            ? current_image + 1U
+                            : 0U;
+                    char selected_filename[SD_IMAGE_FILENAME_CAPACITY] = {0};
+                    const bool target_available = sd_image_store_filename_at(
+                        selected_image, selected_filename,
+                        sizeof(selected_filename));
+                    const esp_err_t preferred_error = target_available
+                        ? sd_image_store_select_preferred(selected_filename)
+                        : ESP_ERR_NOT_FOUND;
+                    if (preferred_error == ESP_OK) {
+                        ESP_LOGI(TAG,
+                                 "KEY short press: image selected %u/%u",
+                                 (unsigned)(selected_image + 1U),
+                                 (unsigned)
+                                     latest_sd_image_status.image_count);
+                    } else {
+                        ESP_LOGW(TAG,
+                                 "KEY short press: next image could not be "
+                                 "selected: %s",
+                                 esp_err_to_name(preferred_error));
+                    }
+                    app_page_state_note_activity(&page_state);
+                } else {
+                    app_page_state_key_short_press(&page_state);
+                    if (app_page_state_current(&page_state) ==
+                        APP_PAGE_STATUS) {
+                        status_refresh_pending = true;
+                    }
+                    ESP_LOGI(TAG, "KEY short press: showing %s page",
+                             page_name(
+                                 app_page_state_current(&page_state)));
                 }
                 render_requested = true;
-                ESP_LOGI(TAG, "KEY short press: showing %s page",
-                         page_name(app_page_state_current(&page_state)));
             }
         } else if (key_event == BUTTON_EVENT_HOLD_CANCELLED) {
             app_page_state_note_activity(&page_state);
@@ -1150,7 +1343,8 @@ void app_main(void)
             buttons_ready &&
             input_page == APP_PAGE_SETTINGS &&
             manual_sync_ui == MANUAL_SYNC_UI_NONE &&
-            !firmware_update_ui_active && !online_update_busy &&
+            !firmware_update_ui_active && !gallery_download_ui_active &&
+            !online_update_busy &&
             !online_update_confirmation_active &&
             button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
             button_hold_ms < APP_PAGE_SETTINGS_HOLD_MS;
@@ -1178,6 +1372,7 @@ void app_main(void)
         }
         if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
             !settings_portal_prompt_active && !firmware_update_ui_active &&
+            !gallery_download_ui_active &&
             !(input_page == APP_PAGE_ONLINE_UPDATE &&
               (online_update_busy ||
                online_update_confirmation_active)) &&
@@ -1211,15 +1406,18 @@ void app_main(void)
                 app_page_state_current(&page_state) == APP_PAGE_STATUS &&
                 status_refresh_pending;
             const bool rtc_read_due =
-                first_update || status_page_needs_fresh_data ||
+                first_update || runtime_settings_changed ||
+                status_page_needs_fresh_data ||
                 now - last_rtc_read >=
                     pdMS_TO_TICKS(rtc_read_wait_ms);
             const bool sensor_read_due =
-                first_update || status_page_needs_fresh_data ||
+                first_update || runtime_settings_changed ||
+                status_page_needs_fresh_data ||
                 now - last_sensor_read >=
                     pdMS_TO_TICKS(power_policy.sensor_read_interval_ms);
             const bool battery_read_due =
-                first_update || status_page_needs_fresh_data ||
+                first_update || runtime_settings_changed ||
+                status_page_needs_fresh_data ||
                 now - last_battery_read >=
                     pdMS_TO_TICKS(power_policy.battery_read_interval_ms);
 
@@ -1303,7 +1501,8 @@ void app_main(void)
             }
 
             if (sensor_driver_ready && sensor_read_due &&
-                !firmware_update_ui_active) {
+                !firmware_update_ui_active &&
+                !gallery_download_ui_active) {
                 last_sensor_read = now;
                 const esp_err_t error = shtc3_read(&measurement);
                 if (error == ESP_OK) {
@@ -1422,7 +1621,8 @@ void app_main(void)
         if (automatic_update_check_pending &&
             online_update_error == ESP_OK &&
             network_status.state == NETWORK_TIME_STATE_SYNCHRONIZED &&
-            !firmware_update_ui_active && !online_update_busy &&
+            !firmware_update_ui_active && !gallery_download_ui_active &&
+            !online_update_busy &&
             !online_update_confirmation_active) {
             if (online_update_status.state == ONLINE_UPDATE_STATE_AVAILABLE) {
                 automatic_update_check_pending = false;
@@ -1466,6 +1666,46 @@ void app_main(void)
             }
             previous_display_mode = APP_DISPLAY_SETTINGS_PORTAL_PROMPT;
             previous_portal_seconds = portal_seconds_remaining;
+        } else if (display_ready && gallery_download_ui_active) {
+            if (render_requested ||
+                previous_display_mode != APP_DISPLAY_GALLERY_DOWNLOAD) {
+                if (gallery_status.state ==
+                    GALLERY_DOWNLOAD_STATE_CONNECTING) {
+                    display_show_status("INSTALL GALLERY",
+                                        "Connecting to saved Wi-Fi");
+                } else if (gallery_status.state ==
+                           GALLERY_DOWNLOAD_STATE_FETCHING_CATALOG) {
+                    display_show_status("INSTALL GALLERY",
+                                        "Checking starter pack");
+                } else if (gallery_status.state ==
+                           GALLERY_DOWNLOAD_STATE_DOWNLOADING) {
+                    char detail[64];
+                    snprintf(detail, sizeof(detail),
+                             "IMAGE %u/%u | %u%%",
+                             (unsigned)gallery_status.image_index,
+                             (unsigned)gallery_status.image_count,
+                             gallery_status.percent);
+                    display_show_status("DOWNLOADING IMAGES", detail);
+                } else if (gallery_status.state ==
+                           GALLERY_DOWNLOAD_STATE_VERIFYING) {
+                    char detail[48];
+                    snprintf(detail, sizeof(detail), "Checking image %u/%u",
+                             (unsigned)gallery_status.image_index,
+                             (unsigned)gallery_status.image_count);
+                    display_show_status("VERIFYING IMAGE", detail);
+                } else if (gallery_status.state ==
+                           GALLERY_DOWNLOAD_STATE_SUCCESS) {
+                    display_show_status("GALLERY READY",
+                                        "Images are ready to view");
+                } else {
+                    display_show_status(
+                        "GALLERY FAILED",
+                        gallery_download_error_detail(
+                            gallery_status.last_error));
+                }
+            }
+            previous_display_mode = APP_DISPLAY_GALLERY_DOWNLOAD;
+            previous_portal_seconds = 0U;
         } else if (display_ready && firmware_update_ui_active) {
             app_display_mode_t update_display_mode =
                 APP_DISPLAY_FIRMWARE_UPDATE_RESULT;
@@ -1736,6 +1976,7 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_MONOCHROME_IMAGE ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC_RESULT ||
+                    previous_display_mode == APP_DISPLAY_GALLERY_DOWNLOAD ||
                     previous_display_mode ==
                         APP_DISPLAY_SETTINGS_PORTAL_PROMPT)) {
             const TickType_t provisioning_elapsed = now - provisioning_started;
@@ -1768,9 +2009,16 @@ void app_main(void)
             } else if (display_mode == APP_DISPLAY_MONOCHROME_IMAGE) {
                 if (display_mode != previous_display_mode ||
                     render_requested) {
-                    sd_image_view_t image_view = {0};
-                    if (sd_image_store_get(&image_view)) {
-                        display_show_monochrome_image(image_view.bitmap);
+                    size_t selected_index = 0U;
+                    size_t image_count = 0U;
+                    if (image_bitmap_snapshot != NULL &&
+                        sd_image_store_copy_selected(
+                            image_bitmap_snapshot,
+                            MONO_IMAGE_BITMAP_BYTES,
+                            &selected_index, &image_count)) {
+                        display_show_monochrome_image(
+                            image_bitmap_snapshot, selected_index,
+                            image_count);
                     } else {
                         app_page_state_set_image_available(&page_state,
                                                            false);

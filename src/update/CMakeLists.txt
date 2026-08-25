@@ -16,10 +16,12 @@ idf_component_register(
         esp_netif
         esp_system
         esp_wifi
+        gallery
         json
         mbedtls
         network
         rtc
+        sd_image
         settings
     PRIV_REQUIRES esp_hw_support
 )

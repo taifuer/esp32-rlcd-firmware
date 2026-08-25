@@ -766,7 +766,8 @@ void display_show_calendar(const display_dashboard_t *dashboard)
 }
 
 void display_show_monochrome_image(
-    const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES])
+    const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
+    size_t selected_index, size_t image_count)
 {
     if (s_u8g2 == NULL || bitmap == NULL) {
         return;
@@ -783,7 +784,19 @@ void display_show_monochrome_image(
                  BOARD_DISPLAY_WIDTH,
                  BOARD_DISPLAY_HEIGHT - DAILY_FOOTER_DIVIDER_Y);
     u8g2_SetDrawColor(s_u8g2, 1);
-    draw_daily_footer("BOOT: PAGE | KEY: SYSTEM");
+    if (image_count > 1U) {
+        char footer[64];
+        if (selected_index >= image_count) {
+            selected_index = 0U;
+        }
+        snprintf(footer, sizeof(footer),
+                 "BOOT: PAGE | KEY: NEXT | %u/%u",
+                 (unsigned)(selected_index + 1U),
+                 (unsigned)image_count);
+        draw_daily_footer(footer);
+    } else {
+        draw_daily_footer("BOOT: PAGE | KEY: SYSTEM");
+    }
     u8g2_SendBuffer(s_u8g2);
 }
 

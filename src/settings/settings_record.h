@@ -10,7 +10,8 @@
 extern "C" {
 #endif
 
-#define SETTINGS_RECORD_ENCODED_SIZE 28U
+#define SETTINGS_RECORD_ENCODED_SIZE 32U
+#define SETTINGS_RECORD_SCHEMA3_ENCODED_SIZE 28U
 #define SETTINGS_RECORD_SCHEMA2_ENCODED_SIZE 24U
 
 typedef enum {
@@ -33,6 +34,7 @@ typedef struct {
 typedef enum {
     SETTINGS_MIGRATION_SOURCE_V1_FIELDS = 0,
     SETTINGS_MIGRATION_SOURCE_SCHEMA2_RECORD,
+    SETTINGS_MIGRATION_SOURCE_SCHEMA3_RECORD,
     SETTINGS_MIGRATION_SOURCE_CURRENT_RECORD,
 } settings_migration_source_t;
 
@@ -41,6 +43,9 @@ bool settings_record_encode(uint32_t generation,
                             uint8_t *encoded, size_t encoded_size);
 bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
                             settings_record_t *record);
+bool settings_record_decode_schema3(const uint8_t *encoded,
+                                    size_t encoded_size,
+                                    settings_record_t *record);
 bool settings_record_decode_schema2(const uint8_t *encoded,
                                     size_t encoded_size,
                                     settings_record_t *record);
@@ -53,7 +58,8 @@ bool settings_record_repair_is_usable(
     const settings_record_repair_plan_t *plan,
     bool repair_write_succeeded);
 settings_migration_source_t settings_record_select_migration_source(
-    bool current_record_valid, bool schema2_record_valid);
+    bool current_record_valid, bool schema3_record_valid,
+    bool schema2_record_valid);
 
 #ifdef __cplusplus
 }

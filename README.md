@@ -5,14 +5,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.14.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.15.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
-以下界面反映 v0.14.0 正式版。
+以下界面反映 v0.15.0 正式版。
 
 | 首屏 | 月历 |
 | :---: | :---: |
@@ -37,7 +37,7 @@
 - ES8311 与 ES7210 本机音频诊断，最多临时采集并回放 5 秒语音，不持久化或上传；
 - 四页系统中心依次为状态、音频、设置和在线更新，低频维护不再占用独立页面；
 - 设置门户支持省电模式、时区、温度单位、播放音量、单个每周闹钟、更新通道、手机校时、
-  清除 Wi-Fi 和本地 OTA；
+  microSD 图片管理、清除 Wi-Fi 和本地 OTA；
 - 离线闹钟按 RTC 本地时间触发；到点播放提示音并显示大字提醒，支持停止、首次延后
   5 分钟和 60 秒自动停止，断网及 `SAVING` 模式不影响已保存规则；
 - `NORMAL` 保持 `HH:MM:SS` 与自动联网；`SAVING` 隐藏秒数、降低刷新和采样频率，并关闭
@@ -45,34 +45,36 @@
 - 在线更新通过 HTTPS 检查清单并下载 OTA 镜像，安装始终需要实体按键确认；
 - 本地更新通过设置门户上传 OTA 镜像，作为无互联网时的维护与恢复入口；
 - 双 OTA 应用槽、镜像校验、新版本启动确认和失败回滚，普通更新保留 Wi-Fi 配置；
-- 通过板载 1-bit SDMMC 只读显示 FAT32 microSD 中的黑白图片；无卡或图片无效时自动
-  隐藏图片页，不影响时钟和其他本地功能。
+- 通过板载 1-bit SDMMC 显示 FAT32 microSD 中最多 32 张黑白图片；多图时短按 `KEY`
+  手动切换并跨重启保留选择，不自动轮播；
+- 手机浏览器可在本地将 JPEG/PNG 转换并导入 microSD，也可安装公共演示图集，逐张预览、
+  选择和确认删除；无卡或图片无效时自然隐藏相关功能，不影响其他本地能力。
 
 `NORMAL` 自动校时完成后只在后台检查是否有更新，不会弹出页面、静默安装或打断日常功能。
 “在线更新”页按住 `KEY` 2 秒检查；发现新版本后再次按住 2 秒进入 `REVIEW`，确认页再按住
 3 秒才安装。正式固件默认只检查稳定版；开发者可在“设置”门户主动加入测试通道。完整说明见
 [界面与按键](docs/home-screen.md)和[固件安装与更新](docs/firmware-update.md)。
 
-已安装 v0.10.0—v0.13.0 的设备可直接从“在线更新”页升级；v0.7.0—v0.9.0 可通过
-原有本地更新入口上传 v0.14.0 OTA 固件，v0.6.0 及更早版本需使用 Factory 固件完整安装。
+已安装 v0.10.0—v0.14.0 的设备可直接从“在线更新”页升级；v0.7.0—v0.9.0 可通过
+原有本地更新入口上传 v0.15.0 OTA 固件，v0.6.0 及更早版本需使用 Factory 固件完整安装。
 microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 [microSD 图片准备](docs/microsd-images.md)。
 
 ## 安装使用
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
-中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`。v0.14.0 的离线更新
+中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`。v0.15.0 的离线更新
 位于“设置”门户。下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
 
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.14.0
+cd dist/v0.15.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.14.0/esp32-rlcd-firmware-v0.14.0-factory.bin \
+  --firmware dist/v0.15.0/esp32-rlcd-firmware-v0.15.0-factory.bin \
   --confirm
 ```
 
@@ -95,10 +97,11 @@ cd ../..
 │   ├── board/           # 板级总线和引脚
 │   ├── calendar/        # 公历月份与农历换算
 │   ├── display/         # ST7305 界面
+│   ├── gallery/         # 公共演示图清单与 HTTPS 下载
 │   ├── image/           # PBM/BMP 单色图片校验与解码
 │   ├── network/         # 配网、NVS、SNTP 与联网会话
 │   ├── rtc/             # PCF85063 与备用电池保持判定
-│   ├── sd_image/        # SDMMC/FatFs 只读 microSD 图片源
+│   ├── sd_image/        # SDMMC/FatFs 扫描、缓存与明确导入事务
 │   ├── sensors/         # SHTC3 与环境舒适度判定
 │   ├── settings/        # 持久化偏好、输入校验与省电策略
 │   ├── storage/         # NVS 持久化存储初始化
@@ -132,7 +135,7 @@ cd ../..
 - [固件安装与更新](docs/firmware-update.md)：在线更新、设置门户本地 OTA、双槽与失败恢复；
 - [自动配网与网络校时](docs/network-time.md)：配网、NVS、SNTP 与离线行为；
 - [界面与按键](docs/home-screen.md)：首屏、月历、条件图片页、系统中心和实体按键；
-- [microSD 图片准备](docs/microsd-images.md)：FAT32、固定目录、图片格式和关机插拔要求；
+- [microSD 图片准备](docs/microsd-images.md)：FAT32、固定目录、图片格式、导入与管理边界；
 - [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉与交互原则；
 - [开发计划](docs/roadmap.md)：已经确定的后续版本范围与验收边界；
 - [开发与发布指南](docs/development.md)：依赖、版本、测试和 Release 流程；

@@ -637,6 +637,50 @@ esp_err_t online_firmware_update_init(const char *current_version,
     return ESP_OK;
 }
 
+esp_err_t online_firmware_update_set_beta_channel(
+    bool beta_updates_enabled)
+{
+    if (!s_initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    const online_update_channel_t channel =
+        online_update_select_channel(beta_updates_enabled);
+    bool changed = false;
+    portENTER_CRITICAL(&s_lock);
+    if (online_update_state_is_busy(s_status.state) ||
+        s_status.state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION) {
+        portEXIT_CRITICAL(&s_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_channel != channel) {
+        s_channel = channel;
+        s_manifest_valid = false;
+        memset(&s_manifest, 0, sizeof(s_manifest));
+        s_cancel_requested = false;
+        s_status.state = ONLINE_UPDATE_STATE_IDLE;
+        s_status.policy_error = ONLINE_UPDATE_ERROR_NONE;
+        s_status.last_error = ESP_OK;
+        s_status.downloaded_bytes = 0U;
+        s_status.total_bytes = 0U;
+        s_status.percent = 0U;
+        s_status.beta_channel =
+            channel == ONLINE_UPDATE_CHANNEL_TESTING;
+        memset(s_status.latest_version, 0,
+               sizeof(s_status.latest_version));
+        memset(s_status.last_checked, 0,
+               sizeof(s_status.last_checked));
+        changed = true;
+    }
+    portEXIT_CRITICAL(&s_lock);
+
+    if (changed) {
+        ESP_LOGI(TAG, "online update channel changed to %s",
+                 online_update_channel_name(channel));
+    }
+    return ESP_OK;
+}
+
 esp_err_t online_firmware_update_request_check(void)
 {
     if (!s_initialized) {
