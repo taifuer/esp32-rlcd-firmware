@@ -158,9 +158,18 @@ static void test_automatic_power_policy(void)
     assert(!changed);
     assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
 
-    /* A fresh boot in the hysteresis band conservatively starts SAVING. */
+    /* A fresh boot uses the entry threshold; hysteresis has no prior state. */
     assert(app_power_runtime_observe_battery(
         &runtime, true, 24U, &changed));
+    assert(!changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(app_power_policy_for_runtime(&runtime, &policy));
+    assert(policy.show_seconds);
+    assert(policy.automatic_network);
+
+    assert(app_power_runtime_init(&runtime, APP_POWER_MODE_AUTO));
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
     assert(changed);
     assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
     assert(app_power_policy_for_runtime(&runtime, &policy));
@@ -258,6 +267,115 @@ static void test_automatic_power_policy(void)
         &runtime, true, 20U, NULL));
 }
 
+static void test_usb_data_host_power_override(void)
+{
+    app_power_runtime_t runtime;
+    app_power_policy_t policy;
+    bool changed = false;
+
+    assert(app_power_runtime_init(&runtime, APP_POWER_MODE_AUTO));
+    assert(app_power_runtime_observe_usb_data_host(
+        &runtime, true, &changed));
+    assert(!changed);
+    assert(runtime.battery_observed);
+    assert(app_power_runtime_observe_battery(
+        &runtime, false, 0U, &changed));
+    assert(!changed);
+    assert(app_power_runtime_observe_usb_data_host(
+        &runtime, false, &changed));
+    assert(!changed);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
+    assert(!changed);
+    assert(runtime.pending_samples == 1U);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
+
+    assert(app_power_runtime_init(&runtime, APP_POWER_MODE_AUTO));
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 50U, &changed));
+    assert(!changed);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
+    assert(!changed);
+    assert(runtime.pending_samples == 1U);
+    assert(app_power_runtime_observe_usb_data_host(
+        &runtime, true, &changed));
+    assert(!changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(runtime.pending_samples == 0U);
+
+    assert(app_power_runtime_init(&runtime, APP_POWER_MODE_AUTO));
+    assert(!runtime.usb_data_host_connected);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
+
+    assert(app_power_runtime_observe_usb_data_host(
+        &runtime, true, &changed));
+    assert(changed);
+    assert(runtime.usb_data_host_connected);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(runtime.pending_samples == 0U);
+    assert(app_power_policy_for_runtime(&runtime, &policy));
+    assert(policy.show_seconds);
+    assert(policy.automatic_network);
+
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 10U, &changed));
+    assert(!changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(runtime.pending_samples == 0U);
+    assert(app_power_runtime_observe_usb_data_host(
+        &runtime, true, &changed));
+    assert(!changed);
+
+    /* When the host is no longer detected, a stale low reading is not reused.
+     * Two fresh low samples are required before AUTO returns to SAVING. */
+    assert(app_power_runtime_observe_usb_data_host(
+        &runtime, false, &changed));
+    assert(!changed);
+    assert(!runtime.usb_data_host_connected);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
+    assert(!changed);
+    assert(runtime.pending_samples == 1U);
+    assert(app_power_runtime_observe_usb_data_host(
+        &runtime, false, &changed));
+    assert(!changed);
+    assert(runtime.pending_samples == 1U);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 19U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
+
+    /* Explicit modes remain fixed. The host observation is retained so a
+     * later switch to AUTO can resolve safely. */
+    assert(app_power_runtime_set_configured(
+        &runtime, APP_POWER_MODE_SAVING, true, 10U, &changed));
+    assert(!changed);
+    assert(app_power_runtime_observe_usb_data_host(
+        &runtime, true, &changed));
+    assert(!changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
+    assert(app_power_runtime_set_configured(
+        &runtime, APP_POWER_MODE_AUTO, true, 10U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+
+    assert(!app_power_runtime_observe_usb_data_host(
+        NULL, true, &changed));
+    assert(!app_power_runtime_observe_usb_data_host(
+        &runtime, true, NULL));
+    runtime.configured_mode = (app_power_mode_t)9;
+    assert(!app_power_runtime_observe_usb_data_host(
+        &runtime, true, &changed));
+}
+
 static void assert_form(const char *form, app_power_mode_t power,
                         int16_t offset, app_temperature_unit_t unit,
                         uint8_t volume, app_update_channel_t updates,
@@ -352,6 +470,7 @@ int main(void)
     test_timezone_format();
     test_power_policy();
     test_automatic_power_policy();
+    test_usb_data_host_power_override();
     test_form_parser();
     puts("app settings tests passed");
     return 0;

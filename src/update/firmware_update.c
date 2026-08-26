@@ -92,7 +92,7 @@ static const char SETTINGS_PAGE[] =
     "<label for=\"power\">省电策略</label><select id=\"power\" name=\"power\">"
     "<option value=\"auto\">自动（推荐）</option><option value=\"normal\">始终正常</option>"
     "<option value=\"saving\">始终省电</option></select>"
-    "<p class=\"note\">自动策略在电量不高于 20% 时进入省电，恢复到 25% 时退出；手动校时与升级始终可用。</p>"
+    "<p class=\"note\">自动策略冷启动电量不高于 20% 时进入省电；运行中连续两次不高于 20% 时进入、连续两次达到 25% 时退出，连接 USB 数据主机也会退出。普通充电器仍按电量判断。手动校时与升级始终可用。</p>"
     "<label for=\"timezone\">时区</label><select id=\"timezone\" name=\"timezone\"></select>"
     "<label for=\"unit\">温度单位</label><select id=\"unit\" name=\"unit\">"
     "<option value=\"c\">摄氏度（°C）</option><option value=\"f\">华氏度（°F）</option></select>"

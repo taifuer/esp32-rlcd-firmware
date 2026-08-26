@@ -93,6 +93,8 @@ bool app_power_runtime_set_configured(
     if (configured_mode == APP_POWER_MODE_NORMAL ||
         configured_mode == APP_POWER_MODE_SAVING) {
         runtime->effective_mode = configured_mode;
+    } else if (runtime->usb_data_host_connected) {
+        runtime->effective_mode = APP_POWER_MODE_NORMAL;
     } else if (battery_valid) {
         runtime->battery_observed = true;
         if (battery_percent <= APP_POWER_AUTO_ENTER_PERCENT) {
@@ -127,13 +129,18 @@ bool app_power_runtime_observe_battery(
         return true;
     }
 
+    if (runtime->usb_data_host_connected) {
+        runtime->battery_observed = true;
+        reset_pending(runtime);
+        return true;
+    }
+
     if (!runtime->battery_observed) {
         runtime->battery_observed = true;
         const app_power_mode_t previous = runtime->effective_mode;
-        /* There is no persisted hysteresis latch. In the 21-24% band, a
-         * fresh boot conservatively starts in SAVING so a reboot cannot be
-         * used to exit low-power operation before the 25% recovery point. */
-        if (battery_percent < APP_POWER_AUTO_EXIT_PERCENT) {
+        /* A fresh boot has no previous effective state, so it uses the entry
+         * threshold. Hysteresis starts after this first observation. */
+        if (battery_percent <= APP_POWER_AUTO_ENTER_PERCENT) {
             runtime->effective_mode = APP_POWER_MODE_SAVING;
         } else {
             runtime->effective_mode = APP_POWER_MODE_NORMAL;
@@ -172,6 +179,42 @@ bool app_power_runtime_observe_battery(
     return true;
 }
 
+bool app_power_runtime_observe_usb_data_host(
+    app_power_runtime_t *runtime, bool connected,
+    bool *effective_mode_changed)
+{
+    if (runtime == NULL || effective_mode_changed == NULL ||
+        !configured_mode_is_valid(runtime->configured_mode) ||
+        !effective_mode_is_valid(runtime->effective_mode)) {
+        return false;
+    }
+
+    *effective_mode_changed = false;
+    if (runtime->usb_data_host_connected == connected) {
+        return true;
+    }
+    runtime->usb_data_host_connected = connected;
+    reset_pending(runtime);
+    if (!connected) {
+        return true;
+    }
+
+    /* If the host disappears before any valid ADC reading, the next low
+     * sample must still be treated as the first of two fresh confirmations,
+     * rather than as a cold-start decision. */
+    runtime->battery_observed = true;
+    if (runtime->configured_mode != APP_POWER_MODE_AUTO) {
+        return true;
+    }
+
+    if (runtime->effective_mode == APP_POWER_MODE_SAVING) {
+        runtime->effective_mode = APP_POWER_MODE_NORMAL;
+        reset_pending(runtime);
+        *effective_mode_changed = true;
+    }
+    return true;
+}
+
 bool app_power_policy_for_runtime(const app_power_runtime_t *runtime,
                                   app_power_policy_t *policy)
 {
@@ -182,7 +225,7 @@ bool app_power_policy_for_runtime(const app_power_runtime_t *runtime,
         return false;
     }
 
-    /* AUTO must notice charging recovery promptly. Manual SAVING keeps its
+    /* AUTO must notice battery recovery promptly. Manual SAVING keeps its
      * original five-minute battery cadence. */
     if (runtime->configured_mode == APP_POWER_MODE_AUTO &&
         runtime->effective_mode == APP_POWER_MODE_SAVING) {

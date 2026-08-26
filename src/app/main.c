@@ -19,6 +19,7 @@
 #include "button_state.h"
 #include "chinese_lunar.h"
 #include "display.h"
+#include "driver/usb_serial_jtag.h"
 #include "environment_comfort.h"
 #include "esp_app_desc.h"
 #include "esp_err.h"
@@ -712,6 +713,24 @@ void app_main(void)
         ESP_LOGW(TAG, "battery monitor unavailable: %s", esp_err_to_name(battery_init_error));
     }
 
+    /* The stock board exposes neither charger STAT nor VBUS to an ESP32 GPIO.
+     * USB Serial/JTAG SOF therefore provides a reliable data-host signal only;
+     * wall chargers and power banks without USB data remain undetectable. */
+    const bool startup_usb_data_host_connected =
+        usb_serial_jtag_is_connected();
+    bool usb_power_mode_changed = false;
+    if (!app_power_runtime_observe_usb_data_host(
+            &power_runtime, startup_usb_data_host_connected,
+            &usb_power_mode_changed) ||
+        !app_power_policy_for_runtime(&power_runtime, &power_policy)) {
+        ESP_LOGW(TAG, "could not initialize USB data-host power policy");
+    } else if (startup_usb_data_host_connected) {
+        ESP_LOGI(TAG,
+                 "USB data host connected at startup; power=%s/%s",
+                 app_power_mode_key(settings.power_mode),
+                 app_power_mode_key(power_runtime.effective_mode));
+    }
+
     /* Resolve AUTO from the initial battery sample before enabling DFS or
      * allowing the network task to start automatic work. */
     const esp_err_t power_manager_error = power_manager_init(
@@ -907,6 +926,7 @@ void app_main(void)
         bool system_status_data_changed = false;
         bool online_update_data_changed = false;
         bool image_delete_ui_transitioned = false;
+        bool force_battery_read = false;
         sd_image_status_t latest_sd_image_status = {0};
         sd_image_store_get_status(&latest_sd_image_status);
         if (latest_sd_image_status.state != previous_sd_image_state ||
@@ -1039,6 +1059,58 @@ void app_main(void)
             first_periodic_update ||
             now - last_periodic_update >=
                 pdMS_TO_TICKS(APP_PERIODIC_UPDATE_MS);
+        if (periodic_update) {
+            const bool usb_data_host_connected =
+                usb_serial_jtag_is_connected();
+            if (usb_data_host_connected !=
+                power_runtime.usb_data_host_connected) {
+                app_power_runtime_t next_power_runtime = power_runtime;
+                app_power_policy_t next_power_policy = {0};
+                bool effective_mode_changed = false;
+                esp_err_t apply_error =
+                    app_power_runtime_observe_usb_data_host(
+                        &next_power_runtime, usb_data_host_connected,
+                        &effective_mode_changed) &&
+                            app_power_policy_for_runtime(
+                                &next_power_runtime,
+                                &next_power_policy)
+                        ? ESP_OK
+                        : ESP_ERR_INVALID_ARG;
+                if (apply_error == ESP_OK && effective_mode_changed) {
+                    apply_error = apply_runtime_power_transition(
+                        &power_runtime, &power_policy,
+                        &next_power_runtime, &next_power_policy,
+                        network_error == ESP_OK);
+                }
+                if (apply_error == ESP_OK) {
+                    power_runtime = next_power_runtime;
+                    power_policy = next_power_policy;
+                    if (!usb_data_host_connected) {
+                        force_battery_read = true;
+                    }
+                    if (effective_mode_changed) {
+                        dashboard.show_seconds =
+                            power_policy.show_seconds;
+                        rtc_read_wait_ms = 0U;
+                        dashboard_data_changed = true;
+                        calendar_data_changed = true;
+                        system_status_data_changed = true;
+                        render_requested = true;
+                    }
+                    ESP_LOGI(
+                        TAG, "USB data host %s%s",
+                        usb_data_host_connected ? "connected"
+                                                : "no longer detected",
+                        effective_mode_changed
+                            ? "; automatic power switched to normal"
+                            : "");
+                } else if (apply_error != ESP_ERR_INVALID_STATE) {
+                    ESP_LOGW(TAG,
+                             "USB data-host power transition pending: %s",
+                             esp_err_to_name(apply_error));
+                }
+            }
+        }
         bool runtime_settings_changed = false;
         if (periodic_update &&
             (settings_error == ESP_OK ||
@@ -1806,6 +1878,7 @@ void app_main(void)
                     pdMS_TO_TICKS(power_policy.sensor_read_interval_ms);
             const bool battery_read_due =
                 first_update || runtime_settings_changed ||
+                force_battery_read ||
                 status_page_needs_fresh_data ||
                 now - last_battery_read >=
                     pdMS_TO_TICKS(power_policy.battery_read_interval_ms);
