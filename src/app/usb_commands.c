@@ -101,9 +101,7 @@ static void process_line(const char *line, bool rtc_available)
                      "SETTINGS power=%s utc_offset_minutes=%d unit=%s "
                      "playback_volume=%u updates=%s alarm=%s "
                      "alarm_time=%02u:%02u alarm_days=0x%02x",
-                     settings.power_mode == APP_POWER_MODE_SAVING
-                         ? "saving"
-                         : "normal",
+                     app_power_mode_key(settings.power_mode),
                      settings.utc_offset_minutes,
                      settings.temperature_unit ==
                              APP_TEMPERATURE_UNIT_FAHRENHEIT

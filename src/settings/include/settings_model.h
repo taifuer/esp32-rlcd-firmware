@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define APP_SETTINGS_SCHEMA_VERSION 4U
+#define APP_SETTINGS_SCHEMA_VERSION 5U
 #define APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES 480
 #define APP_SETTINGS_MIN_UTC_OFFSET_MINUTES (-720)
 #define APP_SETTINGS_MAX_UTC_OFFSET_MINUTES 840
@@ -30,8 +30,9 @@ extern "C" {
 #define APP_SETTINGS_ALARM_ALL_DAYS_MASK 0x7fU
 
 typedef enum {
-    APP_POWER_MODE_NORMAL = 0,
+    APP_POWER_MODE_AUTO = 0,
     APP_POWER_MODE_SAVING = 1,
+    APP_POWER_MODE_NORMAL = 2,
 } app_power_mode_t;
 
 typedef enum {
@@ -59,6 +60,11 @@ typedef struct {
 
 void app_settings_defaults(app_settings_t *settings);
 bool app_settings_validate(const app_settings_t *settings);
+const char *app_power_mode_key(app_power_mode_t mode);
+const char *app_power_mode_name(app_power_mode_t mode);
+/* Decode schema v1-v4 values while preserving the user's fixed mode. */
+bool app_power_mode_from_legacy_value(uint8_t value,
+                                      app_power_mode_t *mode);
 bool app_settings_format_posix_tz(int16_t utc_offset_minutes,
                                   char *buffer, size_t capacity);
 bool app_settings_parse_form(const char *body, size_t length,

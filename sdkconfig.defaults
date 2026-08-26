@@ -12,6 +12,13 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=63
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+# Enable dynamic frequency scaling support. The application explicitly keeps
+# automatic Light-sleep disabled and holds a max-frequency lock in NORMAL.
+CONFIG_PM_ENABLE=y
+# DFS is configured explicitly after settings and the initial battery sample.
+# Automatic Light-sleep remains outside this release's safety boundary.
+# CONFIG_PM_DFS_INIT_AUTO is not set
+# CONFIG_FREERTOS_USE_TICKLESS_IDLE is not set
 CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y

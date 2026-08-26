@@ -9,8 +9,9 @@ static void test_defaults_and_validation(void)
 {
     app_settings_t settings;
     app_settings_defaults(&settings);
+    assert(APP_SETTINGS_SCHEMA_VERSION == 5U);
     assert(settings.schema_version == APP_SETTINGS_SCHEMA_VERSION);
-    assert(settings.power_mode == APP_POWER_MODE_NORMAL);
+    assert(settings.power_mode == APP_POWER_MODE_AUTO);
     assert(settings.utc_offset_minutes == 480);
     assert(settings.temperature_unit == APP_TEMPERATURE_UNIT_CELSIUS);
     assert(settings.audio_playback_volume == 68U);
@@ -24,7 +25,11 @@ static void test_defaults_and_validation(void)
     settings.schema_version++;
     assert(!app_settings_validate(&settings));
     app_settings_defaults(&settings);
-    settings.power_mode = (app_power_mode_t)2;
+    settings.power_mode = APP_POWER_MODE_NORMAL;
+    assert(app_settings_validate(&settings));
+    settings.power_mode = APP_POWER_MODE_SAVING;
+    assert(app_settings_validate(&settings));
+    settings.power_mode = (app_power_mode_t)3;
     assert(!app_settings_validate(&settings));
     app_settings_defaults(&settings);
     settings.utc_offset_minutes = 481;
@@ -59,6 +64,28 @@ static void test_defaults_and_validation(void)
     app_settings_defaults(NULL);
 }
 
+static void test_power_mode_names_and_legacy_values(void)
+{
+    assert(strcmp(app_power_mode_key(APP_POWER_MODE_AUTO), "auto") == 0);
+    assert(strcmp(app_power_mode_key(APP_POWER_MODE_NORMAL), "normal") == 0);
+    assert(strcmp(app_power_mode_key(APP_POWER_MODE_SAVING), "saving") == 0);
+    assert(app_power_mode_key((app_power_mode_t)3) == NULL);
+
+    assert(strcmp(app_power_mode_name(APP_POWER_MODE_AUTO), "AUTO") == 0);
+    assert(strcmp(app_power_mode_name(APP_POWER_MODE_NORMAL), "NORMAL") == 0);
+    assert(strcmp(app_power_mode_name(APP_POWER_MODE_SAVING), "SAVING") == 0);
+    assert(app_power_mode_name((app_power_mode_t)3) == NULL);
+
+    app_power_mode_t mode = APP_POWER_MODE_NORMAL;
+    assert(app_power_mode_from_legacy_value(0U, &mode));
+    assert(mode == APP_POWER_MODE_NORMAL);
+    assert(app_power_mode_from_legacy_value(1U, &mode));
+    assert(mode == APP_POWER_MODE_SAVING);
+    assert(!app_power_mode_from_legacy_value(2U, &mode));
+    assert(mode == APP_POWER_MODE_SAVING);
+    assert(!app_power_mode_from_legacy_value(0U, NULL));
+}
+
 static void test_timezone_format(void)
 {
     char timezone[APP_SETTINGS_POSIX_TZ_CAPACITY];
@@ -81,8 +108,12 @@ static void test_timezone_format(void)
 
 static void test_power_policy(void)
 {
+    app_power_runtime_t runtime;
     app_power_policy_t policy;
-    assert(app_power_policy_for_mode(APP_POWER_MODE_NORMAL, &policy));
+    assert(app_power_runtime_init(&runtime, APP_POWER_MODE_NORMAL));
+    assert(runtime.configured_mode == APP_POWER_MODE_NORMAL);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(app_power_policy_for_runtime(&runtime, &policy));
     assert(policy.show_seconds);
     assert(policy.automatic_network);
     assert(policy.rtc_read_interval_ms == 1000U);
@@ -91,7 +122,12 @@ static void test_power_policy(void)
     assert(app_power_policy_next_clock_delay_ms(&policy, 0U) == 1000U);
     assert(app_power_policy_next_clock_delay_ms(&policy, 45U) == 1000U);
 
-    assert(app_power_policy_for_mode(APP_POWER_MODE_SAVING, &policy));
+    bool changed = false;
+    assert(app_power_runtime_set_configured(
+        &runtime, APP_POWER_MODE_SAVING, true, 100U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
+    assert(app_power_policy_for_runtime(&runtime, &policy));
     assert(!policy.show_seconds);
     assert(!policy.automatic_network);
     assert(policy.rtc_read_interval_ms == 60000U);
@@ -102,8 +138,124 @@ static void test_power_policy(void)
     assert(app_power_policy_next_clock_delay_ms(&policy, 59U) == 1000U);
     assert(app_power_policy_next_clock_delay_ms(&policy, 60U) == 0U);
     assert(app_power_policy_next_clock_delay_ms(NULL, 0U) == 0U);
-    assert(!app_power_policy_for_mode((app_power_mode_t)9, &policy));
-    assert(!app_power_policy_for_mode(APP_POWER_MODE_NORMAL, NULL));
+    assert(!app_power_runtime_init(NULL, APP_POWER_MODE_AUTO));
+    assert(!app_power_runtime_init(&runtime, (app_power_mode_t)9));
+    assert(!app_power_policy_for_runtime(NULL, &policy));
+    assert(!app_power_policy_for_runtime(&runtime, NULL));
+}
+
+static void test_automatic_power_policy(void)
+{
+    app_power_runtime_t runtime;
+    app_power_policy_t policy;
+    bool changed = false;
+
+    assert(app_power_runtime_init(&runtime, APP_POWER_MODE_AUTO));
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(!runtime.battery_observed);
+    assert(app_power_runtime_observe_battery(
+        &runtime, false, 0U, &changed));
+    assert(!changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+
+    /* A fresh boot in the hysteresis band conservatively starts SAVING. */
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 24U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
+    assert(app_power_policy_for_runtime(&runtime, &policy));
+    assert(!policy.show_seconds);
+    assert(!policy.automatic_network);
+    assert(policy.battery_read_interval_ms == 60000U);
+
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 25U, &changed));
+    assert(!changed);
+    assert(runtime.pending_samples == 1U);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 24U, &changed));
+    assert(!changed);
+    assert(runtime.pending_samples == 0U);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 25U, &changed));
+    assert(!changed);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 26U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(app_power_policy_for_runtime(&runtime, &policy));
+    assert(policy.show_seconds);
+    assert(policy.automatic_network);
+    assert(policy.battery_read_interval_ms == 30000U);
+
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
+    assert(!changed);
+    assert(runtime.pending_samples == 1U);
+    assert(app_power_runtime_set_configured(
+        &runtime, APP_POWER_MODE_AUTO, true, 20U, &changed));
+    assert(!changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(runtime.pending_samples == 1U);
+    assert(app_power_runtime_observe_battery(
+        &runtime, false, 0U, &changed));
+    assert(!changed);
+    assert(runtime.pending_samples == 0U);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
+    assert(!changed);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 19U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
+
+    assert(app_power_runtime_set_configured(
+        &runtime, APP_POWER_MODE_NORMAL, true, 10U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 0U, &changed));
+    assert(!changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+
+    assert(app_power_runtime_set_configured(
+        &runtime, APP_POWER_MODE_SAVING, true, 100U, &changed));
+    assert(changed);
+    assert(app_power_policy_for_runtime(&runtime, &policy));
+    assert(policy.battery_read_interval_ms == 300000U);
+    assert(app_power_runtime_set_configured(
+        &runtime, APP_POWER_MODE_AUTO, true, 22U, &changed));
+    assert(!changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 25U, &changed));
+    assert(!changed);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 25U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_NORMAL);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
+    assert(!changed);
+    assert(app_power_runtime_observe_battery(
+        &runtime, true, 20U, &changed));
+    assert(changed);
+    assert(runtime.effective_mode == APP_POWER_MODE_SAVING);
+
+    assert(!app_power_runtime_set_configured(
+        NULL, APP_POWER_MODE_AUTO, true, 20U, &changed));
+    assert(!app_power_runtime_set_configured(
+        &runtime, (app_power_mode_t)9, true, 20U, &changed));
+    assert(!app_power_runtime_set_configured(
+        &runtime, APP_POWER_MODE_AUTO, true, 101U, &changed));
+    assert(!app_power_runtime_set_configured(
+        &runtime, APP_POWER_MODE_AUTO, true, 20U, NULL));
+    assert(!app_power_runtime_observe_battery(
+        NULL, true, 20U, &changed));
+    assert(!app_power_runtime_observe_battery(
+        &runtime, true, 101U, &changed));
+    assert(!app_power_runtime_observe_battery(
+        &runtime, true, 20U, NULL));
 }
 
 static void assert_form(const char *form, app_power_mode_t power,
@@ -128,6 +280,11 @@ static void assert_form(const char *form, app_power_mode_t power,
 
 static void test_form_parser(void)
 {
+    assert_form("power=auto&timezone=480&unit=c&volume=68&updates=stable&alarm=off&alarm_hour=7&alarm_minute=30&alarm_days=62",
+                APP_POWER_MODE_AUTO, 480,
+                APP_TEMPERATURE_UNIT_CELSIUS, 68U,
+                APP_UPDATE_CHANNEL_STABLE, false, 7U, 30U,
+                APP_SETTINGS_ALARM_WEEKDAYS_MASK);
     assert_form("power=normal&timezone=480&unit=c&volume=75&updates=stable&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=62",
                 APP_POWER_MODE_NORMAL, 480,
                 APP_TEMPERATURE_UNIT_CELSIUS, 75U,
@@ -191,8 +348,10 @@ static void test_form_parser(void)
 int main(void)
 {
     test_defaults_and_validation();
+    test_power_mode_names_and_legacy_values();
     test_timezone_format();
     test_power_policy();
+    test_automatic_power_policy();
     test_form_parser();
     puts("app settings tests passed");
     return 0;

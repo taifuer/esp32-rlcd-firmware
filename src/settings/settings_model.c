@@ -30,7 +30,7 @@ void app_settings_defaults(app_settings_t *settings)
     }
     *settings = (app_settings_t){
         .schema_version = APP_SETTINGS_SCHEMA_VERSION,
-        .power_mode = APP_POWER_MODE_NORMAL,
+        .power_mode = APP_POWER_MODE_AUTO,
         .utc_offset_minutes = APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES,
         .temperature_unit = APP_TEMPERATURE_UNIT_CELSIUS,
         .audio_playback_volume =
@@ -54,7 +54,8 @@ bool app_settings_validate(const app_settings_t *settings)
 {
     return settings != NULL &&
            settings->schema_version == APP_SETTINGS_SCHEMA_VERSION &&
-           (settings->power_mode == APP_POWER_MODE_NORMAL ||
+           (settings->power_mode == APP_POWER_MODE_AUTO ||
+            settings->power_mode == APP_POWER_MODE_NORMAL ||
             settings->power_mode == APP_POWER_MODE_SAVING) &&
            utc_offset_is_valid(settings->utc_offset_minutes) &&
            (settings->temperature_unit == APP_TEMPERATURE_UNIT_CELSIUS ||
@@ -68,6 +69,51 @@ bool app_settings_validate(const app_settings_t *settings)
            settings->alarm_weekdays != 0U &&
            (settings->alarm_weekdays &
             (uint8_t)~APP_SETTINGS_ALARM_ALL_DAYS_MASK) == 0U;
+}
+
+const char *app_power_mode_key(app_power_mode_t mode)
+{
+    switch (mode) {
+    case APP_POWER_MODE_AUTO:
+        return "auto";
+    case APP_POWER_MODE_NORMAL:
+        return "normal";
+    case APP_POWER_MODE_SAVING:
+        return "saving";
+    default:
+        return NULL;
+    }
+}
+
+const char *app_power_mode_name(app_power_mode_t mode)
+{
+    switch (mode) {
+    case APP_POWER_MODE_AUTO:
+        return "AUTO";
+    case APP_POWER_MODE_NORMAL:
+        return "NORMAL";
+    case APP_POWER_MODE_SAVING:
+        return "SAVING";
+    default:
+        return NULL;
+    }
+}
+
+bool app_power_mode_from_legacy_value(uint8_t value,
+                                      app_power_mode_t *mode)
+{
+    if (mode == NULL) {
+        return false;
+    }
+    if (value == 0U) {
+        *mode = APP_POWER_MODE_NORMAL;
+        return true;
+    }
+    if (value == 1U) {
+        *mode = APP_POWER_MODE_SAVING;
+        return true;
+    }
+    return false;
 }
 
 bool app_settings_format_posix_tz(int16_t utc_offset_minutes,
@@ -187,9 +233,13 @@ static bool assign_form_field(const char *key, const char *value,
     unsigned field = 0U;
     if (strcmp(key, "power") == 0) {
         field = FORM_FIELD_POWER;
-        if (strcmp(value, "normal") == 0) {
+        if (strcmp(value, app_power_mode_key(APP_POWER_MODE_AUTO)) == 0) {
+            settings->power_mode = APP_POWER_MODE_AUTO;
+        } else if (strcmp(value,
+                          app_power_mode_key(APP_POWER_MODE_NORMAL)) == 0) {
             settings->power_mode = APP_POWER_MODE_NORMAL;
-        } else if (strcmp(value, "saving") == 0) {
+        } else if (strcmp(value,
+                          app_power_mode_key(APP_POWER_MODE_SAVING)) == 0) {
             settings->power_mode = APP_POWER_MODE_SAVING;
         } else {
             return false;

@@ -36,6 +36,7 @@
 #include "online_firmware_update.h"
 #include "page_state.h"
 #include "pcf85063.h"
+#include "power_manager.h"
 #include "rtc_backup.h"
 #include "sd_image.h"
 #include "shtc3.h"
@@ -84,6 +85,78 @@ enum {
     APP_GALLERY_RESULT_MS = 3000,
     APP_OTA_CONFIRM_DELAY_MS = 5000,
 };
+
+static esp_err_t set_cpu_saving_policy(bool saving)
+{
+    const esp_err_t error = power_manager_set_saving(saving);
+    /* The logical display/network policy remains useful on hardware where
+     * ESP-IDF PM initialization was unavailable. */
+    if (error == ESP_ERR_INVALID_STATE && !power_manager_is_ready()) {
+        ESP_LOGW(TAG,
+                 "CPU frequency policy unavailable; continuing with logical saving policy");
+        return ESP_OK;
+    }
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "CPU frequency policy change failed: %s",
+                 esp_err_to_name(error));
+    }
+    return error;
+}
+
+static esp_err_t apply_runtime_power_transition(
+    const app_power_runtime_t *current_runtime,
+    const app_power_policy_t *current_policy,
+    const app_power_runtime_t *next_runtime,
+    const app_power_policy_t *next_policy, bool network_ready)
+{
+    if (current_runtime == NULL || current_policy == NULL ||
+        next_runtime == NULL || next_policy == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const bool current_saving =
+        current_runtime->effective_mode == APP_POWER_MODE_SAVING;
+    const bool next_saving =
+        next_runtime->effective_mode == APP_POWER_MODE_SAVING;
+    const bool network_changes =
+        network_ready &&
+        current_policy->automatic_network !=
+            next_policy->automatic_network;
+
+    /* Restore performance before enabling automatic network work. When
+     * entering SAVING, stop scheduling new automatic work before releasing
+     * the max-frequency lock. Existing user-started sessions keep running. */
+    if (!next_saving) {
+        esp_err_t error = set_cpu_saving_policy(false);
+        if (error != ESP_OK) {
+            return error;
+        }
+        if (network_changes) {
+            error = network_time_set_automatic_sync_enabled(
+                next_policy->automatic_network);
+            if (error != ESP_OK) {
+                (void)set_cpu_saving_policy(current_saving);
+                return error;
+            }
+        }
+        return ESP_OK;
+    }
+
+    if (network_changes) {
+        const esp_err_t error =
+            network_time_set_automatic_sync_enabled(
+                next_policy->automatic_network);
+        if (error != ESP_OK) {
+            return error;
+        }
+    }
+    const esp_err_t error = set_cpu_saving_policy(true);
+    if (error != ESP_OK && network_changes) {
+        (void)network_time_set_automatic_sync_enabled(
+            current_policy->automatic_network);
+    }
+    return error;
+}
 
 static const char *page_name(app_page_t page)
 {
@@ -512,10 +585,16 @@ void app_main(void)
     if (app_settings_apply_timezone(&settings) != ESP_OK) {
         ESP_LOGW(TAG, "could not apply configured time zone; using process default");
     }
-    app_power_policy_t power_policy;
-    if (!app_power_policy_for_mode(settings.power_mode, &power_policy)) {
+    app_power_runtime_t power_runtime;
+    if (!app_power_runtime_init(&power_runtime, settings.power_mode)) {
         app_settings_defaults(&settings);
-        (void)app_power_policy_for_mode(settings.power_mode, &power_policy);
+        (void)app_power_runtime_init(&power_runtime,
+                                     settings.power_mode);
+    }
+    app_power_policy_t power_policy;
+    if (!app_power_policy_for_runtime(&power_runtime, &power_policy)) {
+        ESP_LOGE(TAG, "could not initialize power policy");
+        return;
     }
     const esp_err_t volume_error =
         audio_diagnostics_set_playback_volume(
@@ -600,12 +679,47 @@ void app_main(void)
         }
     }
 
+    battery_measurement_t battery_measurement = {0};
+    bool startup_battery_valid = false;
     const esp_err_t battery_init_error = battery_init();
     const bool battery_driver_ready = battery_init_error == ESP_OK;
     if (battery_driver_ready) {
         ESP_LOGI(TAG, "battery monitor ready on GPIO %d", BOARD_BATTERY_ADC_GPIO);
+        const esp_err_t initial_battery_error =
+            battery_read(&battery_measurement);
+        if (initial_battery_error == ESP_OK) {
+            startup_battery_valid = true;
+            bool effective_mode_changed = false;
+            if (app_power_runtime_observe_battery(
+                    &power_runtime, true, battery_measurement.percent,
+                    &effective_mode_changed) &&
+                effective_mode_changed) {
+                (void)app_power_policy_for_runtime(&power_runtime,
+                                                   &power_policy);
+            }
+            ESP_LOGI(TAG,
+                     "initial battery %u mV, %u%%; power=%s/%s",
+                     battery_measurement.voltage_mv,
+                     battery_measurement.percent,
+                     app_power_mode_key(settings.power_mode),
+                     app_power_mode_key(
+                         power_runtime.effective_mode));
+        } else {
+            ESP_LOGW(TAG, "initial battery read failed: %s",
+                     esp_err_to_name(initial_battery_error));
+        }
     } else {
         ESP_LOGW(TAG, "battery monitor unavailable: %s", esp_err_to_name(battery_init_error));
+    }
+
+    /* Resolve AUTO from the initial battery sample before enabling DFS or
+     * allowing the network task to start automatic work. */
+    const esp_err_t power_manager_error = power_manager_init(
+        power_runtime.effective_mode == APP_POWER_MODE_SAVING);
+    if (power_manager_error != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "dynamic frequency scaling unavailable; display and network saving policy remains active: %s",
+                 esp_err_to_name(power_manager_error));
     }
 
     const esp_err_t button_init_error = board_buttons_init();
@@ -669,12 +783,13 @@ void app_main(void)
         .temperature_fahrenheit =
             settings.temperature_unit ==
             APP_TEMPERATURE_UNIT_FAHRENHEIT,
+        .battery_valid = startup_battery_valid,
+        .battery_percent = battery_measurement.percent,
     };
     pcf85063_datetime_t datetime = {0};
     shtc3_measurement_t measurement = {0};
     environment_comfort_tracker_t comfort_tracker;
     environment_comfort_init(&comfort_tracker);
-    battery_measurement_t battery_measurement = {0};
     chinese_lunar_date_t lunar_date = {0};
     char lunar_text[64] = {0};
     network_time_status_t network_status = {0};
@@ -933,11 +1048,19 @@ void app_main(void)
                 app_settings_get_snapshot(&snapshot);
             if (snapshot_error == ESP_OK &&
                 snapshot.generation != settings_generation) {
+                app_power_runtime_t next_power_runtime = power_runtime;
                 app_power_policy_t next_power_policy = {0};
+                bool effective_mode_changed = false;
                 esp_err_t apply_error =
-                    app_power_policy_for_mode(
+                    app_power_runtime_set_configured(
+                        &next_power_runtime,
                         snapshot.settings.power_mode,
-                        &next_power_policy)
+                        dashboard.battery_valid,
+                        dashboard.battery_percent,
+                        &effective_mode_changed) &&
+                            app_power_policy_for_runtime(
+                                &next_power_runtime,
+                                &next_power_policy)
                         ? ESP_OK
                         : ESP_ERR_INVALID_ARG;
                 if (apply_error == ESP_OK &&
@@ -953,13 +1076,6 @@ void app_main(void)
                     apply_error = app_settings_apply_timezone(
                         &snapshot.settings);
                 }
-                if (apply_error == ESP_OK && network_error == ESP_OK &&
-                    next_power_policy.automatic_network !=
-                        power_policy.automatic_network) {
-                    apply_error =
-                        network_time_set_automatic_sync_enabled(
-                            next_power_policy.automatic_network);
-                }
                 if (apply_error == ESP_OK &&
                     online_update_error == ESP_OK &&
                     snapshot.settings.update_channel !=
@@ -969,11 +1085,22 @@ void app_main(void)
                             snapshot.settings.update_channel ==
                             APP_UPDATE_CHANNEL_BETA);
                 }
+                if (apply_error == ESP_OK) {
+                    apply_error = apply_runtime_power_transition(
+                        &power_runtime, &power_policy,
+                        &next_power_runtime, &next_power_policy,
+                        network_error == ESP_OK);
+                }
 
                 if (apply_error == ESP_OK) {
                     settings = snapshot.settings;
                     settings_generation = snapshot.generation;
+                    power_runtime = next_power_runtime;
                     power_policy = next_power_policy;
+                    if (power_runtime.effective_mode ==
+                        APP_POWER_MODE_SAVING) {
+                        automatic_update_check_pending = false;
+                    }
                     alarm_schedule =
                         alarm_schedule_from_settings(&settings);
                     dashboard.show_seconds = power_policy.show_seconds;
@@ -989,8 +1116,12 @@ void app_main(void)
                     render_requested = true;
                     ESP_LOGI(TAG,
                              "saved settings applied without restart "
-                             "(generation=%u)",
-                             (unsigned)settings_generation);
+                             "(generation=%u power=%s/%s%s)",
+                             (unsigned)settings_generation,
+                             app_power_mode_key(settings.power_mode),
+                             app_power_mode_key(
+                                 power_runtime.effective_mode),
+                             effective_mode_changed ? " changed" : "");
                 } else if (apply_error != ESP_ERR_INVALID_STATE) {
                     ESP_LOGW(TAG,
                              "saved settings are pending runtime apply: %s",
@@ -1835,10 +1966,68 @@ void app_main(void)
                     }
                     system_status_data_changed |= battery_display_changed;
                     dashboard_data_changed |= battery_display_changed;
+
+                    app_power_runtime_t next_power_runtime =
+                        power_runtime;
+                    bool effective_mode_changed = false;
+                    if (!app_power_runtime_observe_battery(
+                            &next_power_runtime, true,
+                            battery_measurement.percent,
+                            &effective_mode_changed)) {
+                        ESP_LOGW(TAG,
+                                 "could not update automatic power policy");
+                    } else if (!effective_mode_changed) {
+                        power_runtime = next_power_runtime;
+                    } else {
+                        app_power_policy_t next_power_policy = {0};
+                        if (app_power_policy_for_runtime(
+                                &next_power_runtime,
+                                &next_power_policy)) {
+                            const esp_err_t transition_error =
+                                apply_runtime_power_transition(
+                                    &power_runtime, &power_policy,
+                                    &next_power_runtime,
+                                    &next_power_policy,
+                                    network_error == ESP_OK);
+                            if (transition_error != ESP_OK) {
+                                ESP_LOGW(
+                                    TAG,
+                                    "automatic power transition pending: %s",
+                                    esp_err_to_name(transition_error));
+                            } else {
+                                power_runtime = next_power_runtime;
+                                power_policy = next_power_policy;
+                                if (power_runtime.effective_mode ==
+                                    APP_POWER_MODE_SAVING) {
+                                    automatic_update_check_pending =
+                                        false;
+                                }
+                                dashboard.show_seconds =
+                                    power_policy.show_seconds;
+                                rtc_read_wait_ms = 0U;
+                                dashboard_data_changed = true;
+                                calendar_data_changed = true;
+                                system_status_data_changed = true;
+                                render_requested = true;
+                                ESP_LOGI(
+                                    TAG,
+                                    "automatic power mode switched to %s at %u%%",
+                                    power_runtime.effective_mode ==
+                                            APP_POWER_MODE_SAVING
+                                        ? "saving"
+                                        : "normal",
+                                    battery_measurement.percent);
+                            }
+                        }
+                    }
                 } else {
                     dashboard_data_changed |= dashboard.battery_valid;
                     system_status_data_changed |= dashboard.battery_valid;
                     dashboard.battery_valid = false;
+                    bool ignored_mode_change = false;
+                    (void)app_power_runtime_observe_battery(
+                        &power_runtime, false, 0U,
+                        &ignored_mode_change);
                     if ((cycle % 300U) == 0U) {
                         ESP_LOGW(TAG, "battery read failed: %s",
                                  esp_err_to_name(error));
@@ -2231,8 +2420,16 @@ void app_main(void)
                     display_show_audio(&display_audio_status);
                 } else if (active_page == APP_PAGE_SETTINGS) {
                     const display_settings_status_t settings_status = {
-                        .low_power_mode =
-                            settings.power_mode == APP_POWER_MODE_SAVING,
+                        .power_mode =
+                            settings.power_mode == APP_POWER_MODE_AUTO
+                                ? DISPLAY_POWER_MODE_AUTO
+                                : (settings.power_mode ==
+                                           APP_POWER_MODE_SAVING
+                                       ? DISPLAY_POWER_MODE_SAVING
+                                       : DISPLAY_POWER_MODE_NORMAL),
+                        .effective_low_power =
+                            power_runtime.effective_mode ==
+                            APP_POWER_MODE_SAVING,
                         .utc_offset_minutes = settings.utc_offset_minutes,
                         .temperature_fahrenheit =
                             settings.temperature_unit ==

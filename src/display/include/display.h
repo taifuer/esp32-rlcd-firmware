@@ -25,6 +25,12 @@ typedef enum {
     DISPLAY_ENVIRONMENT_COMFORT_NEEDS_ADJUSTMENT,
 } display_environment_comfort_t;
 
+typedef enum {
+    DISPLAY_POWER_MODE_AUTO = 0,
+    DISPLAY_POWER_MODE_NORMAL,
+    DISPLAY_POWER_MODE_SAVING,
+} display_power_mode_t;
+
 typedef struct {
     bool time_valid;
     uint16_t year;
@@ -76,7 +82,8 @@ typedef struct {
 } display_system_status_t;
 
 typedef struct {
-    bool low_power_mode;
+    display_power_mode_t power_mode;
+    bool effective_low_power;
     int16_t utc_offset_minutes;
     bool temperature_fahrenheit;
     uint8_t playback_volume_percent;

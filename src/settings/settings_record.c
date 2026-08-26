@@ -3,7 +3,9 @@
 #include <limits.h>
 
 #define SETTINGS_RECORD_MAGIC UINT32_C(0x47464352)
-#define SETTINGS_RECORD_FORMAT_VERSION 3U
+#define SETTINGS_RECORD_FORMAT_VERSION 4U
+#define SETTINGS_RECORD_SCHEMA4_FORMAT_VERSION 3U
+#define SETTINGS_RECORD_SCHEMA4_VERSION 4U
 #define SETTINGS_RECORD_SCHEMA3_FORMAT_VERSION 2U
 #define SETTINGS_RECORD_SCHEMA3_VERSION 3U
 #define SETTINGS_RECORD_SCHEMA2_FORMAT_VERSION 1U
@@ -24,11 +26,7 @@ enum {
     ALARM_HOUR_OFFSET = 21,
     ALARM_MINUTE_OFFSET = 22,
     ALARM_WEEKDAYS_OFFSET = 23,
-    /*
-     * v0.15.0-dev.3 stored image rotation here. Keep the byte and record
-     * size stable so its schema-v4 records remain readable, but do not
-     * expose the discarded preference through app_settings_t.
-     */
+    /* Schema v4 used this byte for the now-obsolete image rotation mode. */
     LEGACY_IMAGE_ROTATION_OFFSET = 24,
     CHECKSUM_OFFSET = 28,
     SCHEMA3_CHECKSUM_OFFSET = 24,
@@ -166,6 +164,59 @@ bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
     return true;
 }
 
+bool settings_record_decode_schema4(const uint8_t *encoded,
+                                    size_t encoded_size,
+                                    settings_record_t *record)
+{
+    if (encoded == NULL || record == NULL ||
+        encoded_size != SETTINGS_RECORD_SCHEMA4_ENCODED_SIZE ||
+        get_u32(encoded, MAGIC_OFFSET) != SETTINGS_RECORD_MAGIC ||
+        get_u16(encoded, FORMAT_OFFSET) !=
+            SETTINGS_RECORD_SCHEMA4_FORMAT_VERSION ||
+        get_u16(encoded, SIZE_OFFSET) !=
+            SETTINGS_RECORD_SCHEMA4_ENCODED_SIZE ||
+        get_u16(encoded, SCHEMA_OFFSET) != SETTINGS_RECORD_SCHEMA4_VERSION ||
+        get_u32(encoded, CHECKSUM_OFFSET) !=
+            record_checksum(encoded, CHECKSUM_OFFSET)) {
+        return false;
+    }
+
+    const uint16_t raw_utc_offset = get_u16(encoded, UTC_OFFSET);
+    const int32_t signed_utc_offset =
+        raw_utc_offset <= INT16_MAX
+            ? (int32_t)raw_utc_offset
+            : (int32_t)raw_utc_offset - INT32_C(65536);
+    if (encoded[ALARM_ENABLED_OFFSET] > 1U ||
+        encoded[LEGACY_IMAGE_ROTATION_OFFSET] > 2U) {
+        return false;
+    }
+    app_settings_t settings;
+    app_settings_defaults(&settings);
+    if (!app_power_mode_from_legacy_value(encoded[POWER_OFFSET],
+                                          &settings.power_mode)) {
+        return false;
+    }
+    settings.utc_offset_minutes = (int16_t)signed_utc_offset;
+    settings.temperature_unit =
+        (app_temperature_unit_t)encoded[TEMPERATURE_UNIT_OFFSET];
+    settings.audio_playback_volume = encoded[AUDIO_VOLUME_OFFSET];
+    settings.update_channel =
+        (app_update_channel_t)encoded[UPDATE_CHANNEL_OFFSET];
+    settings.alarm_enabled = encoded[ALARM_ENABLED_OFFSET] == 1U;
+    settings.alarm_hour = encoded[ALARM_HOUR_OFFSET];
+    settings.alarm_minute = encoded[ALARM_MINUTE_OFFSET];
+    settings.alarm_weekdays = encoded[ALARM_WEEKDAYS_OFFSET];
+    if (!app_settings_validate(&settings)) {
+        return false;
+    }
+
+    *record = (settings_record_t){
+        .generation = get_u32(encoded, GENERATION_OFFSET),
+        .settings = settings,
+    };
+    return true;
+}
+
 bool settings_record_decode_schema3(const uint8_t *encoded,
                                     size_t encoded_size,
                                     settings_record_t *record)
@@ -193,7 +244,10 @@ bool settings_record_decode_schema3(const uint8_t *encoded,
     }
     app_settings_t settings;
     app_settings_defaults(&settings);
-    settings.power_mode = (app_power_mode_t)encoded[POWER_OFFSET];
+    if (!app_power_mode_from_legacy_value(encoded[POWER_OFFSET],
+                                          &settings.power_mode)) {
+        return false;
+    }
     settings.utc_offset_minutes = (int16_t)signed_utc_offset;
     settings.temperature_unit =
         (app_temperature_unit_t)encoded[TEMPERATURE_UNIT_OFFSET];
@@ -239,7 +293,10 @@ bool settings_record_decode_schema2(const uint8_t *encoded,
             : (int32_t)raw_utc_offset - INT32_C(65536);
     app_settings_t settings;
     app_settings_defaults(&settings);
-    settings.power_mode = (app_power_mode_t)encoded[POWER_OFFSET];
+    if (!app_power_mode_from_legacy_value(encoded[POWER_OFFSET],
+                                          &settings.power_mode)) {
+        return false;
+    }
     settings.utc_offset_minutes = (int16_t)signed_utc_offset;
     settings.temperature_unit =
         (app_temperature_unit_t)encoded[TEMPERATURE_UNIT_OFFSET];
@@ -304,11 +361,14 @@ bool settings_record_repair_is_usable(
 }
 
 settings_migration_source_t settings_record_select_migration_source(
-    bool current_record_valid, bool schema3_record_valid,
-    bool schema2_record_valid)
+    bool current_record_valid, bool schema4_record_valid,
+    bool schema3_record_valid, bool schema2_record_valid)
 {
     if (current_record_valid) {
         return SETTINGS_MIGRATION_SOURCE_CURRENT_RECORD;
+    }
+    if (schema4_record_valid) {
+        return SETTINGS_MIGRATION_SOURCE_SCHEMA4_RECORD;
     }
     if (schema3_record_valid) {
         return SETTINGS_MIGRATION_SOURCE_SCHEMA3_RECORD;

@@ -89,9 +89,10 @@ static const char SETTINGS_PAGE[] =
     "</style></head><body><main><header><h1>设备设置</h1>"
     "<p>设置只保存在设备中。临时热点关闭后，本页面将无法继续访问。</p></header>"
     "<section><h2>偏好设置</h2><form id=\"settings\">"
-    "<label for=\"power\">运行模式</label><select id=\"power\" name=\"power\">"
-    "<option value=\"normal\">正常</option><option value=\"saving\">低功耗</option></select>"
-    "<p class=\"note\">低功耗模式减少自动联网和屏幕刷新；手动校时与升级仍可使用。</p>"
+    "<label for=\"power\">省电策略</label><select id=\"power\" name=\"power\">"
+    "<option value=\"auto\">自动（推荐）</option><option value=\"normal\">始终正常</option>"
+    "<option value=\"saving\">始终省电</option></select>"
+    "<p class=\"note\">自动策略在电量不高于 20% 时进入省电，恢复到 25% 时退出；手动校时与升级始终可用。</p>"
     "<label for=\"timezone\">时区</label><select id=\"timezone\" name=\"timezone\"></select>"
     "<label for=\"unit\">温度单位</label><select id=\"unit\" name=\"unit\">"
     "<option value=\"c\">摄氏度（°C）</option><option value=\"f\">华氏度（°F）</option></select>"
@@ -936,6 +937,13 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
     portEXIT_CRITICAL(&s_status_lock);
     sd_image_status_t sd_status = {0};
     sd_image_store_get_status(&sd_status);
+    const char *power_mode = app_power_mode_key(settings.power_mode);
+    if (power_mode == NULL) {
+        memset(token, 0, sizeof(token));
+        return send_page(request, "500 Internal Server Error",
+                         "text/plain; charset=utf-8",
+                         "设备省电策略无效。\n");
+    }
     char json[512];
     const int written = snprintf(
         json, sizeof(json),
@@ -945,7 +953,7 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
         "\"sd_state\":\"%s\",\"image_count\":%u,"
         "\"token\":\"%s\"}",
-        settings.power_mode == APP_POWER_MODE_SAVING ? "saving" : "normal",
+        power_mode,
         settings.utc_offset_minutes,
         settings.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT ? "f"
                                                                      : "c",

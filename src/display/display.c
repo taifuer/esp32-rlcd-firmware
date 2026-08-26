@@ -1111,8 +1111,16 @@ void display_show_settings(const display_settings_status_t *status)
     char value[40];
     draw_system_header("SETTINGS", 3U);
 
-    draw_system_row(72, "POWER",
-                    status->low_power_mode ? "SAVING" : "NORMAL");
+    const char *power = "NOT SET";
+    if (status->power_mode == DISPLAY_POWER_MODE_AUTO) {
+        power = status->effective_low_power ? "AUTO > SAVING"
+                                            : "AUTO > NORMAL";
+    } else if (status->power_mode == DISPLAY_POWER_MODE_NORMAL) {
+        power = "NORMAL";
+    } else if (status->power_mode == DISPLAY_POWER_MODE_SAVING) {
+        power = "SAVING";
+    }
+    draw_system_row(72, "POWER", power);
     format_utc_offset(value, sizeof(value), status->utc_offset_minutes);
     draw_system_row(108, "TIME ZONE", value);
     draw_system_row(144, "TEMP UNIT",
