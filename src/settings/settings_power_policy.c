@@ -88,6 +88,12 @@ bool app_power_runtime_set_configured(
 
     const app_power_mode_t previous = runtime->effective_mode;
     runtime->configured_mode = configured_mode;
+    if (configured_mode == APP_POWER_MODE_AUTO) {
+        /* This is a runtime strategy change, not a cold boot. Even without a
+         * valid ADC value, keep the previous effective mode as the hysteresis
+         * baseline for later battery observations. */
+        runtime->battery_observed = true;
+    }
     reset_pending(runtime);
 
     if (configured_mode == APP_POWER_MODE_NORMAL ||
