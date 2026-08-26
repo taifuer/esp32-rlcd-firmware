@@ -20,7 +20,7 @@
 | microSD 图片 | 状态 |
 | ![microSD 图片页效果图](docs/assets/image-screen.svg) | ![状态页效果图](docs/assets/status.svg) |
 | 音频 | 设置 |
-| ![音频页效果图](docs/assets/audio.svg) | ![设置页效果图](docs/assets/settings.svg) |
+| ![音频页效果图](docs/assets/audio.svg) | ![设置页效果图](dist/v0.16.0/settings.svg) |
 | 闹钟 | 在线更新 |
 | ![闹钟提醒效果图](docs/assets/alarm.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
 

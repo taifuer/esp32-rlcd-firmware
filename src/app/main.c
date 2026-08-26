@@ -61,6 +61,8 @@ typedef enum {
     APP_DISPLAY_ONLINE_UPDATE,
     APP_DISPLAY_MANUAL_SYNC,
     APP_DISPLAY_MANUAL_SYNC_RESULT,
+    APP_DISPLAY_SETTINGS_POWER_PROMPT,
+    APP_DISPLAY_SETTINGS_POWER_RESULT,
     APP_DISPLAY_SETTINGS_PORTAL_PROMPT,
     APP_DISPLAY_FIRMWARE_UPDATE_STARTING,
     APP_DISPLAY_FIRMWARE_UPDATE_READY,
@@ -78,10 +80,20 @@ typedef enum {
     MANUAL_SYNC_UI_UNAVAILABLE,
 } manual_sync_ui_t;
 
+typedef enum {
+    POWER_SETTING_UI_NONE = 0,
+    POWER_SETTING_UI_APPLYING,
+    POWER_SETTING_UI_SAVED,
+    POWER_SETTING_UI_PENDING,
+    POWER_SETTING_UI_SUPERSEDED,
+    POWER_SETTING_UI_FAILED,
+} power_setting_ui_t;
+
 enum {
     APP_LOOP_INTERVAL_MS = 50,
     APP_PERIODIC_UPDATE_MS = 1000,
     APP_MANUAL_SYNC_RESULT_MS = 2000,
+    APP_POWER_SETTING_RESULT_MS = 2000,
     APP_FIRMWARE_UPDATE_RESULT_MS = 2500,
     APP_GALLERY_RESULT_MS = 3000,
     APP_OTA_CONFIRM_DELAY_MS = 5000,
@@ -440,6 +452,21 @@ static void configure_key_timing(
                                       action_threshold_ms);
     } else if (action_threshold_ms > 0U) {
         (void)button_state_set_timing(state, action_threshold_ms,
+                                      action_threshold_ms);
+    } else {
+        (void)button_state_set_timing(state, BUTTON_HOLD_PROMPT_MS,
+                                      BUTTON_LONG_PRESS_DISABLED_MS);
+    }
+}
+
+static void configure_boot_timing(button_state_t *state, app_page_t page)
+{
+    const uint32_t action_threshold_ms =
+        app_page_boot_hold_threshold_ms(page);
+    if (app_page_boot_hold_action(page) ==
+            APP_PAGE_ACTION_CYCLE_POWER &&
+        action_threshold_ms > 0U) {
+        (void)button_state_set_timing(state, BUTTON_HOLD_PROMPT_MS,
                                       action_threshold_ms);
     } else {
         (void)button_state_set_timing(state, BUTTON_HOLD_PROMPT_MS,
@@ -890,6 +917,7 @@ void app_main(void)
     TickType_t last_battery_read = initial_tick;
     uint32_t rtc_read_wait_ms = 0U;
     TickType_t manual_sync_ui_started = initial_tick;
+    TickType_t power_setting_ui_started = initial_tick;
     TickType_t firmware_update_result_started = initial_tick;
     TickType_t gallery_result_started = initial_tick;
     network_time_state_t previous_network_state = NETWORK_TIME_STATE_UNINITIALIZED;
@@ -898,8 +926,15 @@ void app_main(void)
     TickType_t provisioning_started = initial_tick;
     app_display_mode_t previous_display_mode = APP_DISPLAY_NONE;
     manual_sync_ui_t manual_sync_ui = MANUAL_SYNC_UI_NONE;
+    power_setting_ui_t power_setting_ui = POWER_SETTING_UI_NONE;
+    app_power_mode_t power_setting_target = settings.power_mode;
+    bool power_setting_apply_pending = false;
+    bool power_setting_result_timer_started = false;
     esp_err_t manual_sync_error = ESP_OK;
     bool first_periodic_update = true;
+    bool settings_refresh_requested = false;
+    bool battery_read_pending = false;
+    bool dual_button_release_gate = false;
     bool status_refresh_pending = false;
     uint8_t previous_portal_seconds = 0U;
     uint8_t previous_update_percent = 0U;
@@ -926,7 +961,6 @@ void app_main(void)
         bool system_status_data_changed = false;
         bool online_update_data_changed = false;
         bool image_delete_ui_transitioned = false;
-        bool force_battery_read = false;
         sd_image_status_t latest_sd_image_status = {0};
         sd_image_store_get_status(&latest_sd_image_status);
         if (latest_sd_image_status.state != previous_sd_image_state ||
@@ -1086,7 +1120,7 @@ void app_main(void)
                     power_runtime = next_power_runtime;
                     power_policy = next_power_policy;
                     if (!usb_data_host_connected) {
-                        force_battery_read = true;
+                        battery_read_pending = true;
                     }
                     if (effective_mode_changed) {
                         dashboard.show_seconds =
@@ -1112,14 +1146,20 @@ void app_main(void)
             }
         }
         bool runtime_settings_changed = false;
-        if (periodic_update &&
+        if ((periodic_update || settings_refresh_requested) &&
             (settings_error == ESP_OK ||
              settings_error == ESP_ERR_NOT_SUPPORTED)) {
+            /* A device-side save requests one immediate refresh. If the
+             * runtime transition is temporarily unavailable, the existing
+             * periodic path retries it without spinning or flooding logs. */
+            settings_refresh_requested = false;
             app_settings_snapshot_t snapshot = {0};
             const esp_err_t snapshot_error =
                 app_settings_get_snapshot(&snapshot);
             if (snapshot_error == ESP_OK &&
                 snapshot.generation != settings_generation) {
+                const bool configured_power_changed =
+                    snapshot.settings.power_mode != settings.power_mode;
                 app_power_runtime_t next_power_runtime = power_runtime;
                 app_power_policy_t next_power_policy = {0};
                 bool effective_mode_changed = false;
@@ -1169,6 +1209,10 @@ void app_main(void)
                     settings_generation = snapshot.generation;
                     power_runtime = next_power_runtime;
                     power_policy = next_power_policy;
+                    if (configured_power_changed) {
+                        battery_read_pending = true;
+                    }
+                    power_setting_apply_pending = false;
                     if (power_runtime.effective_mode ==
                         APP_POWER_MODE_SAVING) {
                         automatic_update_check_pending = false;
@@ -1186,6 +1230,16 @@ void app_main(void)
                     system_status_data_changed = true;
                     online_update_data_changed = true;
                     render_requested = true;
+                    if (power_setting_ui ==
+                            POWER_SETTING_UI_APPLYING ||
+                        power_setting_ui ==
+                            POWER_SETTING_UI_PENDING) {
+                        power_setting_ui =
+                            settings.power_mode == power_setting_target
+                                ? POWER_SETTING_UI_SAVED
+                                : POWER_SETTING_UI_SUPERSEDED;
+                        power_setting_result_timer_started = false;
+                    }
                     ESP_LOGI(TAG,
                              "saved settings applied without restart "
                              "(generation=%u power=%s/%s%s)",
@@ -1194,12 +1248,35 @@ void app_main(void)
                              app_power_mode_key(
                                  power_runtime.effective_mode),
                              effective_mode_changed ? " changed" : "");
-                } else if (apply_error != ESP_ERR_INVALID_STATE) {
-                    ESP_LOGW(TAG,
-                             "saved settings are pending runtime apply: %s",
-                             esp_err_to_name(apply_error));
+                } else {
+                    if (power_setting_apply_pending) {
+                        power_setting_target =
+                            snapshot.settings.power_mode;
+                    }
+                    if (power_setting_ui ==
+                        POWER_SETTING_UI_APPLYING) {
+                        power_setting_ui =
+                            snapshot.settings.power_mode ==
+                                    power_setting_target
+                                ? POWER_SETTING_UI_PENDING
+                                : POWER_SETTING_UI_SUPERSEDED;
+                        power_setting_result_timer_started = false;
+                        render_requested = true;
+                    }
+                    if (apply_error != ESP_ERR_INVALID_STATE) {
+                        ESP_LOGW(
+                            TAG,
+                            "saved settings are pending runtime apply: %s",
+                            esp_err_to_name(apply_error));
+                    }
                 }
             } else if (snapshot_error != ESP_OK) {
+                if (power_setting_ui ==
+                    POWER_SETTING_UI_APPLYING) {
+                    power_setting_ui = POWER_SETTING_UI_PENDING;
+                    power_setting_result_timer_started = false;
+                    render_requested = true;
+                }
                 ESP_LOGW(TAG, "could not refresh saved settings: %s",
                          esp_err_to_name(snapshot_error));
             }
@@ -1231,6 +1308,7 @@ void app_main(void)
         if (buttons_ready) {
             configure_key_timing(&key_button_state, input_page,
                                  online_update_status.state);
+            configure_boot_timing(&boot_button_state, input_page);
             key_pressed = board_key_is_pressed();
             boot_pressed = board_boot_is_pressed();
             key_event = button_state_update(
@@ -1246,6 +1324,10 @@ void app_main(void)
             key_pressed || key_debounced_pressed;
         const bool boot_pressed_or_debounced =
             boot_pressed || boot_debounced_pressed;
+        if (key_pressed_or_debounced &&
+            boot_pressed_or_debounced) {
+            dual_button_release_gate = true;
+        }
         if (!key_pressed_or_debounced &&
             app_image_delete_ui_note_key_released(
                 &image_delete_ui)) {
@@ -1390,6 +1472,13 @@ void app_main(void)
             alarm_gate_was_blocking;
 
         if (alarm_started_this_loop &&
+            power_setting_ui != POWER_SETTING_UI_NONE) {
+            /* The alarm has visual priority. Give the power result a full
+             * display interval again after the alarm is dismissed. */
+            power_setting_result_timer_started = false;
+        }
+
+        if (alarm_started_this_loop &&
             app_image_delete_ui_cancel(&image_delete_ui)) {
             memset(image_delete_target, 0,
                    sizeof(image_delete_target));
@@ -1406,6 +1495,19 @@ void app_main(void)
             }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
+        } else if (dual_button_release_gate) {
+            if (key_event != BUTTON_EVENT_NONE ||
+                boot_event != BUTTON_EVENT_NONE) {
+                app_page_state_note_activity(&page_state);
+            }
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
+            if (!key_pressed_or_debounced &&
+                !boot_pressed_or_debounced) {
+                dual_button_release_gate = false;
+                ESP_LOGI(TAG,
+                         "both buttons released; input restored");
+            }
         } else if (image_delete_release_gate_was_active) {
             if (key_event != BUTTON_EVENT_NONE ||
                 boot_event != BUTTON_EVENT_NONE) {
@@ -1446,6 +1548,14 @@ void app_main(void)
             boot_event = BUTTON_EVENT_NONE;
         }
         if (gallery_download_ui_active) {
+            if (key_event != BUTTON_EVENT_NONE ||
+                boot_event != BUTTON_EVENT_NONE) {
+                app_page_state_note_activity(&page_state);
+            }
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
+        }
+        if (power_setting_ui != POWER_SETTING_UI_NONE) {
             if (key_event != BUTTON_EVENT_NONE ||
                 boot_event != BUTTON_EVENT_NONE) {
                 app_page_state_note_activity(&page_state);
@@ -1687,7 +1797,8 @@ void app_main(void)
                        manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                        !firmware_update_ui_active &&
                        !online_update_busy &&
-                       !online_update_confirmation_active) {
+                       !online_update_confirmation_active &&
+                       !boot_pressed_or_debounced) {
                 const esp_err_t start_error = firmware_update_start();
                 if (start_error != ESP_OK) {
                     ESP_LOGW(TAG, "could not open settings portal: %s",
@@ -1706,7 +1817,52 @@ void app_main(void)
             }
         }
 
-        if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
+        if (boot_event == BUTTON_EVENT_HOLD_CANCELLED) {
+            app_page_state_note_activity(&page_state);
+            render_requested = true;
+            if (input_page == APP_PAGE_SETTINGS) {
+                ESP_LOGI(TAG,
+                         "BOOT hold cancelled; power mode unchanged");
+            } else {
+                ESP_LOGI(TAG,
+                         "BOOT hold released without an action");
+            }
+        } else if (boot_event == BUTTON_EVENT_LONG_PRESS) {
+            app_page_state_note_activity(&page_state);
+            const app_page_action_t boot_action =
+                app_page_boot_hold_action(input_page);
+            if (boot_action == APP_PAGE_ACTION_CYCLE_POWER &&
+                manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+                !firmware_update_ui_active &&
+                !gallery_download_ui_active && !online_update_busy &&
+                !online_update_confirmation_active &&
+                !key_pressed_or_debounced) {
+                app_power_mode_t next_mode = APP_POWER_MODE_AUTO;
+                const esp_err_t save_error =
+                    app_settings_cycle_power_mode(&next_mode);
+
+                if (save_error == ESP_OK) {
+                    power_setting_target = next_mode;
+                    power_setting_apply_pending = true;
+                    power_setting_ui = POWER_SETTING_UI_APPLYING;
+                    power_setting_result_timer_started = false;
+                    settings_refresh_requested = true;
+                    if (next_mode == APP_POWER_MODE_SAVING) {
+                        automatic_update_check_pending = false;
+                    }
+                    ESP_LOGI(TAG,
+                             "BOOT long press: power mode saved as %s",
+                             app_power_mode_key(next_mode));
+                } else {
+                    power_setting_ui = POWER_SETTING_UI_FAILED;
+                    power_setting_result_timer_started = false;
+                    ESP_LOGW(TAG,
+                             "BOOT long press: power mode unchanged: %s",
+                             esp_err_to_name(save_error));
+                }
+                render_requested = true;
+            }
+        } else if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
             if (app_image_delete_ui_cancel(&image_delete_ui)) {
                 image_delete_wait_for_button_release = true;
                 memset(image_delete_target, 0,
@@ -1764,6 +1920,8 @@ void app_main(void)
 
         const uint32_t button_hold_ms =
             button_state_hold_ms(&key_button_state);
+        const uint32_t boot_hold_ms =
+            button_state_hold_ms(&boot_button_state);
         const bool image_delete_hold_prompt_active =
             !alarm_button_events_suppressed && !alarm_modal_active &&
             buttons_ready && input_page == APP_PAGE_IMAGE &&
@@ -1777,16 +1935,34 @@ void app_main(void)
             latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
             button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
             button_hold_ms < APP_PAGE_IMAGE_DELETE_HOLD_MS;
+        const bool settings_power_prompt_active =
+            !alarm_button_events_suppressed && !alarm_modal_active &&
+            buttons_ready && input_page == APP_PAGE_SETTINGS &&
+            power_setting_ui == POWER_SETTING_UI_NONE &&
+            manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+            !firmware_update_ui_active && !gallery_download_ui_active &&
+            !online_update_busy && !online_update_confirmation_active &&
+            !key_pressed_or_debounced &&
+            boot_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
+            boot_hold_ms < APP_PAGE_SETTINGS_POWER_HOLD_MS;
         const bool settings_portal_prompt_active =
             !alarm_button_events_suppressed && !alarm_modal_active &&
             buttons_ready &&
             input_page == APP_PAGE_SETTINGS &&
+            power_setting_ui == POWER_SETTING_UI_NONE &&
             manual_sync_ui == MANUAL_SYNC_UI_NONE &&
             !firmware_update_ui_active && !gallery_download_ui_active &&
             !online_update_busy &&
             !online_update_confirmation_active &&
+            !boot_pressed_or_debounced &&
             button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
             button_hold_ms < APP_PAGE_SETTINGS_HOLD_MS;
+        uint8_t power_seconds_remaining = 0U;
+        if (settings_power_prompt_active) {
+            power_seconds_remaining = (uint8_t)(
+                (APP_PAGE_SETTINGS_POWER_HOLD_MS - boot_hold_ms + 999U) /
+                1000U);
+        }
         uint8_t portal_seconds_remaining = 0U;
         if (settings_portal_prompt_active) {
             portal_seconds_remaining = (uint8_t)(
@@ -1807,6 +1983,29 @@ void app_main(void)
             now - manual_sync_ui_started >=
                 pdMS_TO_TICKS(APP_MANUAL_SYNC_RESULT_MS)) {
             manual_sync_ui = MANUAL_SYNC_UI_NONE;
+            render_requested = true;
+        }
+        if (power_setting_ui != POWER_SETTING_UI_NONE &&
+            power_setting_ui != POWER_SETTING_UI_APPLYING &&
+            !display_ready &&
+            !power_setting_result_timer_started) {
+            /* A failed display must not turn a reversible setting into a
+             * permanent input lock. */
+            power_setting_ui_started = now;
+            power_setting_result_timer_started = true;
+        }
+        if (power_setting_ui != POWER_SETTING_UI_NONE &&
+            power_setting_ui != POWER_SETTING_UI_APPLYING &&
+            power_setting_result_timer_started &&
+            now - power_setting_ui_started >=
+                pdMS_TO_TICKS(APP_POWER_SETTING_RESULT_MS) &&
+            !key_pressed_or_debounced &&
+            !boot_pressed_or_debounced) {
+            /* Do not let a press started on the result screen continue into
+             * the restored SETTINGS page and trigger another action. */
+            power_setting_ui = POWER_SETTING_UI_NONE;
+            power_setting_result_timer_started = false;
+            app_page_state_note_activity(&page_state);
             render_requested = true;
         }
         const app_image_delete_ui_state_t image_delete_state_before_tick =
@@ -1832,6 +2031,8 @@ void app_main(void)
         if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
             !image_delete_hold_prompt_active &&
             !app_image_delete_ui_is_active(&image_delete_ui) &&
+            !settings_power_prompt_active &&
+            power_setting_ui == POWER_SETTING_UI_NONE &&
             !settings_portal_prompt_active && !firmware_update_ui_active &&
             !gallery_download_ui_active &&
             !(input_page == APP_PAGE_ONLINE_UPDATE &&
@@ -1878,7 +2079,7 @@ void app_main(void)
                     pdMS_TO_TICKS(power_policy.sensor_read_interval_ms);
             const bool battery_read_due =
                 first_update || runtime_settings_changed ||
-                force_battery_read ||
+                battery_read_pending ||
                 status_page_needs_fresh_data ||
                 now - last_battery_read >=
                     pdMS_TO_TICKS(power_policy.battery_read_interval_ms);
@@ -2022,6 +2223,7 @@ void app_main(void)
                     battery_measurement.voltage_mv;
                 const esp_err_t error = battery_read(&battery_measurement);
                 if (error == ESP_OK) {
+                    battery_read_pending = false;
                     const bool battery_display_changed =
                         !dashboard.battery_valid ||
                         dashboard.battery_percent !=
@@ -2139,6 +2341,9 @@ void app_main(void)
         }
 
         if (automatic_update_check_pending &&
+            power_policy.automatic_network &&
+            !(power_setting_apply_pending &&
+              power_setting_target == APP_POWER_MODE_SAVING) &&
             online_update_error == ESP_OK &&
             network_status.state == NETWORK_TIME_STATE_SYNCHRONIZED &&
             !firmware_update_ui_active && !gallery_download_ui_active &&
@@ -2175,6 +2380,46 @@ void app_main(void)
                 display_show_alarm(&alarm_status);
             }
             previous_display_mode = APP_DISPLAY_ALARM;
+            previous_portal_seconds = 0U;
+        } else if (display_ready &&
+                   power_setting_ui != POWER_SETTING_UI_NONE) {
+            if (render_requested ||
+                previous_display_mode !=
+                    APP_DISPLAY_SETTINGS_POWER_RESULT) {
+                if (power_setting_ui == POWER_SETTING_UI_APPLYING) {
+                    char detail[32];
+                    snprintf(detail, sizeof(detail), "%s MODE",
+                             app_power_mode_name(
+                                 power_setting_target));
+                    display_show_status("APPLYING POWER", detail);
+                } else if (power_setting_ui ==
+                           POWER_SETTING_UI_SAVED) {
+                    char detail[32];
+                    snprintf(detail, sizeof(detail), "%s MODE",
+                             app_power_mode_name(
+                                 power_setting_target));
+                    display_show_status("POWER SAVED", detail);
+                } else if (power_setting_ui ==
+                           POWER_SETTING_UI_PENDING) {
+                    display_show_status("POWER SAVED",
+                                        "Apply pending; retrying");
+                } else if (power_setting_ui ==
+                           POWER_SETTING_UI_SUPERSEDED) {
+                    display_show_status("POWER CHANGED",
+                                        "Newer settings kept");
+                } else {
+                    display_show_status("POWER NOT SAVED",
+                                        "Settings unchanged");
+                }
+            }
+            if (power_setting_ui != POWER_SETTING_UI_APPLYING &&
+                !power_setting_result_timer_started) {
+                /* Start the result interval only after the first completed
+                 * draw, so NVS and display work cannot shorten it. */
+                power_setting_ui_started = xTaskGetTickCount();
+                power_setting_result_timer_started = true;
+            }
+            previous_display_mode = APP_DISPLAY_SETTINGS_POWER_RESULT;
             previous_portal_seconds = 0U;
         } else if (display_ready &&
                    app_image_delete_ui_is_active(&image_delete_ui)) {
@@ -2245,6 +2490,17 @@ void app_main(void)
             }
             previous_display_mode = APP_DISPLAY_IMAGE_DELETE_HOLD;
             previous_portal_seconds = 0U;
+        } else if (display_ready && settings_power_prompt_active) {
+            if (previous_display_mode !=
+                    APP_DISPLAY_SETTINGS_POWER_PROMPT ||
+                power_seconds_remaining != previous_portal_seconds) {
+                char detail[40];
+                snprintf(detail, sizeof(detail), "Keep holding: %us",
+                         power_seconds_remaining);
+                display_show_status("CHANGE POWER", detail);
+            }
+            previous_display_mode = APP_DISPLAY_SETTINGS_POWER_PROMPT;
+            previous_portal_seconds = power_seconds_remaining;
         } else if (display_ready && settings_portal_prompt_active) {
             if (previous_display_mode !=
                     APP_DISPLAY_SETTINGS_PORTAL_PROMPT ||
@@ -2492,17 +2748,23 @@ void app_main(void)
                     };
                     display_show_audio(&display_audio_status);
                 } else if (active_page == APP_PAGE_SETTINGS) {
+                    const app_power_mode_t displayed_power_mode =
+                        power_setting_apply_pending
+                            ? power_setting_target
+                            : settings.power_mode;
                     const display_settings_status_t settings_status = {
                         .power_mode =
-                            settings.power_mode == APP_POWER_MODE_AUTO
+                            displayed_power_mode == APP_POWER_MODE_AUTO
                                 ? DISPLAY_POWER_MODE_AUTO
-                                : (settings.power_mode ==
+                                : (displayed_power_mode ==
                                            APP_POWER_MODE_SAVING
                                        ? DISPLAY_POWER_MODE_SAVING
                                        : DISPLAY_POWER_MODE_NORMAL),
                         .effective_low_power =
                             power_runtime.effective_mode ==
                             APP_POWER_MODE_SAVING,
+                        .power_apply_pending =
+                            power_setting_apply_pending,
                         .utc_offset_minutes = settings.utc_offset_minutes,
                         .temperature_fahrenheit =
                             settings.temperature_unit ==

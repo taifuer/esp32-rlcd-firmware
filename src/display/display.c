@@ -149,6 +149,17 @@ static void draw_system_footer(const char *text)
     draw_centered(SYSTEM_FOOTER_BASELINE_Y, text);
 }
 
+static void draw_settings_footer(void)
+{
+    u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN,
+                   SYSTEM_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(270, "BOOT: HOME | KEY: NEXT");
+    draw_centered(294,
+                  "HOLD BOOT 2s: POWER | HOLD KEY 3s: PORTAL");
+}
+
 static void draw_daily_footer(const char *text)
 {
     u8g2_DrawHLine(s_u8g2, DAILY_SIDE_MARGIN,
@@ -1112,7 +1123,15 @@ void display_show_settings(const display_settings_status_t *status)
     draw_system_header("SETTINGS", 3U);
 
     const char *power = "NOT SET";
-    if (status->power_mode == DISPLAY_POWER_MODE_AUTO) {
+    if (status->power_apply_pending) {
+        if (status->power_mode == DISPLAY_POWER_MODE_AUTO) {
+            power = "AUTO > PENDING";
+        } else if (status->power_mode == DISPLAY_POWER_MODE_NORMAL) {
+            power = "NORMAL > PENDING";
+        } else if (status->power_mode == DISPLAY_POWER_MODE_SAVING) {
+            power = "SAVING > PENDING";
+        }
+    } else if (status->power_mode == DISPLAY_POWER_MODE_AUTO) {
         power = status->effective_low_power ? "AUTO > SAVING"
                                             : "AUTO > NORMAL";
     } else if (status->power_mode == DISPLAY_POWER_MODE_NORMAL) {
@@ -1144,8 +1163,7 @@ void display_show_settings(const display_settings_status_t *status)
     }
     draw_system_row(216, "ALARM", value);
 
-    draw_system_footer(
-        "BOOT: HOME | KEY: NEXT | HOLD KEY 3s: OPEN PORTAL");
+    draw_settings_footer();
     u8g2_SendBuffer(s_u8g2);
 }
 

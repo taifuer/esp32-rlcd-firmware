@@ -86,6 +86,22 @@ static void test_power_mode_names_and_legacy_values(void)
     assert(!app_power_mode_from_legacy_value(0U, NULL));
 }
 
+static void test_power_mode_cycle(void)
+{
+    app_power_mode_t mode = APP_POWER_MODE_AUTO;
+    assert(app_power_mode_next(mode, &mode));
+    assert(mode == APP_POWER_MODE_NORMAL);
+    assert(app_power_mode_next(mode, &mode));
+    assert(mode == APP_POWER_MODE_SAVING);
+    assert(app_power_mode_next(mode, &mode));
+    assert(mode == APP_POWER_MODE_AUTO);
+
+    mode = APP_POWER_MODE_SAVING;
+    assert(!app_power_mode_next((app_power_mode_t)3, &mode));
+    assert(mode == APP_POWER_MODE_SAVING);
+    assert(!app_power_mode_next(APP_POWER_MODE_AUTO, NULL));
+}
+
 static void test_timezone_format(void)
 {
     char timezone[APP_SETTINGS_POSIX_TZ_CAPACITY];
@@ -507,6 +523,7 @@ int main(void)
 {
     test_defaults_and_validation();
     test_power_mode_names_and_legacy_values();
+    test_power_mode_cycle();
     test_timezone_format();
     test_power_policy();
     test_automatic_power_policy();

@@ -113,10 +113,24 @@ uint32_t app_page_key_hold_threshold_ms(app_page_t page)
         return APP_PAGE_SETTINGS_HOLD_MS;
     case APP_PAGE_ACTION_CHECK_ONLINE_UPDATE:
         return APP_PAGE_ONLINE_UPDATE_CHECK_HOLD_MS;
+    case APP_PAGE_ACTION_CYCLE_POWER:
     case APP_PAGE_ACTION_NONE:
     default:
         return 0U;
     }
+}
+
+app_page_action_t app_page_boot_hold_action(app_page_t page)
+{
+    return page == APP_PAGE_SETTINGS ? APP_PAGE_ACTION_CYCLE_POWER
+                                     : APP_PAGE_ACTION_NONE;
+}
+
+uint32_t app_page_boot_hold_threshold_ms(app_page_t page)
+{
+    return app_page_boot_hold_action(page) == APP_PAGE_ACTION_CYCLE_POWER
+               ? APP_PAGE_SETTINGS_POWER_HOLD_MS
+               : 0U;
 }
 
 void app_page_state_boot_short_press(app_page_state_t *state)

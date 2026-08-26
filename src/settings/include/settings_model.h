@@ -62,6 +62,10 @@ void app_settings_defaults(app_settings_t *settings);
 bool app_settings_validate(const app_settings_t *settings);
 const char *app_power_mode_key(app_power_mode_t mode);
 const char *app_power_mode_name(app_power_mode_t mode);
+/* Advance through the user-facing order AUTO -> NORMAL -> SAVING -> AUTO.
+ * The enum values intentionally do not encode this order. */
+bool app_power_mode_next(app_power_mode_t current,
+                         app_power_mode_t *next);
 /* Decode schema v1-v4 values while preserving the user's fixed mode. */
 bool app_power_mode_from_legacy_value(uint8_t value,
                                       app_power_mode_t *mode);

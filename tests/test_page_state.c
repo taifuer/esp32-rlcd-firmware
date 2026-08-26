@@ -45,6 +45,26 @@ int main(void)
     assert(APP_PAGE_ONLINE_UPDATE_INSTALL_HOLD_MS == 3000U);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_HOME) == 0U);
 
+    assert(app_page_boot_hold_action(APP_PAGE_HOME) ==
+           APP_PAGE_ACTION_NONE);
+    assert(app_page_boot_hold_action(APP_PAGE_CALENDAR) ==
+           APP_PAGE_ACTION_NONE);
+    assert(app_page_boot_hold_action(APP_PAGE_IMAGE) ==
+           APP_PAGE_ACTION_NONE);
+    assert(app_page_boot_hold_action(APP_PAGE_STATUS) ==
+           APP_PAGE_ACTION_NONE);
+    assert(app_page_boot_hold_action(APP_PAGE_AUDIO) ==
+           APP_PAGE_ACTION_NONE);
+    assert(app_page_boot_hold_action(APP_PAGE_SETTINGS) ==
+           APP_PAGE_ACTION_CYCLE_POWER);
+    assert(app_page_boot_hold_threshold_ms(APP_PAGE_SETTINGS) ==
+           APP_PAGE_SETTINGS_POWER_HOLD_MS);
+    assert(APP_PAGE_SETTINGS_POWER_HOLD_MS == 2000U);
+    assert(app_page_boot_hold_action(APP_PAGE_ONLINE_UPDATE) ==
+           APP_PAGE_ACTION_NONE);
+    assert(app_page_boot_hold_threshold_ms(APP_PAGE_HOME) == 0U);
+    assert(app_page_boot_hold_threshold_ms(APP_PAGE_ONLINE_UPDATE) == 0U);
+
     app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
     app_page_state_boot_short_press(&state);

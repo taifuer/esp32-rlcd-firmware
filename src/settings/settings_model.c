@@ -99,6 +99,31 @@ const char *app_power_mode_name(app_power_mode_t mode)
     }
 }
 
+bool app_power_mode_next(app_power_mode_t current,
+                         app_power_mode_t *next)
+{
+    if (next == NULL) {
+        return false;
+    }
+
+    app_power_mode_t result;
+    switch (current) {
+    case APP_POWER_MODE_AUTO:
+        result = APP_POWER_MODE_NORMAL;
+        break;
+    case APP_POWER_MODE_NORMAL:
+        result = APP_POWER_MODE_SAVING;
+        break;
+    case APP_POWER_MODE_SAVING:
+        result = APP_POWER_MODE_AUTO;
+        break;
+    default:
+        return false;
+    }
+    *next = result;
+    return true;
+}
+
 bool app_power_mode_from_legacy_value(uint8_t value,
                                       app_power_mode_t *mode)
 {

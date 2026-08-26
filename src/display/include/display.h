@@ -84,6 +84,7 @@ typedef struct {
 typedef struct {
     display_power_mode_t power_mode;
     bool effective_low_power;
+    bool power_apply_pending;
     int16_t utc_offset_minutes;
     bool temperature_fahrenheit;
     uint8_t playback_volume_percent;

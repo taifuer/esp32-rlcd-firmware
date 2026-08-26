@@ -25,6 +25,9 @@ esp_err_t app_settings_get_snapshot(app_settings_snapshot_t *snapshot);
 /* Convenience wrapper for callers which do not need change detection. */
 esp_err_t app_settings_get(app_settings_t *settings);
 esp_err_t app_settings_save(const app_settings_t *settings);
+/* Atomically advance only the persisted power mode while preserving every
+ * other field from the latest record. */
+esp_err_t app_settings_cycle_power_mode(app_power_mode_t *saved_mode);
 esp_err_t app_settings_restore_defaults(void);
 esp_err_t app_settings_apply_timezone(const app_settings_t *settings);
 

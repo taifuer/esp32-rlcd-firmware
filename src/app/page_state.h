@@ -12,6 +12,7 @@ extern "C" {
 #define APP_PAGE_AUDIO_TEST_HOLD_MS 2000U
 #define APP_PAGE_IMAGE_DELETE_HOLD_MS 2000U
 #define APP_PAGE_SETTINGS_HOLD_MS 3000U
+#define APP_PAGE_SETTINGS_POWER_HOLD_MS 2000U
 #define APP_PAGE_ONLINE_UPDATE_CHECK_HOLD_MS 2000U
 #define APP_PAGE_ONLINE_UPDATE_INSTALL_HOLD_MS 3000U
 
@@ -32,6 +33,7 @@ typedef enum {
     APP_PAGE_ACTION_TEST_AUDIO,
     APP_PAGE_ACTION_OPEN_SETTINGS,
     APP_PAGE_ACTION_CHECK_ONLINE_UPDATE,
+    APP_PAGE_ACTION_CYCLE_POWER,
 } app_page_action_t;
 
 typedef struct {
@@ -49,6 +51,8 @@ bool app_page_is_daily(app_page_t page);
 bool app_page_is_system(app_page_t page);
 app_page_action_t app_page_key_hold_action(app_page_t page);
 uint32_t app_page_key_hold_threshold_ms(app_page_t page);
+app_page_action_t app_page_boot_hold_action(app_page_t page);
+uint32_t app_page_boot_hold_threshold_ms(app_page_t page);
 void app_page_state_boot_short_press(app_page_state_t *state);
 void app_page_state_key_short_press(app_page_state_t *state);
 void app_page_state_note_activity(app_page_state_t *state);

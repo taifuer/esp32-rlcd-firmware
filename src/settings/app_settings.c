@@ -825,19 +825,10 @@ esp_err_t app_settings_get(app_settings_t *settings)
     return error;
 }
 
-esp_err_t app_settings_save(const app_settings_t *settings)
+/* s_mutex must be held and settings must already be validated. */
+static esp_err_t save_settings_locked(const app_settings_t *settings)
 {
-    if (!app_settings_validate(settings)) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (!s_initialized || s_mutex == NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
-        return ESP_ERR_TIMEOUT;
-    }
     if (s_future_schema) {
-        xSemaphoreGive(s_mutex);
         return ESP_ERR_NOT_SUPPORTED;
     }
     nvs_handle_t handle = 0;
@@ -856,6 +847,51 @@ esp_err_t app_settings_save(const app_settings_t *settings)
         s_settings = *settings;
         s_active_slot = written_slot;
         s_generation = written_generation;
+    }
+    return error;
+}
+
+esp_err_t app_settings_save(const app_settings_t *settings)
+{
+    if (!app_settings_validate(settings)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_initialized || s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    const esp_err_t error = save_settings_locked(settings);
+    xSemaphoreGive(s_mutex);
+    return error;
+}
+
+esp_err_t app_settings_cycle_power_mode(app_power_mode_t *saved_mode)
+{
+    if (saved_mode == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_initialized || s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    app_settings_t updated = s_settings;
+    app_power_mode_t next_mode = APP_POWER_MODE_AUTO;
+    esp_err_t error = app_power_mode_next(updated.power_mode, &next_mode)
+                          ? ESP_OK
+                          : ESP_ERR_INVALID_STATE;
+    if (error == ESP_OK) {
+        updated.power_mode = next_mode;
+        error = app_settings_validate(&updated)
+                    ? save_settings_locked(&updated)
+                    : ESP_ERR_INVALID_STATE;
+    }
+    if (error == ESP_OK) {
+        *saved_mode = next_mode;
     }
     xSemaphoreGive(s_mutex);
     return error;
