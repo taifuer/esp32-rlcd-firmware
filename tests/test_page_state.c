@@ -23,8 +23,9 @@ int main(void)
     assert(app_page_key_hold_action(APP_PAGE_CALENDAR) ==
            APP_PAGE_ACTION_NONE);
     assert(app_page_key_hold_action(APP_PAGE_IMAGE) ==
-           APP_PAGE_ACTION_NONE);
-    assert(app_page_key_hold_threshold_ms(APP_PAGE_IMAGE) == 0U);
+           APP_PAGE_ACTION_DELETE_IMAGE);
+    assert(app_page_key_hold_threshold_ms(APP_PAGE_IMAGE) ==
+           APP_PAGE_IMAGE_DELETE_HOLD_MS);
     assert(app_page_key_hold_action(APP_PAGE_STATUS) ==
            APP_PAGE_ACTION_SYNC_TIME);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_STATUS) ==

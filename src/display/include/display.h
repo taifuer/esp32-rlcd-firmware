@@ -151,6 +151,12 @@ typedef struct {
     uint8_t progress_percent;
 } display_online_update_status_t;
 
+typedef enum {
+    DISPLAY_IMAGE_DELETE_DELETING = 0,
+    DISPLAY_IMAGE_DELETE_DELETED,
+    DISPLAY_IMAGE_DELETE_FAILED,
+} display_image_delete_status_t;
+
 esp_err_t display_init(void);
 void display_show_status(const char *title, const char *detail);
 void display_show_network_setup(const char *ssid, const char *password, const char *url);
@@ -162,6 +168,10 @@ void display_show_calendar(const display_dashboard_t *dashboard);
 void display_show_monochrome_image(
     const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
     size_t selected_index, size_t image_count);
+void display_show_image_delete_confirmation(
+    const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
+    size_t selected_index, size_t image_count, bool delete_ready);
+void display_show_image_delete_status(display_image_delete_status_t status);
 void display_show_system_status(const display_system_status_t *status);
 void display_show_audio(const display_audio_status_t *status);
 void display_show_settings(const display_settings_status_t *status);

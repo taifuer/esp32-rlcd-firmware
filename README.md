@@ -5,14 +5,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.15.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.16.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
-以下界面反映 v0.15.0 正式版。
+以下界面反映 v0.16.0 正式版。
 
 | 首屏 | 月历 |
 | :---: | :---: |
@@ -48,33 +48,35 @@
 - 通过板载 1-bit SDMMC 显示 FAT32 microSD 中最多 32 张黑白图片；多图时短按 `KEY`
   手动切换并跨重启保留选择，不自动轮播；
 - 手机浏览器可在本地将 JPEG/PNG 转换并导入 microSD，也可安装公共演示图集，逐张预览、
-  选择和确认删除；无卡或图片无效时自然隐藏相关功能，不影响其他本地能力。
+  选择和确认删除；图片页长按 `KEY` 2 秒后还可通过独立确认删除当前图片；无卡或图片
+  无效时自然隐藏相关功能，不影响其他本地能力。
 
 `NORMAL` 自动校时完成后只在后台检查是否有更新，不会弹出页面、静默安装或打断日常功能。
 “在线更新”页按住 `KEY` 2 秒检查；发现新版本后再次按住 2 秒进入 `REVIEW`，确认页再按住
 3 秒才安装。正式固件默认只检查稳定版；开发者可在“设置”门户主动加入测试通道。完整说明见
 [界面与按键](docs/home-screen.md)和[固件安装与更新](docs/firmware-update.md)。
 
-已安装 v0.10.0—v0.14.0 的设备可直接从“在线更新”页升级；v0.7.0—v0.9.0 可通过
-原有本地更新入口上传 v0.15.0 OTA 固件，v0.6.0 及更早版本需使用 Factory 固件完整安装。
+已安装 v0.10.0—v0.15.0 的设备可直接从“在线更新”页升级，不需要逐版本安装；
+v0.7.0—v0.9.0 可通过原有本地更新入口上传 v0.16.0 OTA 固件，v0.6.0 及更早版本需使用
+Factory 固件完整安装。
 microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 [microSD 图片准备](docs/microsd-images.md)。
 
 ## 安装使用
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
-中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`。v0.15.0 的离线更新
+中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`。v0.16.0 的离线更新
 位于“设置”门户。下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
 
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.15.0
+cd dist/v0.16.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.15.0/esp32-rlcd-firmware-v0.15.0-factory.bin \
+  --firmware dist/v0.16.0/esp32-rlcd-firmware-v0.16.0-factory.bin \
   --confirm
 ```
 

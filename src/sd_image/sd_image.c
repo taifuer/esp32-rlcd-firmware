@@ -29,6 +29,8 @@ static const char *TAG = "sd_image";
 enum {
     SD_IMAGE_TASK_STACK_BYTES = 8192,
     SD_IMAGE_TASK_PRIORITY = 1,
+    SD_IMAGE_DELETE_TASK_STACK_BYTES = 6144,
+    SD_IMAGE_DELETE_TASK_PRIORITY = 2,
     SD_IMAGE_PATH_CAPACITY = 160,
     SD_IMAGE_IMPORT_TEMP_ATTEMPTS = 8,
     SD_IMAGE_IMPORT_FREE_SPACE_MARGIN = 4096,
@@ -68,6 +70,10 @@ struct sd_image_import {
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static sd_image_status_t s_status = {
     .state = SD_IMAGE_STATE_NOT_INITIALIZED,
+};
+static sd_image_delete_status_t s_delete_status = {
+    .state = SD_IMAGE_DELETE_STATE_IDLE,
+    .last_error = ESP_OK,
 };
 /* The active table may move pointers, but published entries never move. */
 static cached_image_t **s_images;
@@ -905,6 +911,123 @@ esp_err_t sd_image_store_delete(const char *filename)
     }
 
     xSemaphoreGive(s_io_mutex);
+    return ESP_OK;
+}
+
+static void publish_delete_status(sd_image_delete_state_t state,
+                                  esp_err_t error,
+                                  const char *filename)
+{
+    char safe_filename[SD_IMAGE_FILENAME_CAPACITY] = {0};
+    if (filename != NULL) {
+        (void)snprintf(safe_filename, sizeof(safe_filename), "%s",
+                       filename);
+    }
+    taskENTER_CRITICAL(&s_lock);
+    s_delete_status.state = state;
+    s_delete_status.last_error = error;
+    memcpy(s_delete_status.filename, safe_filename,
+           sizeof(s_delete_status.filename));
+    ++s_delete_status.revision;
+    if (s_delete_status.revision == 0U) {
+        s_delete_status.revision = 1U;
+    }
+    taskEXIT_CRITICAL(&s_lock);
+}
+
+static void sd_image_delete_task(void *argument)
+{
+    (void)argument;
+    char filename[SD_IMAGE_FILENAME_CAPACITY] = {0};
+    taskENTER_CRITICAL(&s_lock);
+    memcpy(filename, s_delete_status.filename, sizeof(filename));
+    taskEXIT_CRITICAL(&s_lock);
+
+    const esp_err_t error = sd_image_store_delete(filename);
+    publish_delete_status(error == ESP_OK
+                              ? SD_IMAGE_DELETE_STATE_SUCCESS
+                              : SD_IMAGE_DELETE_STATE_FAILED,
+                          error, filename);
+    vTaskDelete(NULL);
+}
+
+esp_err_t sd_image_store_request_delete(const char *filename)
+{
+    mono_image_format_t ignored_format;
+    char ignored_path[SD_IMAGE_PATH_CAPACITY];
+    char safe_filename[SD_IMAGE_FILENAME_CAPACITY] = {0};
+    if (filename == NULL ||
+        !sd_image_catalog_expected_format(filename, &ignored_format) ||
+        !sd_image_catalog_build_path(SD_IMAGE_DIRECTORY, filename,
+                                     ignored_path,
+                                     sizeof(ignored_path))) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const int copied = snprintf(safe_filename, sizeof(safe_filename),
+                                "%s", filename);
+    if (copied < 1 || (size_t)copied >= sizeof(safe_filename)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    bool request_valid = false;
+    taskENTER_CRITICAL(&s_lock);
+    if (s_delete_status.state == SD_IMAGE_DELETE_STATE_IDLE &&
+        s_status.state == SD_IMAGE_STATE_READY && s_images != NULL &&
+        runtime_cache_filename_index_locked(safe_filename) != SIZE_MAX) {
+        s_delete_status.state = SD_IMAGE_DELETE_STATE_DELETING;
+        s_delete_status.last_error = ESP_OK;
+        memcpy(s_delete_status.filename, safe_filename,
+               sizeof(s_delete_status.filename));
+        s_delete_status.filename[sizeof(s_delete_status.filename) - 1U] =
+            '\0';
+        ++s_delete_status.revision;
+        if (s_delete_status.revision == 0U) {
+            s_delete_status.revision = 1U;
+        }
+        request_valid = true;
+    }
+    taskEXIT_CRITICAL(&s_lock);
+    if (!request_valid) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xTaskCreate(sd_image_delete_task, "sd_img_delete",
+                    SD_IMAGE_DELETE_TASK_STACK_BYTES, NULL,
+                    SD_IMAGE_DELETE_TASK_PRIORITY, NULL) != pdPASS) {
+        publish_delete_status(SD_IMAGE_DELETE_STATE_FAILED,
+                              ESP_ERR_NO_MEM, safe_filename);
+        return ESP_ERR_NO_MEM;
+    }
+    return ESP_OK;
+}
+
+void sd_image_store_get_delete_status(sd_image_delete_status_t *status)
+{
+    if (status == NULL) {
+        return;
+    }
+    taskENTER_CRITICAL(&s_lock);
+    *status = s_delete_status;
+    taskEXIT_CRITICAL(&s_lock);
+}
+
+esp_err_t sd_image_store_dismiss_delete_result(void)
+{
+    taskENTER_CRITICAL(&s_lock);
+    if (s_delete_status.state != SD_IMAGE_DELETE_STATE_SUCCESS &&
+        s_delete_status.state != SD_IMAGE_DELETE_STATE_FAILED) {
+        taskEXIT_CRITICAL(&s_lock);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_delete_status.state = SD_IMAGE_DELETE_STATE_IDLE;
+    s_delete_status.last_error = ESP_OK;
+    memset(s_delete_status.filename, 0,
+           sizeof(s_delete_status.filename));
+    ++s_delete_status.revision;
+    if (s_delete_status.revision == 0U) {
+        s_delete_status.revision = 1U;
+    }
+    taskEXIT_CRITICAL(&s_lock);
     return ESP_OK;
 }
 

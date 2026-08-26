@@ -96,6 +96,19 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/app \
+  src/app/image_delete_ui.c tests/test_image_delete_ui.c \
+  -o "${RLCD_TEST_TMP}/test_image_delete_ui"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/app -Isrc/input/include \
+  src/app/image_delete_ui.c src/input/button_state.c \
+  tests/test_image_delete_interaction.c \
+  -o "${RLCD_TEST_TMP}/test_image_delete_interaction"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/image/include \
   src/image/monochrome_image.c tests/test_monochrome_image.c \
   -o "${RLCD_TEST_TMP}/test_monochrome_image"
@@ -200,6 +213,8 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_network_qr"
 "${RLCD_TEST_TMP}/test_button_state"
 "${RLCD_TEST_TMP}/test_page_state"
+"${RLCD_TEST_TMP}/test_image_delete_ui"
+"${RLCD_TEST_TMP}/test_image_delete_interaction"
 "${RLCD_TEST_TMP}/test_monochrome_image"
 "${RLCD_TEST_TMP}/test_image_catalog"
 "${RLCD_TEST_TMP}/test_sd_image_import_policy"

@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/time.h>
 #include <time.h>
 
@@ -29,6 +30,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "gallery_download.h"
+#include "image_delete_ui.h"
 #include "network_time.h"
 #include "network_screen_policy.h"
 #include "online_firmware_update.h"
@@ -47,6 +49,9 @@ typedef enum {
     APP_DISPLAY_NETWORK_SETUP,
     APP_DISPLAY_CALENDAR,
     APP_DISPLAY_MONOCHROME_IMAGE,
+    APP_DISPLAY_IMAGE_DELETE_HOLD,
+    APP_DISPLAY_IMAGE_DELETE_CONFIRMATION,
+    APP_DISPLAY_IMAGE_DELETE_STATUS,
     APP_DISPLAY_STATUS,
     APP_DISPLAY_AUDIO,
     APP_DISPLAY_ALARM,
@@ -131,6 +136,37 @@ static const char *firmware_update_error_detail(esp_err_t error)
     default:
         return esp_err_to_name(error);
     }
+}
+
+static const char *image_delete_error_detail(esp_err_t error)
+{
+    switch (error) {
+    case ESP_ERR_INVALID_STATE:
+        return "Storage busy; try again";
+    case ESP_ERR_NOT_FOUND:
+        return "Image changed; try again";
+    case ESP_ERR_NO_MEM:
+        return "Not enough memory";
+    default:
+        return "Image kept; check microSD";
+    }
+}
+
+static bool image_delete_target_matches_status(
+    const app_image_delete_target_t *target,
+    const sd_image_status_t *status)
+{
+    if (status == NULL) {
+        return false;
+    }
+    const app_image_delete_target_t current = {
+        .ready = status->state == SD_IMAGE_STATE_READY,
+        .revision = status->revision,
+        .image_count = status->image_count,
+        .selected_index = status->selected_index,
+        .filename = status->filename,
+    };
+    return app_image_delete_target_matches(target, &current);
 }
 
 static uint32_t alarm_schedule_revision(const app_settings_t *settings)
@@ -321,7 +357,8 @@ static void configure_key_timing(
         online_update_state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION) {
         action_threshold_ms = APP_PAGE_ONLINE_UPDATE_INSTALL_HOLD_MS;
     }
-    if (action == APP_PAGE_ACTION_OPEN_SETTINGS ||
+    if (action == APP_PAGE_ACTION_DELETE_IMAGE ||
+        action == APP_PAGE_ACTION_OPEN_SETTINGS ||
         (page == APP_PAGE_ONLINE_UPDATE &&
          online_update_state ==
              ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION)) {
@@ -661,6 +698,14 @@ void app_main(void)
                              BUTTON_LONG_PRESS_DISABLED_MS);
     app_page_state_t page_state;
     app_page_state_init(&page_state);
+    app_image_delete_ui_t image_delete_ui;
+    app_image_delete_ui_init(&image_delete_ui);
+    char image_delete_target[SD_IMAGE_FILENAME_CAPACITY] = {0};
+    app_image_delete_target_t image_delete_target_snapshot = {
+        .filename = image_delete_target,
+    };
+    esp_err_t image_delete_error = ESP_OK;
+    bool image_delete_wait_for_button_release = false;
     const esp_err_t sd_image_init_error = sd_image_store_init();
     if (sd_image_init_error != ESP_OK) {
         ESP_LOGW(TAG, "microSD image service unavailable: %s",
@@ -676,6 +721,10 @@ void app_main(void)
         initial_sd_image_status.state;
     uint32_t previous_sd_image_revision =
         initial_sd_image_status.revision;
+    sd_image_delete_status_t initial_image_delete_status = {0};
+    sd_image_store_get_delete_status(&initial_image_delete_status);
+    uint32_t previous_image_delete_revision =
+        initial_image_delete_status.revision;
     alarm_schedule_t alarm_schedule =
         alarm_schedule_from_settings(&settings);
     alarm_scheduler_t alarm_scheduler;
@@ -742,6 +791,7 @@ void app_main(void)
         bool calendar_data_changed = false;
         bool system_status_data_changed = false;
         bool online_update_data_changed = false;
+        bool image_delete_ui_transitioned = false;
         sd_image_status_t latest_sd_image_status = {0};
         sd_image_store_get_status(&latest_sd_image_status);
         if (latest_sd_image_status.state != previous_sd_image_state ||
@@ -767,6 +817,33 @@ void app_main(void)
                          "images=%u",
                          (unsigned)latest_sd_image_status.revision,
                          (unsigned)latest_sd_image_status.image_count);
+            }
+        }
+        sd_image_delete_status_t latest_image_delete_status = {0};
+        sd_image_store_get_delete_status(&latest_image_delete_status);
+        if (latest_image_delete_status.revision !=
+            previous_image_delete_revision) {
+            previous_image_delete_revision =
+                latest_image_delete_status.revision;
+            if (latest_image_delete_status.state ==
+                    SD_IMAGE_DELETE_STATE_SUCCESS &&
+                app_image_delete_ui_complete(&image_delete_ui, true)) {
+                image_delete_error = ESP_OK;
+                image_delete_ui_transitioned = true;
+                ESP_LOGI(TAG, "image deleted from microSD: %s",
+                         latest_image_delete_status.filename);
+                render_requested = true;
+            } else if (latest_image_delete_status.state ==
+                           SD_IMAGE_DELETE_STATE_FAILED &&
+                       app_image_delete_ui_complete(&image_delete_ui,
+                                                    false)) {
+                image_delete_error =
+                    latest_image_delete_status.last_error;
+                image_delete_ui_transitioned = true;
+                ESP_LOGW(TAG, "image delete failed for %s: %s",
+                         latest_image_delete_status.filename,
+                         esp_err_to_name(image_delete_error));
+                render_requested = true;
             }
         }
         audio_diagnostics_status_t latest_audio_status = {0};
@@ -933,6 +1010,21 @@ void app_main(void)
         const bool alarm_was_ringing =
             alarm_scheduler.state == ALARM_SCHEDULER_RINGING;
         const app_page_t input_page = app_page_state_current(&page_state);
+        if (app_image_delete_ui_state(&image_delete_ui) ==
+                APP_IMAGE_DELETE_UI_CONFIRMING &&
+            (input_page != APP_PAGE_IMAGE ||
+             !image_delete_target_matches_status(
+                 &image_delete_target_snapshot,
+                 &latest_sd_image_status))) {
+            (void)app_image_delete_ui_cancel(&image_delete_ui);
+            image_delete_wait_for_button_release = true;
+            memset(image_delete_target, 0,
+                   sizeof(image_delete_target));
+            image_delete_target_snapshot.ready = false;
+            render_requested = true;
+            ESP_LOGI(TAG,
+                     "image delete confirmation cancelled: image changed");
+        }
         if (buttons_ready) {
             configure_key_timing(&key_button_state, input_page,
                                  online_update_status.state);
@@ -951,6 +1043,19 @@ void app_main(void)
             key_pressed || key_debounced_pressed;
         const bool boot_pressed_or_debounced =
             boot_pressed || boot_debounced_pressed;
+        if (!key_pressed_or_debounced &&
+            app_image_delete_ui_note_key_released(
+                &image_delete_ui)) {
+            render_requested = true;
+            ESP_LOGI(TAG,
+                     "image delete confirmation armed after KEY release");
+        }
+        const bool image_delete_release_gate_was_active =
+            image_delete_wait_for_button_release;
+        if (image_delete_wait_for_button_release &&
+            !key_pressed_or_debounced && !boot_pressed_or_debounced) {
+            image_delete_wait_for_button_release = false;
+        }
         const bool alarm_gate_was_blocking =
             alarm_input_gate_is_blocking(&alarm_input_gate);
         if (alarm_was_ringing || alarm_gate_was_blocking) {
@@ -1081,7 +1186,24 @@ void app_main(void)
             alarm_was_ringing || alarm_started_this_loop ||
             alarm_gate_was_blocking;
 
+        if (alarm_started_this_loop &&
+            app_image_delete_ui_cancel(&image_delete_ui)) {
+            memset(image_delete_target, 0,
+                   sizeof(image_delete_target));
+            image_delete_target_snapshot.ready = false;
+            render_requested = true;
+            ESP_LOGI(TAG,
+                     "image delete confirmation cancelled by alarm");
+        }
+
         if (alarm_button_events_suppressed) {
+            if (key_event != BUTTON_EVENT_NONE ||
+                boot_event != BUTTON_EVENT_NONE) {
+                app_page_state_note_activity(&page_state);
+            }
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
+        } else if (image_delete_release_gate_was_active) {
             if (key_event != BUTTON_EVENT_NONE ||
                 boot_event != BUTTON_EVENT_NONE) {
                 app_page_state_note_activity(&page_state);
@@ -1121,6 +1243,65 @@ void app_main(void)
             boot_event = BUTTON_EVENT_NONE;
         }
         if (gallery_download_ui_active) {
+            if (key_event != BUTTON_EVENT_NONE ||
+                boot_event != BUTTON_EVENT_NONE) {
+                app_page_state_note_activity(&page_state);
+            }
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
+        }
+        const app_image_delete_ui_state_t image_delete_input_state =
+            app_image_delete_ui_state(&image_delete_ui);
+        if (image_delete_input_state != APP_IMAGE_DELETE_UI_IDLE) {
+            if (image_delete_input_state ==
+                APP_IMAGE_DELETE_UI_CONFIRMING) {
+                if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
+                    (void)app_image_delete_ui_cancel(&image_delete_ui);
+                    image_delete_wait_for_button_release = true;
+                    memset(image_delete_target, 0,
+                           sizeof(image_delete_target));
+                    image_delete_target_snapshot.ready = false;
+                    ESP_LOGI(TAG,
+                             "BOOT short press: image delete cancelled");
+                    render_requested = true;
+                } else if (key_event == BUTTON_EVENT_SHORT_PRESS) {
+                    const bool target_unchanged =
+                        image_delete_target_matches_status(
+                            &image_delete_target_snapshot,
+                            &latest_sd_image_status);
+                    if (target_unchanged &&
+                        app_image_delete_ui_confirm(
+                            &image_delete_ui)) {
+                        const esp_err_t delete_error =
+                            sd_image_store_request_delete(
+                                image_delete_target);
+                        if (delete_error == ESP_OK) {
+                            image_delete_error = ESP_OK;
+                            ESP_LOGI(TAG,
+                                     "KEY short press: deleting image %s",
+                                     image_delete_target);
+                        } else {
+                            image_delete_error = delete_error;
+                            (void)app_image_delete_ui_complete(
+                                &image_delete_ui, false);
+                            image_delete_ui_transitioned = true;
+                            ESP_LOGW(TAG,
+                                     "image delete could not start: %s",
+                                     esp_err_to_name(delete_error));
+                        }
+                    } else {
+                        (void)app_image_delete_ui_cancel(
+                            &image_delete_ui);
+                        image_delete_wait_for_button_release = true;
+                        memset(image_delete_target, 0,
+                               sizeof(image_delete_target));
+                        image_delete_target_snapshot.ready = false;
+                        ESP_LOGI(TAG,
+                                 "image delete cancelled: image changed");
+                    }
+                    render_requested = true;
+                }
+            }
             if (key_event != BUTTON_EVENT_NONE ||
                 boot_event != BUTTON_EVENT_NONE) {
                 app_page_state_note_activity(&page_state);
@@ -1198,7 +1379,41 @@ void app_main(void)
             app_page_state_note_activity(&page_state);
             const app_page_action_t key_action =
                 app_page_key_hold_action(input_page);
-            if (key_action == APP_PAGE_ACTION_SYNC_TIME &&
+            if (key_action == APP_PAGE_ACTION_DELETE_IMAGE &&
+                previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
+                manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+                !firmware_update_ui_active &&
+                !gallery_download_ui_active && !online_update_busy &&
+                !online_update_confirmation_active &&
+                latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
+                latest_sd_image_status.image_count > 0U &&
+                latest_sd_image_status.filename[0] != '\0' &&
+                latest_image_delete_status.state ==
+                    SD_IMAGE_DELETE_STATE_IDLE &&
+                app_image_delete_ui_begin(&image_delete_ui)) {
+                memcpy(image_delete_target,
+                       latest_sd_image_status.filename,
+                       sizeof(image_delete_target));
+                image_delete_target[
+                    sizeof(image_delete_target) - 1U] = '\0';
+                image_delete_target_snapshot.ready = true;
+                image_delete_target_snapshot.revision =
+                    latest_sd_image_status.revision;
+                image_delete_target_snapshot.selected_index =
+                    latest_sd_image_status.selected_index;
+                image_delete_target_snapshot.image_count =
+                    latest_sd_image_status.image_count;
+                image_delete_error = ESP_OK;
+                image_delete_ui_transitioned = true;
+                ESP_LOGI(TAG,
+                         "KEY long press: review image delete %u/%u",
+                         (unsigned)(
+                             image_delete_target_snapshot.selected_index +
+                             1U),
+                         (unsigned)
+                             image_delete_target_snapshot.image_count);
+                render_requested = true;
+            } else if (key_action == APP_PAGE_ACTION_SYNC_TIME &&
                 manual_sync_ui != MANUAL_SYNC_UI_ACTIVE &&
                 !online_update_busy) {
                 manual_sync_error = network_time_request_sync();
@@ -1289,7 +1504,15 @@ void app_main(void)
         }
 
         if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
-            if (firmware_update_status.state ==
+            if (app_image_delete_ui_cancel(&image_delete_ui)) {
+                image_delete_wait_for_button_release = true;
+                memset(image_delete_target, 0,
+                       sizeof(image_delete_target));
+                image_delete_target_snapshot.ready = false;
+                ESP_LOGI(TAG,
+                         "BOOT short press: image delete cancelled");
+                render_requested = true;
+            } else if (firmware_update_status.state ==
                     FIRMWARE_UPDATE_STATE_STARTING ||
                 firmware_update_status.state ==
                     FIRMWARE_UPDATE_STATE_READY) {
@@ -1338,6 +1561,19 @@ void app_main(void)
 
         const uint32_t button_hold_ms =
             button_state_hold_ms(&key_button_state);
+        const bool image_delete_hold_prompt_active =
+            !alarm_button_events_suppressed && !alarm_modal_active &&
+            buttons_ready && input_page == APP_PAGE_IMAGE &&
+            app_image_delete_ui_state(&image_delete_ui) ==
+                APP_IMAGE_DELETE_UI_IDLE &&
+            !image_delete_wait_for_button_release &&
+            previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
+            manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+            !firmware_update_ui_active && !gallery_download_ui_active &&
+            !online_update_busy && !online_update_confirmation_active &&
+            latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
+            button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
+            button_hold_ms < APP_PAGE_IMAGE_DELETE_HOLD_MS;
         const bool settings_portal_prompt_active =
             !alarm_button_events_suppressed && !alarm_modal_active &&
             buttons_ready &&
@@ -1370,7 +1606,29 @@ void app_main(void)
             manual_sync_ui = MANUAL_SYNC_UI_NONE;
             render_requested = true;
         }
+        const app_image_delete_ui_state_t image_delete_state_before_tick =
+            app_image_delete_ui_state(&image_delete_ui);
+        if (!alarm_modal_active && !image_delete_ui_transitioned &&
+            app_image_delete_ui_tick(&image_delete_ui,
+                                     button_elapsed_ms)) {
+            image_delete_wait_for_button_release = true;
+            if (image_delete_state_before_tick ==
+                    APP_IMAGE_DELETE_UI_SUCCESS ||
+                image_delete_state_before_tick ==
+                    APP_IMAGE_DELETE_UI_FAILED) {
+                (void)sd_image_store_dismiss_delete_result();
+                ESP_LOGI(TAG, "image delete result dismissed");
+            } else {
+                ESP_LOGI(TAG, "image delete confirmation timed out");
+            }
+            memset(image_delete_target, 0,
+                   sizeof(image_delete_target));
+            image_delete_target_snapshot.ready = false;
+            render_requested = true;
+        }
         if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+            !image_delete_hold_prompt_active &&
+            !app_image_delete_ui_is_active(&image_delete_ui) &&
             !settings_portal_prompt_active && !firmware_update_ui_active &&
             !gallery_download_ui_active &&
             !(input_page == APP_PAGE_ONLINE_UPDATE &&
@@ -1622,6 +1880,7 @@ void app_main(void)
             online_update_error == ESP_OK &&
             network_status.state == NETWORK_TIME_STATE_SYNCHRONIZED &&
             !firmware_update_ui_active && !gallery_download_ui_active &&
+            !app_image_delete_ui_is_active(&image_delete_ui) &&
             !online_update_busy &&
             !online_update_confirmation_active) {
             if (online_update_status.state == ONLINE_UPDATE_STATE_AVAILABLE) {
@@ -1654,6 +1913,75 @@ void app_main(void)
                 display_show_alarm(&alarm_status);
             }
             previous_display_mode = APP_DISPLAY_ALARM;
+            previous_portal_seconds = 0U;
+        } else if (display_ready &&
+                   app_image_delete_ui_is_active(&image_delete_ui)) {
+            const app_image_delete_ui_state_t image_delete_state =
+                app_image_delete_ui_state(&image_delete_ui);
+            if (image_delete_state ==
+                APP_IMAGE_DELETE_UI_CONFIRMING) {
+                if (render_requested ||
+                    previous_display_mode !=
+                        APP_DISPLAY_IMAGE_DELETE_CONFIRMATION) {
+                    const esp_err_t copy_error =
+                        image_bitmap_snapshot != NULL
+                            ? sd_image_store_copy_bitmap(
+                                  image_delete_target,
+                                  image_bitmap_snapshot,
+                                  MONO_IMAGE_BITMAP_BYTES)
+                            : ESP_ERR_NO_MEM;
+                    if (copy_error == ESP_OK) {
+                        display_show_image_delete_confirmation(
+                            image_bitmap_snapshot,
+                            image_delete_target_snapshot.selected_index,
+                            image_delete_target_snapshot.image_count,
+                            app_image_delete_ui_confirmation_armed(
+                                &image_delete_ui));
+                    } else {
+                        (void)app_image_delete_ui_confirm(
+                            &image_delete_ui);
+                        (void)app_image_delete_ui_complete(
+                            &image_delete_ui, false);
+                        image_delete_error = copy_error;
+                        display_show_status(
+                            "DELETE FAILED",
+                            image_delete_error_detail(copy_error));
+                    }
+                }
+                previous_display_mode =
+                    app_image_delete_ui_state(&image_delete_ui) ==
+                            APP_IMAGE_DELETE_UI_CONFIRMING
+                        ? APP_DISPLAY_IMAGE_DELETE_CONFIRMATION
+                        : APP_DISPLAY_IMAGE_DELETE_STATUS;
+            } else {
+                if (render_requested ||
+                    previous_display_mode !=
+                        APP_DISPLAY_IMAGE_DELETE_STATUS) {
+                    if (image_delete_state ==
+                        APP_IMAGE_DELETE_UI_DELETING) {
+                        display_show_image_delete_status(
+                            DISPLAY_IMAGE_DELETE_DELETING);
+                    } else if (image_delete_state ==
+                               APP_IMAGE_DELETE_UI_SUCCESS) {
+                        display_show_image_delete_status(
+                            DISPLAY_IMAGE_DELETE_DELETED);
+                    } else {
+                        display_show_status(
+                            "DELETE FAILED",
+                            image_delete_error_detail(
+                                image_delete_error));
+                    }
+                }
+                previous_display_mode =
+                    APP_DISPLAY_IMAGE_DELETE_STATUS;
+            }
+            previous_portal_seconds = 0U;
+        } else if (display_ready && image_delete_hold_prompt_active) {
+            if (previous_display_mode != APP_DISPLAY_IMAGE_DELETE_HOLD) {
+                display_show_status("DELETE IMAGE",
+                                    "Keep holding: 1s");
+            }
+            previous_display_mode = APP_DISPLAY_IMAGE_DELETE_HOLD;
             previous_portal_seconds = 0U;
         } else if (display_ready && settings_portal_prompt_active) {
             if (previous_display_mode !=
@@ -1974,6 +2302,11 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_ALARM ||
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||
                     previous_display_mode == APP_DISPLAY_MONOCHROME_IMAGE ||
+                    previous_display_mode == APP_DISPLAY_IMAGE_DELETE_HOLD ||
+                    previous_display_mode ==
+                        APP_DISPLAY_IMAGE_DELETE_CONFIRMATION ||
+                    previous_display_mode ==
+                        APP_DISPLAY_IMAGE_DELETE_STATUS ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC_RESULT ||
                     previous_display_mode == APP_DISPLAY_GALLERY_DOWNLOAD ||

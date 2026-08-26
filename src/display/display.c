@@ -158,6 +158,16 @@ static void draw_daily_footer(const char *text)
     draw_centered(DAILY_FOOTER_BASELINE_Y, text);
 }
 
+static void draw_image_footer(const char *navigation)
+{
+    u8g2_DrawHLine(s_u8g2, DAILY_SIDE_MARGIN,
+                   DAILY_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(270, navigation);
+    draw_centered(294, "HOLD KEY 2s: DELETE");
+}
+
 static void format_version(char *buffer, size_t capacity,
                            const char *version)
 {
@@ -785,7 +795,7 @@ void display_show_monochrome_image(
                  BOARD_DISPLAY_HEIGHT - DAILY_FOOTER_DIVIDER_Y);
     u8g2_SetDrawColor(s_u8g2, 1);
     if (image_count > 1U) {
-        char footer[64];
+        char footer[48];
         if (selected_index >= image_count) {
             selected_index = 0U;
         }
@@ -793,11 +803,71 @@ void display_show_monochrome_image(
                  "BOOT: PAGE | KEY: NEXT | %u/%u",
                  (unsigned)(selected_index + 1U),
                  (unsigned)image_count);
-        draw_daily_footer(footer);
+        draw_image_footer(footer);
     } else {
-        draw_daily_footer("BOOT: PAGE | KEY: SYSTEM");
+        draw_image_footer("BOOT: PAGE | KEY: SYSTEM");
     }
     u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_image_delete_confirmation(
+    const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
+    size_t selected_index, size_t image_count, bool delete_ready)
+{
+    if (s_u8g2 == NULL || bitmap == NULL) {
+        return;
+    }
+
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    u8g2_SetBitmapMode(s_u8g2, 0);
+    u8g2_DrawBitmap(s_u8g2, 0, 0, MONO_IMAGE_ROW_BYTES,
+                    MONO_IMAGE_HEIGHT, bitmap);
+
+    u8g2_SetDrawColor(s_u8g2, 0);
+    u8g2_DrawBox(s_u8g2, 0, DAILY_FOOTER_DIVIDER_Y,
+                 BOARD_DISPLAY_WIDTH,
+                 BOARD_DISPLAY_HEIGHT - DAILY_FOOTER_DIVIDER_Y);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    u8g2_DrawHLine(s_u8g2, DAILY_SIDE_MARGIN,
+                   DAILY_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN);
+
+    char prompt[48];
+    if (image_count > 0U) {
+        if (selected_index >= image_count) {
+            selected_index = 0U;
+        }
+        snprintf(prompt, sizeof(prompt), "DELETE IMAGE? | %u/%u",
+                 (unsigned)(selected_index + 1U),
+                 (unsigned)image_count);
+    } else {
+        snprintf(prompt, sizeof(prompt), "DELETE IMAGE?");
+    }
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    draw_centered(271, prompt);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(294, delete_ready
+                           ? "BOOT: CANCEL | KEY: DELETE"
+                           : "RELEASE KEY | BOOT: CANCEL");
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_image_delete_status(display_image_delete_status_t status)
+{
+    switch (status) {
+    case DISPLAY_IMAGE_DELETE_DELETING:
+        display_show_status("DELETING", "Keep power on");
+        break;
+    case DISPLAY_IMAGE_DELETE_DELETED:
+        display_show_status("DELETED", "Image removed");
+        break;
+    case DISPLAY_IMAGE_DELETE_FAILED:
+        display_show_status("DELETE FAILED", "Image kept; check microSD");
+        break;
+    default:
+        break;
+    }
 }
 
 void display_show_system_status(const display_system_status_t *status)

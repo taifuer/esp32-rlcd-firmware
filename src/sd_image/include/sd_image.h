@@ -66,6 +66,20 @@ typedef struct {
     char filename[SD_IMAGE_FILENAME_CAPACITY];
 } sd_image_import_result_t;
 
+typedef enum {
+    SD_IMAGE_DELETE_STATE_IDLE = 0,
+    SD_IMAGE_DELETE_STATE_DELETING,
+    SD_IMAGE_DELETE_STATE_SUCCESS,
+    SD_IMAGE_DELETE_STATE_FAILED,
+} sd_image_delete_state_t;
+
+typedef struct {
+    sd_image_delete_state_t state;
+    uint32_t revision;
+    esp_err_t last_error;
+    char filename[SD_IMAGE_FILENAME_CAPACITY];
+} sd_image_delete_status_t;
+
 typedef struct sd_image_import sd_image_import_t;
 
 esp_err_t sd_image_store_init(void);
@@ -93,6 +107,10 @@ esp_err_t sd_image_store_select_preferred(const char *filename);
  * this function returns.
  */
 esp_err_t sd_image_store_delete(const char *filename);
+/* Run the same exact-file deletion transaction on a dedicated worker task. */
+esp_err_t sd_image_store_request_delete(const char *filename);
+void sd_image_store_get_delete_status(sd_image_delete_status_t *status);
+esp_err_t sd_image_store_dismiss_delete_result(void);
 bool sd_image_import_build_filename(
     const uint8_t sha256[SD_IMAGE_SHA256_BYTES],
     char *filename, size_t capacity);

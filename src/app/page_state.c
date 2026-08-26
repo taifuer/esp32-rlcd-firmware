@@ -82,6 +82,9 @@ bool app_page_is_system(app_page_t page)
 
 app_page_action_t app_page_key_hold_action(app_page_t page)
 {
+    if (page == APP_PAGE_IMAGE) {
+        return APP_PAGE_ACTION_DELETE_IMAGE;
+    }
     if (page == APP_PAGE_STATUS) {
         return APP_PAGE_ACTION_SYNC_TIME;
     }
@@ -100,6 +103,8 @@ app_page_action_t app_page_key_hold_action(app_page_t page)
 uint32_t app_page_key_hold_threshold_ms(app_page_t page)
 {
     switch (app_page_key_hold_action(page)) {
+    case APP_PAGE_ACTION_DELETE_IMAGE:
+        return APP_PAGE_IMAGE_DELETE_HOLD_MS;
     case APP_PAGE_ACTION_SYNC_TIME:
         return APP_PAGE_MANUAL_SYNC_HOLD_MS;
     case APP_PAGE_ACTION_TEST_AUDIO:
