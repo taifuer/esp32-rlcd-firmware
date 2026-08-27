@@ -41,6 +41,8 @@ typedef struct {
     network_time_state_t state;
     bool configured;
     bool automatic_sync_enabled;
+    /* Current STA link has usable IPv4; excludes provisioning SoftAP. */
+    bool station_connected;
     esp_err_t last_error;
     network_time_failure_t last_failure;
     char setup_ssid[33];

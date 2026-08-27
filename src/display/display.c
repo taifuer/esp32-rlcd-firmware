@@ -33,7 +33,6 @@ enum {
     WIFI_ICON_WIDTH = 18,
     WIFI_ICON_HEIGHT = 14,
     WIFI_ICON_Y = 20,
-    WIFI_CONNECTING_ROW = 5,
     STATUS_GROUP_GAP = 7,
     SETUP_SIDE_MARGIN = 12,
     SETUP_TITLE_BASELINE_Y = 34,
@@ -427,30 +426,9 @@ static void draw_battery(int x, int y, bool valid, uint8_t percent)
 
 static void draw_wifi_status(int x, int y, display_network_state_t state)
 {
-    if (state == DISPLAY_NETWORK_CONNECTING) {
-        const size_t row_bytes = (WIFI_ICON_WIDTH + 7U) / 8U;
-        u8g2_DrawXBM(s_u8g2, x, y + WIFI_CONNECTING_ROW, WIFI_ICON_WIDTH,
-                     WIFI_ICON_HEIGHT - WIFI_CONNECTING_ROW,
-                     &WIFI_STATUS_BITMAP[WIFI_CONNECTING_ROW * row_bytes]);
-    } else {
+    if (state == DISPLAY_NETWORK_CONNECTED) {
         u8g2_DrawXBM(s_u8g2, x, y, WIFI_ICON_WIDTH, WIFI_ICON_HEIGHT,
                      WIFI_STATUS_BITMAP);
-    }
-
-    if (state == DISPLAY_NETWORK_UNCONFIGURED || state == DISPLAY_NETWORK_ERROR) {
-        /* A white keyline keeps the two-pixel disabled slash readable where it
-         * crosses the filled arcs. */
-        u8g2_SetDrawColor(s_u8g2, 0);
-        for (int offset = -1; offset <= 2; ++offset) {
-            u8g2_DrawLine(s_u8g2, x + 1 + offset, y,
-                          x + WIFI_ICON_WIDTH - 2 + offset,
-                          y + WIFI_ICON_HEIGHT - 1);
-        }
-        u8g2_SetDrawColor(s_u8g2, 1);
-        u8g2_DrawLine(s_u8g2, x + 1, y,
-                      x + WIFI_ICON_WIDTH - 2, y + WIFI_ICON_HEIGHT - 1);
-        u8g2_DrawLine(s_u8g2, x + 2, y,
-                      x + WIFI_ICON_WIDTH - 1, y + WIFI_ICON_HEIGHT - 1);
     }
 }
 

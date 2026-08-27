@@ -37,8 +37,8 @@
 
 ### 日常功能域
 
-- **主界面**：RTC 时间、日期、农历、星期、温湿度、三态环境舒适度线稿脸、电池和网络
-  结果图标；RTC 无效时用稳定占位符保留同一布局；
+- **主界面**：RTC 时间、日期、农历、星期、温湿度、三态环境舒适度线稿脸、电池和当前
+  Wi-Fi 连接图标；RTC 无效时用稳定占位符保留同一布局；
 - **日历**：当前月份、今天、当天农历、星期和时间；
 - **图片**：microSD 中经完整校验并成功解码的本地黑白图像。只有至少一张
   有效图片时才进入 `BOOT` 页面环；无卡、挂载失败或没有有效图片时整页隐藏；
@@ -210,7 +210,8 @@ microSD 是完全可选的本地内容源：无卡不显示启动错误，不影
 ## 状态与反馈
 
 - 用户主动发起的异步操作显示正在做什么，例如启动 Wi-Fi、连接网络、等待 NTP、写入
-  RTC；自动联网只通过首屏结果图标和“状态”页反馈，不覆盖日常页面；
+  RTC；首屏 Wi-Fi 图标只表达当前 STA 已取得 IPv4，未连接和关闭无线时留空，历史同步
+  结果与错误由“状态”页承载。自动联网不覆盖日常页面；
 - microSD 缺失、文件系统不可读或没有有效图片时，不在启动时显示全屏错误，而是隐藏
   图片页并保留原日常页面环；具体原因保留在 USB 日志和电脑端检查工具中；
 - 图片导入、删除和公共演示图下载由用户主动发起，必须显示正在写入、校验、完成或
@@ -261,6 +262,8 @@ microSD 是完全可选的本地内容源：无卡不显示启动错误，不影
 
 ## 参考原则
 
+- [Apple：Status bars](https://developer.apple.com/design/human-interface-guidelines/status-bars)：
+  状态栏图标表达设备当前状态，Wi-Fi 图标用于判断当前是否存在 Wi-Fi 连接；
 - [Apple：Designing for watchOS](https://developer.apple.com/design/human-interface-guidelines/designing-for-watchos/)：强调一眼可读、短交互和浅层导航；
 - [Apple：Settings](https://developer.apple.com/design/human-interface-guidelines/settings)：低频设置独立收纳，避免设置过多导致难以理解；
 - [Garmin：Designing Workflows and Interactions](https://developer.garmin.com/connect-iq/user-experience-guidelines/designing-workflows-and-interactions/)：实体按键抽象行为、页面环、设置菜单、确认和最少交互；

@@ -22,6 +22,7 @@
 #include "network_credentials.h"
 #include "network_retry_policy.h"
 #include "network_session_policy.h"
+#include "network_station_link.h"
 #include "nvs.h"
 
 #define NETWORK_NAMESPACE "rlcd_net"
@@ -86,10 +87,10 @@ static httpd_handle_t s_http_server;
 static bool s_initialized;
 static bool s_storage_ready;
 static bool s_automatic_sync_enabled = true;
-static volatile bool s_station_active;
 static volatile uint32_t s_station_retries;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static network_session_policy_t s_session_policy;
+static network_station_link_t s_station_link;
 static network_time_status_t s_status = {
     .state = NETWORK_TIME_STATE_UNINITIALIZED,
     .automatic_sync_enabled = true,
@@ -218,6 +219,8 @@ esp_err_t network_time_get_status(network_time_status_t *status)
     }
     portENTER_CRITICAL(&s_status_lock);
     *status = s_status;
+    status->station_connected =
+        network_station_link_is_connected(&s_station_link);
     portEXIT_CRITICAL(&s_status_lock);
     return ESP_OK;
 }
@@ -285,7 +288,8 @@ esp_err_t network_time_begin_maintenance(void)
 
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (!s_station_active && s_http_server == NULL &&
+    if (!network_station_link_is_active(&s_station_link) &&
+        s_http_server == NULL &&
         (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
          s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
         accepted = network_session_policy_try_acquire(
@@ -329,7 +333,8 @@ esp_err_t network_time_end_maintenance_and_request_provisioning(void)
 
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (!s_station_active && s_http_server == NULL) {
+    if (!network_station_link_is_active(&s_station_link) &&
+        s_http_server == NULL) {
         accepted = network_session_policy_release_to_task(
             &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
         if (accepted) {
@@ -376,7 +381,8 @@ static bool online_session_acquire(void)
 {
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (!s_station_active && s_http_server == NULL && s_status.configured &&
+    if (!network_station_link_is_active(&s_station_link) &&
+        s_http_server == NULL && s_status.configured &&
         (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
          s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
         accepted = network_session_policy_try_acquire(
@@ -390,7 +396,8 @@ static bool maintenance_session_transfer_to_online(void)
 {
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (!s_station_active && s_http_server == NULL && s_status.configured &&
+    if (!network_station_link_is_active(&s_station_link) &&
+        s_http_server == NULL && s_status.configured &&
         (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
          s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
         accepted = network_session_policy_transfer(
@@ -668,7 +675,9 @@ static void configure_captive_portal_hint(void)
 
 static esp_err_t stop_wifi(void)
 {
-    s_station_active = false;
+    portENTER_CRITICAL(&s_status_lock);
+    network_station_link_stop(&s_station_link);
+    portEXIT_CRITICAL(&s_status_lock);
     const esp_err_t error = esp_wifi_stop();
     if (error == ESP_ERR_WIFI_NOT_STARTED) {
         return ESP_OK;
@@ -802,14 +811,27 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
     (void)argument;
-    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START &&
-        s_station_active) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        bool station_active;
+        portENTER_CRITICAL(&s_status_lock);
+        station_active = network_station_link_is_active(&s_station_link);
+        portEXIT_CRITICAL(&s_status_lock);
+        if (!station_active) {
+            return;
+        }
         const esp_err_t error = esp_wifi_connect();
         if (error != ESP_OK) {
             xEventGroupSetBits(s_events, NETWORK_EVENT_FAILED);
         }
-    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED &&
-               s_station_active) {
+    } else if (event_base == WIFI_EVENT &&
+               event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        bool station_active;
+        portENTER_CRITICAL(&s_status_lock);
+        station_active = network_station_link_lost_ipv4(&s_station_link);
+        portEXIT_CRITICAL(&s_status_lock);
+        if (!station_active) {
+            return;
+        }
         const wifi_event_sta_disconnected_t *event = event_data;
         if (s_station_retries < NETWORK_STATION_MAX_RETRIES) {
             ++s_station_retries;
@@ -822,7 +844,18 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
         } else {
             xEventGroupSetBits(s_events, NETWORK_EVENT_FAILED);
         }
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_STOP) {
+        portENTER_CRITICAL(&s_status_lock);
+        network_station_link_stop(&s_station_link);
+        portEXIT_CRITICAL(&s_status_lock);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        bool accepted;
+        portENTER_CRITICAL(&s_status_lock);
+        accepted = network_station_link_got_ipv4(&s_station_link);
+        portEXIT_CRITICAL(&s_status_lock);
+        if (!accepted) {
+            return;
+        }
         const ip_event_got_ip_t *event = event_data;
         s_station_retries = 0U;
         if (event != NULL) {
@@ -830,6 +863,10 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
                      IP2STR(&event->ip_info.ip));
         }
         xEventGroupSetBits(s_events, NETWORK_EVENT_CONNECTED);
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
+        portENTER_CRITICAL(&s_status_lock);
+        (void)network_station_link_lost_ipv4(&s_station_link);
+        portEXIT_CRITICAL(&s_status_lock);
     }
 }
 
@@ -898,7 +935,9 @@ static esp_err_t start_station(const network_credentials_t *credentials,
     wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
 
     s_station_retries = 0U;
-    s_station_active = true;
+    portENTER_CRITICAL(&s_status_lock);
+    network_station_link_begin(&s_station_link);
+    portEXIT_CRITICAL(&s_status_lock);
     xEventGroupClearBits(s_events, NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED);
 
     esp_err_t error = esp_wifi_set_mode(WIFI_MODE_STA);
@@ -1239,7 +1278,7 @@ esp_err_t network_time_init(bool automatic_sync_enabled)
     }
     if (error == ESP_OK) {
         error = esp_event_handler_instance_register(
-            IP_EVENT, IP_EVENT_STA_GOT_IP, wifi_event_handler, NULL, NULL);
+            IP_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL, NULL);
     }
     if (error != ESP_OK) {
         set_status(NETWORK_TIME_STATE_ERROR, false, error);

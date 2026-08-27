@@ -149,9 +149,10 @@ static void process_line(const char *line, bool rtc_available)
         const esp_err_t error = network_time_get_status(&status);
         if (error == ESP_OK) {
             ESP_LOGI(TAG,
-                     "NETWORK state=%s configured=%s automatic=%s failure=%s last_error=%s",
+                     "NETWORK state=%s configured=%s station_connected=%s automatic=%s failure=%s last_error=%s",
                      network_time_state_name(status.state),
                      status.configured ? "yes" : "no",
+                     status.station_connected ? "yes" : "no",
                      status.automatic_sync_enabled ? "yes" : "no",
                      network_time_failure_name(status.last_failure),
                      esp_err_to_name(status.last_error));

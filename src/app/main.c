@@ -359,24 +359,9 @@ static display_audio_state_t display_audio_state(
 static display_network_state_t dashboard_network_state(
     const network_time_status_t *status)
 {
-    switch (status->state) {
-    case NETWORK_TIME_STATE_SYNCHRONIZED:
-        return DISPLAY_NETWORK_SYNCHRONIZED;
-    case NETWORK_TIME_STATE_UNINITIALIZED:
-    case NETWORK_TIME_STATE_STARTING:
-    case NETWORK_TIME_STATE_CONNECTING:
-    case NETWORK_TIME_STATE_SYNCHRONIZING:
-        return DISPLAY_NETWORK_CONNECTING;
-    case NETWORK_TIME_STATE_PROVISIONING:
-        return status->configured ? DISPLAY_NETWORK_ERROR
-                                  : DISPLAY_NETWORK_UNCONFIGURED;
-    case NETWORK_TIME_STATE_RETRY_WAIT:
-    case NETWORK_TIME_STATE_ERROR:
-        return status->configured ? DISPLAY_NETWORK_ERROR
-                                  : DISPLAY_NETWORK_UNCONFIGURED;
-    default:
-        return DISPLAY_NETWORK_ERROR;
-    }
+    return status != NULL && status->station_connected
+               ? DISPLAY_NETWORK_CONNECTED
+               : DISPLAY_NETWORK_HIDDEN;
 }
 
 static display_environment_comfort_t dashboard_environment_comfort(
@@ -2312,15 +2297,20 @@ void app_main(void)
 
             const bool previous_network_configured =
                 network_status.configured;
+            const bool previous_station_connected =
+                network_status.station_connected;
             (void)network_time_get_status(&network_status);
             dashboard.network_state = dashboard_network_state(&network_status);
             if (network_status.state != previous_network_state ||
-                network_status.configured != previous_network_configured) {
+                network_status.configured != previous_network_configured ||
+                network_status.station_connected !=
+                    previous_station_connected) {
                 if (network_status.state == NETWORK_TIME_STATE_PROVISIONING) {
                     provisioning_started = now;
                     setup_screen_dismissed = false;
                 }
                 previous_network_state = network_status.state;
+                dashboard_data_changed = true;
                 system_status_data_changed = true;
                 render_requested = true;
             }

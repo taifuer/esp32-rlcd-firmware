@@ -55,9 +55,11 @@ RTC、温湿度、电量、页面与音频功能始终独立运行
 用户从“状态”页手动校时。
 
 网络不是本地功能的启动条件。RTC 时间有效时，家庭 Wi-Fi、互联网或 NTP 不可用都不会
-改变首屏时间、月历、农历、温湿度、电量、系统中心或音频诊断；设备仅在首屏显示带斜杠
-的网络结果图标。RTC 时间无效时，首屏按当前模式使用 `--:--:--` 或 `--:--`，并显示
-日期占位符；其余本地功能继续运行，也可以通过 USB 手动校时。
+改变首屏时间、月历、农历、温湿度、电量、系统中心或音频诊断。首屏只在家庭 STA 已取得
+IPv4 的真实连接窗口显示 Wi-Fi 图标；未连接、连接中、失败、配网 SoftAP 和任务完成后
+关闭无线时均留空，历史校时结果仍在“状态”页显示。RTC 时间无效时，首屏按当前模式使用
+`--:--:--` 或 `--:--`，并显示日期占位符；其余本地功能继续运行，也可以通过 USB 手动
+校时。
 
 ### RTC 备用电池保持判定
 
@@ -239,6 +241,7 @@ RESET_WIFI
 ## 实现依据
 
 - [ESP-IDF v5.5.3 Wi-Fi 驱动指南](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-guides/wifi.html)
+- [ESP-IDF Station 场景与事件语义](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-guides/wifi-driver/station-scenarios.html)
 - [ESP-NETIF 与 SNTP API](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/network/esp_netif.html)
 - [ESP-IDF 系统时间与 SNTP](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/system/system_time.html)
 - [ESP-IDF NVS Flash API](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/storage/nvs_flash.html)

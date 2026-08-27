@@ -78,6 +78,11 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/network/include \
+  src/network/network_station_link.c tests/test_network_station_link.c \
+  -o "${RLCD_TEST_TMP}/test_network_station_link"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/network/include \
   -I"${RLCD_QRCODE_COMPONENT_DIR}" \
   src/network/network_credentials.c \
   "${RLCD_QRCODE_COMPONENT_DIR}/qrcodegen.c" \
@@ -210,6 +215,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_network_credentials"
 "${RLCD_TEST_TMP}/test_network_retry_policy"
 "${RLCD_TEST_TMP}/test_network_session_policy"
+"${RLCD_TEST_TMP}/test_network_station_link"
 "${RLCD_TEST_TMP}/test_network_qr"
 "${RLCD_TEST_TMP}/test_button_state"
 "${RLCD_TEST_TMP}/test_page_state"

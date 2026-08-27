@@ -12,10 +12,8 @@ extern "C" {
 #endif
 
 typedef enum {
-    DISPLAY_NETWORK_UNCONFIGURED = 0,
-    DISPLAY_NETWORK_CONNECTING,
-    DISPLAY_NETWORK_SYNCHRONIZED,
-    DISPLAY_NETWORK_ERROR,
+    DISPLAY_NETWORK_HIDDEN = 0,
+    DISPLAY_NETWORK_CONNECTED,
 } display_network_state_t;
 
 typedef enum {

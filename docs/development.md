@@ -192,7 +192,8 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
    热点。`NORMAL` 及实际生效为 `NORMAL` 的 `AUTO` 使用 1、5、15、60 分钟退避；
    Wi-Fi 已连接但 NTP 不可达时标记为不同失败阶段，同样不打断首屏。`SAVING` 及实际
    生效为 `SAVING` 的 `AUTO` 不自动联网或重试；错误凭据只能通过用户明确执行重新配网
-   来替换；
+   来替换。首屏图标只在 STA 取得 IPv4 后显示，断线、丢失 IP、主动停网和连接会话结束
+   后立即隐藏；停止后的迟到 `GOT_IP` 事件不得重新点亮图标，配网和设置 SoftAP 不计入；
 6. 新判定记录首次显示 `RTC BACKUP: UNTESTED`；安装 RTC 备用电池并真实断电后，在任何
    NTP 操作前显示 `VERIFIED`，移除或耗尽备用电池后的真实断电显示 `FAILED`；两种情况
    都保留 NVS 网络凭据并按需自动恢复时间；
