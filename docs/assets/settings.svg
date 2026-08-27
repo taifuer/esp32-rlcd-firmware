@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
-  <title id="title">ESP32 RLCD Firmware settings page with on-device power control</title>
-  <desc id="description">A clean white-on-black settings page showing the automatic power strategy, time zone, temperature unit, playback volume, local alarm and device button actions.</desc>
+  <title id="title">ESP32 RLCD Firmware settings page with on-device power saving control</title>
+  <desc id="description">A clean white-on-black settings page showing the effective power state and its reason, time zone, temperature unit, playback volume, local alarm and device button actions.</desc>
   <rect width="400" height="300" rx="3" fill="#090b0a"/>
   <g fill="#eef3e8" stroke="#eef3e8">
     <text x="200" y="32" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">SETTINGS</text>
@@ -14,7 +14,7 @@
       <text x="18" y="216">ALARM</text>
     </g>
     <g stroke="none" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="700">
-      <text x="116" y="72">AUTO &gt; NORMAL</text>
+      <text x="116" y="72">SAVING | LOW BAT</text>
       <text x="116" y="108">UTC+08:00</text>
       <text x="116" y="144">CELSIUS</text>
       <text x="116" y="180">68 %</text>
@@ -22,7 +22,7 @@
     </g>
     <g stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">
       <text x="200" y="270">BOOT: HOME | KEY: NEXT</text>
-      <text x="200" y="294">HOLD BOOT 2s: POWER | HOLD KEY 3s: PORTAL</text>
+      <text x="200" y="294">HOLD BOOT 2s: MANUAL SAVING | HOLD KEY 3s: PORTAL</text>
     </g>
   </g>
 </svg>

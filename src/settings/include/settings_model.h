@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define APP_SETTINGS_SCHEMA_VERSION 5U
+#define APP_SETTINGS_SCHEMA_VERSION 6U
 #define APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES 480
 #define APP_SETTINGS_MIN_UTC_OFFSET_MINUTES (-720)
 #define APP_SETTINGS_MAX_UTC_OFFSET_MINUTES 840
@@ -30,12 +30,6 @@ extern "C" {
 #define APP_SETTINGS_ALARM_ALL_DAYS_MASK 0x7fU
 
 typedef enum {
-    APP_POWER_MODE_AUTO = 0,
-    APP_POWER_MODE_SAVING = 1,
-    APP_POWER_MODE_NORMAL = 2,
-} app_power_mode_t;
-
-typedef enum {
     APP_TEMPERATURE_UNIT_CELSIUS = 0,
     APP_TEMPERATURE_UNIT_FAHRENHEIT = 1,
 } app_temperature_unit_t;
@@ -47,7 +41,7 @@ typedef enum {
 
 typedef struct {
     uint16_t schema_version;
-    app_power_mode_t power_mode;
+    bool manual_saving_requested;
     int16_t utc_offset_minutes;
     app_temperature_unit_t temperature_unit;
     uint8_t audio_playback_volume;
@@ -60,18 +54,20 @@ typedef struct {
 
 void app_settings_defaults(app_settings_t *settings);
 bool app_settings_validate(const app_settings_t *settings);
-const char *app_power_mode_key(app_power_mode_t mode);
-const char *app_power_mode_name(app_power_mode_t mode);
-/* Advance through the user-facing order AUTO -> NORMAL -> SAVING -> AUTO.
- * The enum values intentionally do not encode this order. */
-bool app_power_mode_next(app_power_mode_t current,
-                         app_power_mode_t *next);
-/* Decode schema v1-v4 values while preserving the user's fixed mode. */
-bool app_power_mode_from_legacy_value(uint8_t value,
-                                      app_power_mode_t *mode);
+/* Decode the persisted power value used by settings schema v1-v5. Schema
+ * v1-v4 stored NORMAL=0/SAVING=1. Schema v5 added AUTO=0, SAVING=1 and
+ * NORMAL=2. The current model keeps only a manual saving request: the
+ * automatic battery policy is always active. */
+bool app_manual_saving_from_legacy_power(uint16_t schema_version,
+                                         uint8_t value,
+                                         bool *manual_requested);
 bool app_settings_format_posix_tz(int16_t utc_offset_minutes,
                                   char *buffer, size_t capacity);
+/* Apply a complete settings-portal form to a validated base record. Fields
+ * not exposed by the portal, including the device-side manual saving
+ * request, are preserved from base. */
 bool app_settings_parse_form(const char *body, size_t length,
+                             const app_settings_t *base,
                              app_settings_t *settings);
 
 #ifdef __cplusplus

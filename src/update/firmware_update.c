@@ -89,10 +89,6 @@ static const char SETTINGS_PAGE[] =
     "</style></head><body><main><header><h1>设备设置</h1>"
     "<p>设置只保存在设备中。临时热点关闭后，本页面将无法继续访问。</p></header>"
     "<section><h2>偏好设置</h2><form id=\"settings\">"
-    "<label for=\"power\">省电策略</label><select id=\"power\" name=\"power\">"
-    "<option value=\"auto\">自动（推荐）</option><option value=\"normal\">始终正常</option>"
-    "<option value=\"saving\">始终省电</option></select>"
-    "<p class=\"note\">自动策略冷启动电量不高于 20% 时进入省电；运行中连续两次不高于 20% 时进入、连续两次达到 25% 时退出，连接 USB 数据主机也会退出。普通充电器仍按电量判断。手动校时与升级始终可用。</p>"
     "<label for=\"timezone\">时区</label><select id=\"timezone\" name=\"timezone\"></select>"
     "<label for=\"unit\">温度单位</label><select id=\"unit\" name=\"unit\">"
     "<option value=\"c\">摄氏度（°C）</option><option value=\"f\">华氏度（°F）</option></select>"
@@ -241,7 +237,7 @@ static const char SETTINGS_PAGE[] =
     "'X-RLCD-Token':token};const response=await fetch(path,{method:'POST',"
     "headers,body});const text=await response.text();if(!response.ok)throw new Error(text||'操作失败');return text;}"
     "async function load(preferred){const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw new Error('无法读取设备设置');"
-    "const state=await response.json();token=state.token;$('power').value=state.power;$('timezone').value=state.timezone;"
+    "const state=await response.json();token=state.token;$('timezone').value=state.timezone;"
     "$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume;$('updates').value=state.updates;"
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
     "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});initialUpdates=state.updates;"
@@ -937,23 +933,15 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
     portEXIT_CRITICAL(&s_status_lock);
     sd_image_status_t sd_status = {0};
     sd_image_store_get_status(&sd_status);
-    const char *power_mode = app_power_mode_key(settings.power_mode);
-    if (power_mode == NULL) {
-        memset(token, 0, sizeof(token));
-        return send_page(request, "500 Internal Server Error",
-                         "text/plain; charset=utf-8",
-                         "设备省电策略无效。\n");
-    }
     char json[512];
     const int written = snprintf(
         json, sizeof(json),
-        "{\"power\":\"%s\",\"timezone\":%d,\"unit\":\"%s\","
+        "{\"timezone\":%d,\"unit\":\"%s\","
         "\"volume\":%u,\"updates\":\"%s\","
         "\"alarm\":\"%s\","
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
         "\"sd_state\":\"%s\",\"image_count\":%u,"
         "\"token\":\"%s\"}",
-        power_mode,
         settings.utc_offset_minutes,
         settings.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT ? "f"
                                                                      : "c",
@@ -1094,14 +1082,27 @@ static esp_err_t settings_post_handler(httpd_req_t *request)
     }
     char body[SETTINGS_PORTAL_FORM_CAPACITY] = {0};
     size_t length = 0U;
+    app_settings_t current = {0};
     app_settings_t settings = {0};
     const esp_err_t receive_error = receive_form(
         request, body, sizeof(body), &length);
-    const bool valid = receive_error == ESP_OK &&
-                       app_settings_parse_form(body, length, &settings);
+    const esp_err_t settings_read_error =
+        receive_error == ESP_OK ? app_settings_get(&current)
+                                : receive_error;
+    const bool valid = settings_read_error == ESP_OK &&
+                       app_settings_parse_form(
+                           body, length, &current, &settings);
     memset(body, 0, sizeof(body));
     if (receive_error == ESP_ERR_TIMEOUT) {
         return send_deadline_response(request);
+    }
+    if (receive_error == ESP_OK && settings_read_error != ESP_OK) {
+        ESP_LOGW(TAG, "current settings unavailable: %s",
+                 esp_err_to_name(settings_read_error));
+        return send_page(
+            request, "503 Service Unavailable",
+            "text/plain; charset=utf-8",
+            "设备设置暂不可用，请稍后重试。\n");
     }
     if (!valid) {
         return send_page(

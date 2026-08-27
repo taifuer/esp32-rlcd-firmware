@@ -56,7 +56,7 @@ int main(void)
     assert(app_page_boot_hold_action(APP_PAGE_AUDIO) ==
            APP_PAGE_ACTION_NONE);
     assert(app_page_boot_hold_action(APP_PAGE_SETTINGS) ==
-           APP_PAGE_ACTION_CYCLE_POWER);
+           APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING);
     assert(app_page_boot_hold_threshold_ms(APP_PAGE_SETTINGS) ==
            APP_PAGE_SETTINGS_POWER_HOLD_MS);
     assert(APP_PAGE_SETTINGS_POWER_HOLD_MS == 2000U);

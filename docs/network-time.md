@@ -7,24 +7,32 @@
 ## 工作流程
 
 ```text
-未保存 Wi-Fi（不受省电策略限制）──> 临时加密热点与配网页面 ──> 凭据写入 NVS
+未保存 Wi-Fi（不受省电规则限制）──> 临时加密热点与配网页面 ──> 凭据写入 NVS
              │
              └─ 5 分钟无人配置 ─> 关闭 Wi-Fi
 
-AUTO ── 电量判定 ─┬─> 实际 NORMAL ─> 家庭 Wi-Fi ─> SNTP ─> RTC ─> 检查更新后关闭 Wi-Fi
-                  │                    │失败
-                  │                    └─ 退避重试；每 24 小时重新同步
-                  └─> 实际 SAVING ─> 保持 Wi-Fi 关闭，等待用户发起网络操作
-手动 NORMAL/SAVING ──────────────────> 对应的实际状态
+USB 数据主机 ─────────────────────────> 实际 NORMAL
+没有数据主机 ─┬─ 手动提前省电开启 ──> 实际 SAVING
+              └─ 手动提前省电关闭 ──> 自动低电判定 ─┬─> 实际 NORMAL ─> 家庭 Wi-Fi
+                                                     │                    └─> SNTP / RTC / 更新检查
+                                                     └─> 实际 SAVING ─> 保持 Wi-Fi 关闭
 
 RTC、温湿度、电量、页面与音频功能始终独立运行
 ```
 
-`AUTO` 是默认策略。冷启动的首个有效电量不高于 20% 时进入 `SAVING`，否则进入
-`NORMAL`；运行期间，实际 `NORMAL` 下连续两次有效采样均不高于 20% 才进入 `SAVING`，
-实际 `SAVING` 下连续两次均不低于 25% 才恢复 `NORMAL`。无效读数保持当前状态并取消尚未
-确认的切换。连接 USB 数据主机时 `AUTO` 立即使用 `NORMAL`，不再检测到主机后重新取得
-电量读数；由于原板没有 VBUS 或充电状态输入，普通充电器、充电宝和纯充电线仍按电量判断。
+自动低电规则始终生效，不需要用户选择，也不能由普通设置关闭。冷启动的首个有效电量
+不高于 20% 时进入 `SAVING`，否则进入 `NORMAL`；运行期间，实际 `NORMAL` 下连续两次
+有效采样均不高于 20% 才进入 `SAVING`，低电原因的 `SAVING` 下连续两次均不低于 25%
+才恢复 `NORMAL`。无效读数保持当前状态并取消尚未确认的切换。用户只可手动提前进入
+省电；关闭手动请求不等于强制 `NORMAL`，低电时仍保持 `SAVING`。
+
+连接 USB 数据主机时立即使用 `NORMAL`，不再检测到主机后重新取得电量读数，再按手动
+请求和低电规则决定状态。这里的可靠证据是电脑主机发出的 USB SOF，不是 Type-C 口是否
+存在 5 V：原板没有把 VBUS 或充电状态输入接到 ESP32，普通充电器、充电宝和纯充电线
+不能被固件可靠识别，仍按 GPIO4 电压阈值运行；若估算值连续两次达到 25%，设备会按恢复
+阈值回到 `NORMAL`，但这不是连接线检测。插线引起的端电压上升也不是实际容量瞬增，不得
+用它声称已经充入相应电量或显示可靠的充电状态。确认电脑 USB 数据主机时，首屏以
+`USB` 替代电池百分比，“状态”页只保留 `USB` 与端电压；该表达不能覆盖普通充电器。
 
 首次启动且设备中没有网络配置时：
 
@@ -148,7 +156,7 @@ SSID 和密码中的反斜杠、分号、逗号、双引号与冒号会按格式
 - 实际 `NORMAL` 状态的自动连接、SNTP 与后台重试不使用全屏状态页；无论 RTC 是否有效，
   日常页面均保持可用；实际 `SAVING` 状态不执行这些后台联网操作；
 - RTC 备用电池判定在任何 Wi-Fi 或 NTP 操作前完成，联网恢复时间不会改写本次判定结果；
-- 仅在没有保存网络配置时显示配网信息 60 秒，随后恢复仪表盘；首次配网不受省电策略
+- 仅在没有保存网络配置时显示配网信息 60 秒，随后恢复仪表盘；首次配网不受省电规则
   限制，即使实际处于 `SAVING` 也会开放临时热点与配网页面最多 5 分钟。按
   `BOOT: OFFLINE` 可立即返回仪表盘，需要重新查看密码或重新开放热点时可重启设备；
 - 配网和错误页是静态画面，固件不会每秒重复刷新全反射屏。
@@ -172,13 +180,14 @@ SSID 和密码中的反斜杠、分号、逗号、双引号与冒号会按格式
 
 没有互联网但手机时间准确时，可从“设置”页开启设置门户并选择手机校时。手机提交当前
 Unix 时间，固件按设备设置的 UTC 偏移换算为本地时间并写入、回读 RTC；该操作不需要
-家庭 Wi-Fi 或 NTP，在三种配置策略及两种实际状态下都可使用。
+家庭 Wi-Fi 或 NTP，在两种实际电源状态下都可使用；手动提前省电只在设备“设置”页切换，
+不需要为此开启门户。
 
 需要主动检查固件时，在系统中心切换到“在线更新”页并按住 `KEY` 2 秒。固件复用 NVS
 中的家庭 Wi-Fi 凭据建立有时限的 HTTPS 会话；所有版本默认读取 `stable.json`，只有用户
 在设置门户主动开启 Beta 更新后才读取 `testing.json`。在线检查、在线安装、设置门户、
 本地 OTA 和网络校时由同一个会话策略串行执行，避免多个任务同时控制 Wi-Fi。没有互联网
-时可从设置门户上传 OTA 固件，RTC 与其他离线功能不受影响。省电策略或实际状态在运行中
+时可从设置门户上传 OTA 固件，RTC 与其他离线功能不受影响。手动省电请求或实际状态在运行中
 切换不重启设备，也不会取消已经开始的手动联网、在线检查、OTA 或本地操作。
 
 正常运行时长按 `BOOT` 不执行隐藏动作。关机后按住 `BOOT` 再按 `PWR` 仍会进入
@@ -202,7 +211,7 @@ RESET_WIFI
   最近错误，不输出家庭 Wi-Fi 名称或密码；
 - `GET_AUDIO` 返回 codec 就绪、测试阶段、录制时长、回放来源和两路强度百分比，不输出
   原始音频；
-- `GET_SETTINGS` 返回配置的省电策略、UTC 偏移、温度单位、播放音量、更新通道和闹钟规则，
+- `GET_SETTINGS` 返回是否请求手动提前省电、UTC 偏移、温度单位、播放音量、更新通道和闹钟规则，
   不修改设置；实际状态可在设备“设置”页查看；
 - `RESET_WIFI` 是开发和恢复入口，只清除本项目的网络凭据命名空间，然后唤醒网络任务
   原地进入配网，不重启设备；日常使用优先从设置门户执行相同操作；
@@ -229,7 +238,7 @@ RESET_WIFI
   防止二维码中的临时热点密码进入串口输出。二维码缓冲在画面生成后立即清零；
 - 家庭 Wi-Fi 凭据、设备偏好、闹钟已触发记录和 RTC 备用电池判定分别保存在独立的 NVS
   命名空间；设置
-  门户清除 Wi-Fi 不会重置省电策略、时区、温度单位、音量或 Beta 更新偏好；设备偏好
+  门户清除 Wi-Fi 不会重置手动提前省电、时区、温度单位、音量或 Beta 更新偏好；设备偏好
   使用带校验的双槽记录，保存中断或单槽损坏时会读取最近一份完整记录；启动发现只有一份
   有效记录时会修复另一槽，两槽均健康时不会产生无意义写入；
 - 本项目的 Factory 镜像从 `0x0` 写入，映像中的空白区会覆盖位于 `0x9000` 的 NVS
@@ -245,6 +254,7 @@ RESET_WIFI
 - [ESP-NETIF 与 SNTP API](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/network/esp_netif.html)
 - [ESP-IDF 系统时间与 SNTP](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/system/system_time.html)
 - [ESP-IDF NVS Flash API](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/storage/nvs_flash.html)
+- [ESP-IDF USB Serial/JTAG 连接判定](https://github.com/espressif/esp-idf/blob/v5.5.3/components/esp_driver_usb_serial_jtag/include/driver/usb_serial_jtag.h)
 - [ESP-IDF Captive Portal 示例](https://github.com/espressif/esp-idf/tree/v5.5.3/examples/protocols/http_server/captive_portal)
 - [Espressif QR Code v0.2.0](https://components.espressif.com/components/espressif/qrcode/versions/0.2.0/readme)
 - [ZXing Wi-Fi 二维码字段格式](https://github.com/zxing/zxing/wiki/Barcode-Contents#wi-fi-network-config-android-ios-11)

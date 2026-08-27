@@ -5,17 +5,16 @@
 #include <string.h>
 
 enum {
-    FORM_FIELD_POWER = 1U << 0,
-    FORM_FIELD_TIMEZONE = 1U << 1,
-    FORM_FIELD_UNIT = 1U << 2,
-    FORM_FIELD_VOLUME = 1U << 3,
-    FORM_FIELD_UPDATES = 1U << 4,
-    FORM_FIELD_ALARM = 1U << 5,
-    FORM_FIELD_ALARM_HOUR = 1U << 6,
-    FORM_FIELD_ALARM_MINUTE = 1U << 7,
-    FORM_FIELD_ALARM_DAYS = 1U << 8,
-    FORM_FIELD_ALL = FORM_FIELD_POWER | FORM_FIELD_TIMEZONE |
-                     FORM_FIELD_UNIT | FORM_FIELD_VOLUME |
+    FORM_FIELD_TIMEZONE = 1U << 0,
+    FORM_FIELD_UNIT = 1U << 1,
+    FORM_FIELD_VOLUME = 1U << 2,
+    FORM_FIELD_UPDATES = 1U << 3,
+    FORM_FIELD_ALARM = 1U << 4,
+    FORM_FIELD_ALARM_HOUR = 1U << 5,
+    FORM_FIELD_ALARM_MINUTE = 1U << 6,
+    FORM_FIELD_ALARM_DAYS = 1U << 7,
+    FORM_FIELD_ALL = FORM_FIELD_TIMEZONE | FORM_FIELD_UNIT |
+                     FORM_FIELD_VOLUME |
                      FORM_FIELD_UPDATES | FORM_FIELD_ALARM |
                      FORM_FIELD_ALARM_HOUR | FORM_FIELD_ALARM_MINUTE |
                      FORM_FIELD_ALARM_DAYS,
@@ -30,7 +29,7 @@ void app_settings_defaults(app_settings_t *settings)
     }
     *settings = (app_settings_t){
         .schema_version = APP_SETTINGS_SCHEMA_VERSION,
-        .power_mode = APP_POWER_MODE_AUTO,
+        .manual_saving_requested = false,
         .utc_offset_minutes = APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES,
         .temperature_unit = APP_TEMPERATURE_UNIT_CELSIUS,
         .audio_playback_volume =
@@ -54,9 +53,6 @@ bool app_settings_validate(const app_settings_t *settings)
 {
     return settings != NULL &&
            settings->schema_version == APP_SETTINGS_SCHEMA_VERSION &&
-           (settings->power_mode == APP_POWER_MODE_AUTO ||
-            settings->power_mode == APP_POWER_MODE_NORMAL ||
-            settings->power_mode == APP_POWER_MODE_SAVING) &&
            utc_offset_is_valid(settings->utc_offset_minutes) &&
            (settings->temperature_unit == APP_TEMPERATURE_UNIT_CELSIUS ||
             settings->temperature_unit ==
@@ -71,74 +67,26 @@ bool app_settings_validate(const app_settings_t *settings)
             (uint8_t)~APP_SETTINGS_ALARM_ALL_DAYS_MASK) == 0U;
 }
 
-const char *app_power_mode_key(app_power_mode_t mode)
+bool app_manual_saving_from_legacy_power(uint16_t schema_version,
+                                         uint8_t value,
+                                         bool *manual_requested)
 {
-    switch (mode) {
-    case APP_POWER_MODE_AUTO:
-        return "auto";
-    case APP_POWER_MODE_NORMAL:
-        return "normal";
-    case APP_POWER_MODE_SAVING:
-        return "saving";
-    default:
-        return NULL;
-    }
-}
-
-const char *app_power_mode_name(app_power_mode_t mode)
-{
-    switch (mode) {
-    case APP_POWER_MODE_AUTO:
-        return "AUTO";
-    case APP_POWER_MODE_NORMAL:
-        return "NORMAL";
-    case APP_POWER_MODE_SAVING:
-        return "SAVING";
-    default:
-        return NULL;
-    }
-}
-
-bool app_power_mode_next(app_power_mode_t current,
-                         app_power_mode_t *next)
-{
-    if (next == NULL) {
+    if (manual_requested == NULL || schema_version < 1U ||
+        schema_version > 5U) {
         return false;
     }
-
-    app_power_mode_t result;
-    switch (current) {
-    case APP_POWER_MODE_AUTO:
-        result = APP_POWER_MODE_NORMAL;
-        break;
-    case APP_POWER_MODE_NORMAL:
-        result = APP_POWER_MODE_SAVING;
-        break;
-    case APP_POWER_MODE_SAVING:
-        result = APP_POWER_MODE_AUTO;
-        break;
-    default:
+    if (schema_version <= 4U) {
+        if (value > 1U) {
+            return false;
+        }
+        *manual_requested = value == 1U;
+        return true;
+    }
+    if (value > 2U) {
         return false;
     }
-    *next = result;
+    *manual_requested = value == 1U;
     return true;
-}
-
-bool app_power_mode_from_legacy_value(uint8_t value,
-                                      app_power_mode_t *mode)
-{
-    if (mode == NULL) {
-        return false;
-    }
-    if (value == 0U) {
-        *mode = APP_POWER_MODE_NORMAL;
-        return true;
-    }
-    if (value == 1U) {
-        *mode = APP_POWER_MODE_SAVING;
-        return true;
-    }
-    return false;
 }
 
 bool app_settings_format_posix_tz(int16_t utc_offset_minutes,
@@ -256,20 +204,7 @@ static bool assign_form_field(const char *key, const char *value,
                               unsigned *seen_fields)
 {
     unsigned field = 0U;
-    if (strcmp(key, "power") == 0) {
-        field = FORM_FIELD_POWER;
-        if (strcmp(value, app_power_mode_key(APP_POWER_MODE_AUTO)) == 0) {
-            settings->power_mode = APP_POWER_MODE_AUTO;
-        } else if (strcmp(value,
-                          app_power_mode_key(APP_POWER_MODE_NORMAL)) == 0) {
-            settings->power_mode = APP_POWER_MODE_NORMAL;
-        } else if (strcmp(value,
-                          app_power_mode_key(APP_POWER_MODE_SAVING)) == 0) {
-            settings->power_mode = APP_POWER_MODE_SAVING;
-        } else {
-            return false;
-        }
-    } else if (strcmp(key, "timezone") == 0) {
+    if (strcmp(key, "timezone") == 0) {
         field = FORM_FIELD_TIMEZONE;
         int offset = 0;
         if (!parse_decimal(value, APP_SETTINGS_MIN_UTC_OFFSET_MINUTES,
@@ -346,15 +281,16 @@ static bool assign_form_field(const char *key, const char *value,
 }
 
 bool app_settings_parse_form(const char *body, size_t length,
+                             const app_settings_t *base,
                              app_settings_t *settings)
 {
-    if (body == NULL || settings == NULL || length == 0U ||
+    if (body == NULL || base == NULL || settings == NULL ||
+        !app_settings_validate(base) || length == 0U ||
         length > APP_SETTINGS_FORM_MAX_LENGTH) {
         return false;
     }
 
-    app_settings_t parsed;
-    app_settings_defaults(&parsed);
+    app_settings_t parsed = *base;
     unsigned seen_fields = 0U;
     size_t start = 0U;
     while (start < length) {

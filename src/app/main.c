@@ -128,9 +128,9 @@ static esp_err_t apply_runtime_power_transition(
     }
 
     const bool current_saving =
-        current_runtime->effective_mode == APP_POWER_MODE_SAVING;
+        current_runtime->effective_state == APP_POWER_STATE_SAVING;
     const bool next_saving =
-        next_runtime->effective_mode == APP_POWER_MODE_SAVING;
+        next_runtime->effective_state == APP_POWER_STATE_SAVING;
     const bool network_changes =
         network_ready &&
         current_policy->automatic_network !=
@@ -449,7 +449,7 @@ static void configure_boot_timing(button_state_t *state, app_page_t page)
     const uint32_t action_threshold_ms =
         app_page_boot_hold_threshold_ms(page);
     if (app_page_boot_hold_action(page) ==
-            APP_PAGE_ACTION_CYCLE_POWER &&
+            APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING &&
         action_threshold_ms > 0U) {
         (void)button_state_set_timing(state, BUTTON_HOLD_PROMPT_MS,
                                       action_threshold_ms);
@@ -599,10 +599,11 @@ void app_main(void)
         ESP_LOGW(TAG, "could not apply configured time zone; using process default");
     }
     app_power_runtime_t power_runtime;
-    if (!app_power_runtime_init(&power_runtime, settings.power_mode)) {
+    if (!app_power_runtime_init(
+            &power_runtime, settings.manual_saving_requested)) {
         app_settings_defaults(&settings);
-        (void)app_power_runtime_init(&power_runtime,
-                                     settings.power_mode);
+        (void)app_power_runtime_init(
+            &power_runtime, settings.manual_saving_requested);
     }
     app_power_policy_t power_policy;
     if (!app_power_policy_for_runtime(&power_runtime, &power_policy)) {
@@ -711,12 +712,14 @@ void app_main(void)
                                                    &power_policy);
             }
             ESP_LOGI(TAG,
-                     "initial battery %u mV, %u%%; power=%s/%s",
+                     "initial battery %u mV, %u%%; manual=%s state=%s",
                      battery_measurement.voltage_mv,
                      battery_measurement.percent,
-                     app_power_mode_key(settings.power_mode),
-                     app_power_mode_key(
-                         power_runtime.effective_mode));
+                     settings.manual_saving_requested ? "on" : "off",
+                     power_runtime.effective_state ==
+                             APP_POWER_STATE_SAVING
+                         ? "saving"
+                         : "normal");
         } else {
             ESP_LOGW(TAG, "initial battery read failed: %s",
                      esp_err_to_name(initial_battery_error));
@@ -730,23 +733,25 @@ void app_main(void)
      * wall chargers and power banks without USB data remain undetectable. */
     const bool startup_usb_data_host_connected =
         usb_serial_jtag_is_connected();
-    bool usb_power_mode_changed = false;
+    bool usb_power_state_changed = false;
     if (!app_power_runtime_observe_usb_data_host(
             &power_runtime, startup_usb_data_host_connected,
-            &usb_power_mode_changed) ||
+            &usb_power_state_changed) ||
         !app_power_policy_for_runtime(&power_runtime, &power_policy)) {
         ESP_LOGW(TAG, "could not initialize USB data-host power policy");
     } else if (startup_usb_data_host_connected) {
         ESP_LOGI(TAG,
-                 "USB data host connected at startup; power=%s/%s",
-                 app_power_mode_key(settings.power_mode),
-                 app_power_mode_key(power_runtime.effective_mode));
+                 "USB data host connected at startup; manual=%s state=%s",
+                 settings.manual_saving_requested ? "on" : "off",
+                 power_runtime.effective_state == APP_POWER_STATE_SAVING
+                     ? "saving"
+                     : "normal");
     }
 
-    /* Resolve AUTO from the initial battery sample before enabling DFS or
-     * allowing the network task to start automatic work. */
+    /* Resolve the automatic low-battery rule from the initial sample before
+     * enabling DFS or allowing the network task to start automatic work. */
     const esp_err_t power_manager_error = power_manager_init(
-        power_runtime.effective_mode == APP_POWER_MODE_SAVING);
+        power_runtime.effective_state == APP_POWER_STATE_SAVING);
     if (power_manager_error != ESP_OK) {
         ESP_LOGW(TAG,
                  "dynamic frequency scaling unavailable; display and network saving policy remains active: %s",
@@ -816,6 +821,7 @@ void app_main(void)
             APP_TEMPERATURE_UNIT_FAHRENHEIT,
         .battery_valid = startup_battery_valid,
         .battery_percent = battery_measurement.percent,
+        .usb_data_host_connected = startup_usb_data_host_connected,
     };
     pcf85063_datetime_t datetime = {0};
     shtc3_measurement_t measurement = {0};
@@ -912,7 +918,7 @@ void app_main(void)
     app_display_mode_t previous_display_mode = APP_DISPLAY_NONE;
     manual_sync_ui_t manual_sync_ui = MANUAL_SYNC_UI_NONE;
     power_setting_ui_t power_setting_ui = POWER_SETTING_UI_NONE;
-    app_power_mode_t power_setting_target = settings.power_mode;
+    bool power_setting_target = settings.manual_saving_requested;
     bool power_setting_apply_pending = false;
     bool power_setting_result_timer_started = false;
     esp_err_t manual_sync_error = ESP_OK;
@@ -1082,6 +1088,21 @@ void app_main(void)
             const bool usb_data_host_connected =
                 usb_serial_jtag_is_connected();
             if (usb_data_host_connected !=
+                dashboard.usb_data_host_connected) {
+                /* The confirmed USB data-host indication is independent of
+                 * whether the CPU/network power transition can be applied
+                 * in this pass. On disconnect, request a fresh battery read
+                 * before the next dashboard draw. */
+                dashboard.usb_data_host_connected =
+                    usb_data_host_connected;
+                if (!usb_data_host_connected) {
+                    battery_read_pending = true;
+                }
+                dashboard_data_changed = true;
+                system_status_data_changed = true;
+                render_requested = true;
+            }
+            if (usb_data_host_connected !=
                 power_runtime.usb_data_host_connected) {
                 app_power_runtime_t next_power_runtime = power_runtime;
                 app_power_policy_t next_power_policy = {0};
@@ -1104,24 +1125,21 @@ void app_main(void)
                 if (apply_error == ESP_OK) {
                     power_runtime = next_power_runtime;
                     power_policy = next_power_policy;
-                    if (!usb_data_host_connected) {
-                        battery_read_pending = true;
-                    }
                     if (effective_mode_changed) {
                         dashboard.show_seconds =
                             power_policy.show_seconds;
                         rtc_read_wait_ms = 0U;
-                        dashboard_data_changed = true;
                         calendar_data_changed = true;
-                        system_status_data_changed = true;
-                        render_requested = true;
                     }
                     ESP_LOGI(
                         TAG, "USB data host %s%s",
                         usb_data_host_connected ? "connected"
                                                 : "no longer detected",
                         effective_mode_changed
-                            ? "; automatic power switched to normal"
+                            ? (next_power_runtime.effective_state ==
+                                       APP_POWER_STATE_SAVING
+                                   ? "; effective state changed to saving"
+                                   : "; effective state changed to normal")
                             : "");
                 } else if (apply_error != ESP_ERR_INVALID_STATE) {
                     ESP_LOGW(TAG,
@@ -1144,16 +1162,15 @@ void app_main(void)
             if (snapshot_error == ESP_OK &&
                 snapshot.generation != settings_generation) {
                 const bool configured_power_changed =
-                    snapshot.settings.power_mode != settings.power_mode;
+                    snapshot.settings.manual_saving_requested !=
+                    settings.manual_saving_requested;
                 app_power_runtime_t next_power_runtime = power_runtime;
                 app_power_policy_t next_power_policy = {0};
                 bool effective_mode_changed = false;
                 esp_err_t apply_error =
-                    app_power_runtime_set_configured(
+                    app_power_runtime_set_manual_saving_requested(
                         &next_power_runtime,
-                        snapshot.settings.power_mode,
-                        dashboard.battery_valid,
-                        dashboard.battery_percent,
+                        snapshot.settings.manual_saving_requested,
                         &effective_mode_changed) &&
                             app_power_policy_for_runtime(
                                 &next_power_runtime,
@@ -1198,8 +1215,8 @@ void app_main(void)
                         battery_read_pending = true;
                     }
                     power_setting_apply_pending = false;
-                    if (power_runtime.effective_mode ==
-                        APP_POWER_MODE_SAVING) {
+                    if (power_runtime.effective_state ==
+                        APP_POWER_STATE_SAVING) {
                         automatic_update_check_pending = false;
                     }
                     alarm_schedule =
@@ -1220,28 +1237,32 @@ void app_main(void)
                         power_setting_ui ==
                             POWER_SETTING_UI_PENDING) {
                         power_setting_ui =
-                            settings.power_mode == power_setting_target
+                            settings.manual_saving_requested ==
+                                    power_setting_target
                                 ? POWER_SETTING_UI_SAVED
                                 : POWER_SETTING_UI_SUPERSEDED;
                         power_setting_result_timer_started = false;
                     }
                     ESP_LOGI(TAG,
                              "saved settings applied without restart "
-                             "(generation=%u power=%s/%s%s)",
+                             "(generation=%u manual=%s state=%s%s)",
                              (unsigned)settings_generation,
-                             app_power_mode_key(settings.power_mode),
-                             app_power_mode_key(
-                                 power_runtime.effective_mode),
+                             settings.manual_saving_requested ? "on"
+                                                              : "off",
+                             power_runtime.effective_state ==
+                                     APP_POWER_STATE_SAVING
+                                 ? "saving"
+                                 : "normal",
                              effective_mode_changed ? " changed" : "");
                 } else {
                     if (power_setting_apply_pending) {
                         power_setting_target =
-                            snapshot.settings.power_mode;
+                            snapshot.settings.manual_saving_requested;
                     }
                     if (power_setting_ui ==
                         POWER_SETTING_UI_APPLYING) {
                         power_setting_ui =
-                            snapshot.settings.power_mode ==
+                            snapshot.settings.manual_saving_requested ==
                                     power_setting_target
                                 ? POWER_SETTING_UI_PENDING
                                 : POWER_SETTING_UI_SUPERSEDED;
@@ -1807,7 +1828,7 @@ void app_main(void)
             render_requested = true;
             if (input_page == APP_PAGE_SETTINGS) {
                 ESP_LOGI(TAG,
-                         "BOOT hold cancelled; power mode unchanged");
+                         "BOOT hold cancelled; manual saving unchanged");
             } else {
                 ESP_LOGI(TAG,
                          "BOOT hold released without an action");
@@ -1816,33 +1837,35 @@ void app_main(void)
             app_page_state_note_activity(&page_state);
             const app_page_action_t boot_action =
                 app_page_boot_hold_action(input_page);
-            if (boot_action == APP_PAGE_ACTION_CYCLE_POWER &&
+            if (boot_action ==
+                    APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING &&
                 manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                 !firmware_update_ui_active &&
                 !gallery_download_ui_active && !online_update_busy &&
                 !online_update_confirmation_active &&
                 !key_pressed_or_debounced) {
-                app_power_mode_t next_mode = APP_POWER_MODE_AUTO;
+                bool next_manual_saving = false;
                 const esp_err_t save_error =
-                    app_settings_cycle_power_mode(&next_mode);
+                    app_settings_toggle_manual_saving(
+                        &next_manual_saving);
 
                 if (save_error == ESP_OK) {
-                    power_setting_target = next_mode;
+                    power_setting_target = next_manual_saving;
                     power_setting_apply_pending = true;
                     power_setting_ui = POWER_SETTING_UI_APPLYING;
                     power_setting_result_timer_started = false;
                     settings_refresh_requested = true;
-                    if (next_mode == APP_POWER_MODE_SAVING) {
+                    if (next_manual_saving) {
                         automatic_update_check_pending = false;
                     }
                     ESP_LOGI(TAG,
-                             "BOOT long press: power mode saved as %s",
-                             app_power_mode_key(next_mode));
+                             "BOOT long press: manual saving saved as %s",
+                             next_manual_saving ? "on" : "off");
                 } else {
                     power_setting_ui = POWER_SETTING_UI_FAILED;
                     power_setting_result_timer_started = false;
                     ESP_LOGW(TAG,
-                             "BOOT long press: power mode unchanged: %s",
+                             "BOOT long press: manual saving unchanged: %s",
                              esp_err_to_name(save_error));
                 }
                 render_requested = true;
@@ -2257,8 +2280,8 @@ void app_main(void)
                             } else {
                                 power_runtime = next_power_runtime;
                                 power_policy = next_power_policy;
-                                if (power_runtime.effective_mode ==
-                                    APP_POWER_MODE_SAVING) {
+                                if (power_runtime.effective_state ==
+                                    APP_POWER_STATE_SAVING) {
                                     automatic_update_check_pending =
                                         false;
                                 }
@@ -2271,9 +2294,9 @@ void app_main(void)
                                 render_requested = true;
                                 ESP_LOGI(
                                     TAG,
-                                    "automatic power mode switched to %s at %u%%",
-                                    power_runtime.effective_mode ==
-                                            APP_POWER_MODE_SAVING
+                                    "automatic low-battery state switched to %s at %u%%",
+                                    power_runtime.effective_state ==
+                                            APP_POWER_STATE_SAVING
                                         ? "saving"
                                         : "normal",
                                     battery_measurement.percent);
@@ -2332,8 +2355,6 @@ void app_main(void)
 
         if (automatic_update_check_pending &&
             power_policy.automatic_network &&
-            !(power_setting_apply_pending &&
-              power_setting_target == APP_POWER_MODE_SAVING) &&
             online_update_error == ESP_OK &&
             network_status.state == NETWORK_TIME_STATE_SYNCHRONIZED &&
             !firmware_update_ui_active && !gallery_download_ui_active &&
@@ -2377,21 +2398,24 @@ void app_main(void)
                 previous_display_mode !=
                     APP_DISPLAY_SETTINGS_POWER_RESULT) {
                 if (power_setting_ui == POWER_SETTING_UI_APPLYING) {
-                    char detail[32];
-                    snprintf(detail, sizeof(detail), "%s MODE",
-                             app_power_mode_name(
-                                 power_setting_target));
-                    display_show_status("APPLYING POWER", detail);
+                    display_show_status(
+                        power_setting_target
+                            ? "MANUAL SAVING ON"
+                            : "MANUAL SAVING OFF",
+                        "Applying setting");
                 } else if (power_setting_ui ==
                            POWER_SETTING_UI_SAVED) {
-                    char detail[32];
-                    snprintf(detail, sizeof(detail), "%s MODE",
-                             app_power_mode_name(
-                                 power_setting_target));
-                    display_show_status("POWER SAVED", detail);
+                    display_show_status(
+                        power_setting_target
+                            ? "MANUAL SAVING ON"
+                            : "MANUAL SAVING OFF",
+                        power_runtime.usb_data_host_connected &&
+                                power_setting_target
+                            ? "Saved; active after USB"
+                            : "Setting saved");
                 } else if (power_setting_ui ==
                            POWER_SETTING_UI_PENDING) {
-                    display_show_status("POWER SAVED",
+                    display_show_status("SAVING SETTING",
                                         "Apply pending; retrying");
                 } else if (power_setting_ui ==
                            POWER_SETTING_UI_SUPERSEDED) {
@@ -2487,7 +2511,7 @@ void app_main(void)
                 char detail[40];
                 snprintf(detail, sizeof(detail), "Keep holding: %us",
                          power_seconds_remaining);
-                display_show_status("CHANGE POWER", detail);
+                display_show_status("MANUAL SAVING", detail);
             }
             previous_display_mode = APP_DISPLAY_SETTINGS_POWER_PROMPT;
             previous_portal_seconds = power_seconds_remaining;
@@ -2688,6 +2712,8 @@ void app_main(void)
                     .battery_valid = dashboard.battery_valid,
                     .battery_voltage_mv = battery_measurement.voltage_mv,
                     .battery_percent = dashboard.battery_percent,
+                    .usb_data_host_connected =
+                        dashboard.usb_data_host_connected,
                     .network_ready = network_error == ESP_OK,
                     .network_configured = network_status.configured,
                     .network_state =
@@ -2738,21 +2764,18 @@ void app_main(void)
                     };
                     display_show_audio(&display_audio_status);
                 } else if (active_page == APP_PAGE_SETTINGS) {
-                    const app_power_mode_t displayed_power_mode =
-                        power_setting_apply_pending
-                            ? power_setting_target
-                            : settings.power_mode;
                     const display_settings_status_t settings_status = {
-                        .power_mode =
-                            displayed_power_mode == APP_POWER_MODE_AUTO
-                                ? DISPLAY_POWER_MODE_AUTO
-                                : (displayed_power_mode ==
-                                           APP_POWER_MODE_SAVING
-                                       ? DISPLAY_POWER_MODE_SAVING
-                                       : DISPLAY_POWER_MODE_NORMAL),
+                        .manual_saving_requested =
+                            power_setting_apply_pending
+                                ? power_setting_target
+                                : settings.manual_saving_requested,
+                        .automatic_saving_active =
+                            power_runtime.automatic_saving_active,
                         .effective_low_power =
-                            power_runtime.effective_mode ==
-                            APP_POWER_MODE_SAVING,
+                            power_runtime.effective_state ==
+                            APP_POWER_STATE_SAVING,
+                        .usb_data_host_connected =
+                            power_runtime.usb_data_host_connected,
                         .power_apply_pending =
                             power_setting_apply_pending,
                         .utc_offset_minutes = settings.utc_offset_minutes,

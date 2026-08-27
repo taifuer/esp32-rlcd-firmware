@@ -156,7 +156,7 @@ static void draw_settings_footer(void)
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(270, "BOOT: HOME | KEY: NEXT");
     draw_centered(294,
-                  "HOLD BOOT 2s: POWER | HOLD KEY 3s: PORTAL");
+                  "HOLD BOOT 2s: MANUAL SAVING | HOLD KEY 3s: PORTAL");
 }
 
 static void draw_daily_footer(const char *text)
@@ -424,6 +424,16 @@ static void draw_battery(int x, int y, bool valid, uint8_t percent)
     u8g2_DrawStr(s_u8g2, x + body_width + 8, y + 12, text);
 }
 
+static void draw_usb_power(int left, int width, int baseline_y)
+{
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    int x = left + (width - (int)u8g2_GetStrWidth(s_u8g2, "USB")) / 2;
+    if (x < left) {
+        x = left;
+    }
+    u8g2_DrawStr(s_u8g2, x, baseline_y, "USB");
+}
+
 static void draw_wifi_status(int x, int y, display_network_state_t state)
 {
     if (state == DISPLAY_NETWORK_CONNECTED) {
@@ -475,8 +485,15 @@ static void draw_top_row(const display_dashboard_t *dashboard)
     u8g2_DrawUTF8(s_u8g2, x, TOP_ROW_BASELINE_Y, weekday_text);
     x += weekday_width + base_gap;
     draw_wifi_status(x, WIFI_ICON_Y, dashboard->network_state);
-    draw_battery(x + WIFI_ICON_WIDTH + STATUS_GROUP_GAP, 20,
-                 dashboard->battery_valid, dashboard->battery_percent);
+    const int power_left = x + WIFI_ICON_WIDTH + STATUS_GROUP_GAP;
+    const int power_width = STATUS_GROUP_WIDTH - WIFI_ICON_WIDTH -
+                            STATUS_GROUP_GAP;
+    if (dashboard->usb_data_host_connected) {
+        draw_usb_power(power_left, power_width, TOP_ROW_BASELINE_Y + 1);
+    } else {
+        draw_battery(power_left, 20, dashboard->battery_valid,
+                     dashboard->battery_percent);
+    }
 }
 
 esp_err_t display_init(void)
@@ -906,9 +923,14 @@ void display_show_system_status(const display_system_status_t *status)
     draw_system_row(144, "SENSOR", value);
 
     if (!status->battery_ready) {
-        snprintf(value, sizeof(value), "NOT READY");
+        snprintf(value, sizeof(value), "%sNOT READY",
+                 status->usb_data_host_connected ? "USB | " : "");
     } else if (!status->battery_valid) {
-        snprintf(value, sizeof(value), "READ ERROR");
+        snprintf(value, sizeof(value), "%sREAD ERROR",
+                 status->usb_data_host_connected ? "USB | " : "");
+    } else if (status->usb_data_host_connected) {
+        snprintf(value, sizeof(value), "USB | %u mV",
+                 status->battery_voltage_mv);
     } else {
         snprintf(value, sizeof(value), "OK | %u %% | %u mV",
                  status->battery_percent, status->battery_voltage_mv);
@@ -1100,22 +1122,18 @@ void display_show_settings(const display_settings_status_t *status)
     char value[40];
     draw_system_header("SETTINGS", 3U);
 
-    const char *power = "NOT SET";
+    const char *power;
     if (status->power_apply_pending) {
-        if (status->power_mode == DISPLAY_POWER_MODE_AUTO) {
-            power = "AUTO > PENDING";
-        } else if (status->power_mode == DISPLAY_POWER_MODE_NORMAL) {
-            power = "NORMAL > PENDING";
-        } else if (status->power_mode == DISPLAY_POWER_MODE_SAVING) {
-            power = "SAVING > PENDING";
-        }
-    } else if (status->power_mode == DISPLAY_POWER_MODE_AUTO) {
-        power = status->effective_low_power ? "AUTO > SAVING"
-                                            : "AUTO > NORMAL";
-    } else if (status->power_mode == DISPLAY_POWER_MODE_NORMAL) {
-        power = "NORMAL";
-    } else if (status->power_mode == DISPLAY_POWER_MODE_SAVING) {
-        power = "SAVING";
+        power = status->effective_low_power ? "SAVING | PENDING"
+                                            : "NORMAL | PENDING";
+    } else if (status->usb_data_host_connected) {
+        power = "NORMAL | USB";
+    } else if (status->manual_saving_requested) {
+        power = "SAVING | MANUAL";
+    } else if (status->automatic_saving_active) {
+        power = "SAVING | LOW BAT";
+    } else {
+        power = status->effective_low_power ? "SAVING" : "NORMAL";
     }
     draw_system_row(72, "POWER", power);
     format_utc_offset(value, sizeof(value), status->utc_offset_minutes);

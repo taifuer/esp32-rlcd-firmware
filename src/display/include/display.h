@@ -23,12 +23,6 @@ typedef enum {
     DISPLAY_ENVIRONMENT_COMFORT_NEEDS_ADJUSTMENT,
 } display_environment_comfort_t;
 
-typedef enum {
-    DISPLAY_POWER_MODE_AUTO = 0,
-    DISPLAY_POWER_MODE_NORMAL,
-    DISPLAY_POWER_MODE_SAVING,
-} display_power_mode_t;
-
 typedef struct {
     bool time_valid;
     uint16_t year;
@@ -48,6 +42,8 @@ typedef struct {
     display_environment_comfort_t environment_comfort;
     bool battery_valid;
     uint8_t battery_percent;
+    /* Confirmed enumerating data host; never infer this from battery voltage. */
+    bool usb_data_host_connected;
     display_network_state_t network_state;
 } display_dashboard_t;
 
@@ -69,6 +65,8 @@ typedef struct {
     bool battery_valid;
     uint16_t battery_voltage_mv;
     uint8_t battery_percent;
+    /* Confirmed enumerating data host; ordinary chargers remain unknown. */
+    bool usb_data_host_connected;
     bool network_ready;
     bool network_configured;
     const char *network_state;
@@ -80,8 +78,11 @@ typedef struct {
 } display_system_status_t;
 
 typedef struct {
-    display_power_mode_t power_mode;
+    bool manual_saving_requested;
+    bool automatic_saving_active;
     bool effective_low_power;
+    /* Confirmed enumerating data host; ordinary chargers remain unknown. */
+    bool usb_data_host_connected;
     bool power_apply_pending;
     int16_t utc_offset_minutes;
     bool temperature_fahrenheit;
