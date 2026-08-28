@@ -9,7 +9,7 @@ extern "C" {
 
 #define APP_PAGE_SECONDARY_TIMEOUT_MS 30000U
 #define APP_PAGE_MANUAL_SYNC_HOLD_MS 2000U
-#define APP_PAGE_AUDIO_TEST_HOLD_MS 2000U
+#define APP_PAGE_VOICE_HOLD_MS 2000U
 #define APP_PAGE_IMAGE_DELETE_HOLD_MS 2000U
 #define APP_PAGE_SETTINGS_HOLD_MS 3000U
 #define APP_PAGE_SETTINGS_POWER_HOLD_MS 2000U
@@ -21,7 +21,7 @@ typedef enum {
     APP_PAGE_CALENDAR,
     APP_PAGE_IMAGE,
     APP_PAGE_STATUS,
-    APP_PAGE_AUDIO,
+    APP_PAGE_VOICE,
     APP_PAGE_SETTINGS,
     APP_PAGE_ONLINE_UPDATE,
 } app_page_t;
@@ -30,7 +30,7 @@ typedef enum {
     APP_PAGE_ACTION_NONE = 0,
     APP_PAGE_ACTION_DELETE_IMAGE,
     APP_PAGE_ACTION_SYNC_TIME,
-    APP_PAGE_ACTION_TEST_AUDIO,
+    APP_PAGE_ACTION_START_VOICE,
     APP_PAGE_ACTION_OPEN_SETTINGS,
     APP_PAGE_ACTION_CHECK_ONLINE_UPDATE,
     APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING,
@@ -44,6 +44,7 @@ typedef struct {
 
 void app_page_state_init(app_page_state_t *state);
 void app_page_state_go_home(app_page_state_t *state);
+bool app_page_state_open_page(app_page_state_t *state, app_page_t page);
 void app_page_state_set_image_available(app_page_state_t *state,
                                         bool available);
 app_page_t app_page_state_current(const app_page_state_t *state);

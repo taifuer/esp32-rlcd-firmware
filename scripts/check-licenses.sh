@@ -26,10 +26,39 @@ compare_file() {
     fi
 }
 
+compare_text_file() {
+    local tracked_file="$1"
+    local upstream_file="$2"
+    local label="$3"
+
+    require_file "${tracked_file}"
+    require_file "${upstream_file}"
+    # Command substitution ignores a final newline. The ESP-SR archive omits
+    # one, while the tracked text follows normal repository formatting.
+    if [[ "$(<"${tracked_file}")" != "$(<"${upstream_file}")" ]]; then
+        echo "${label} 许可文本与固定依赖不一致" >&2
+        echo "  仓库: ${tracked_file}" >&2
+        echo "  上游: ${upstream_file}" >&2
+        exit 1
+    fi
+}
+
 require_notice_entry() {
     local entry="$1"
     if ! grep -Fq -- "${entry}" "${RLCD_PROJECT_DIR}/NOTICE.md"; then
         echo "NOTICE.md 缺少许可条目: ${entry}" >&2
+        exit 1
+    fi
+}
+
+require_manifest_entry() {
+    local manifest="$1"
+    local entry="$2"
+    local label="$3"
+
+    require_file "${manifest}"
+    if ! grep -Fxq -- "${entry}" "${manifest}"; then
+        echo "${label} 组件清单缺少或改变了许可元数据: ${entry}" >&2
         exit 1
     fi
 }
@@ -41,6 +70,8 @@ required_files=(
     "NOTICE.md"
     "LICENSES/Cadence-Xtensa-MIT.txt"
     "LICENSES/cJSON.txt"
+    "LICENSES/dl_fft-MIT.txt"
+    "LICENSES/ESP-SR.txt"
     "LICENSES/FreeRTOS.txt"
     "LICENSES/GCC-Runtime-Library-Exception-3.1.txt"
     "LICENSES/GPL-2.0-only.txt"
@@ -77,7 +108,40 @@ compare_file "${RLCD_PROJECT_DIR}/LICENSES/Mbed-TLS.txt" \
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/HTTP-Parser.txt" \
     "${RLCD_IDF_DIR}/components/http_parser/LICENSE.txt" "HTTP Parser"
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/cJSON.txt" \
-    "${RLCD_IDF_DIR}/components/json/cJSON/LICENSE" "cJSON"
+    "${RLCD_CJSON_DIR}/LICENSE" "Espressif cJSON package"
+compare_file "${RLCD_PROJECT_DIR}/LICENSES/cJSON.txt" \
+    "${RLCD_CJSON_DIR}/cJSON/LICENSE" "upstream cJSON"
+compare_text_file "${RLCD_PROJECT_DIR}/LICENSES/ESP-SR.txt" \
+    "${RLCD_ESP_SR_DIR}/LICENSE" "ESP-SR"
+compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
+    "${RLCD_ESP_DSP_DIR}/LICENSE" "ESP-DSP"
+require_manifest_entry "${RLCD_ESP_SR_DIR}/idf_component.yml" \
+    "version: ${ESP_SR_VERSION}" "ESP-SR"
+require_manifest_entry "${RLCD_ESP_SR_DIR}/idf_component.yml" \
+    "  commit_sha: 2f8c4b0459db5bbb39abd77adae27962d6d94bcb" \
+    "ESP-SR"
+require_manifest_entry "${RLCD_ESP_DSP_DIR}/idf_component.yml" \
+    "version: ${ESP_DSP_VERSION}" "ESP-DSP"
+require_manifest_entry "${RLCD_ESP_DSP_DIR}/idf_component.yml" \
+    "  commit_sha: 196825deaa4848b2c8e87b6126491cd7fc87e5bf" \
+    "ESP-DSP"
+require_manifest_entry "${RLCD_DL_FFT_DIR}/idf_component.yml" \
+    "license: MIT" "dl_fft"
+require_manifest_entry "${RLCD_DL_FFT_DIR}/idf_component.yml" \
+    "version: ${DL_FFT_VERSION}" "dl_fft"
+require_manifest_entry "${RLCD_DL_FFT_DIR}/idf_component.yml" \
+    "  commit_sha: a8a7b60ea5bfd6ce46960ea061641fffa9589440" \
+    "dl_fft"
+require_manifest_entry "${RLCD_CJSON_DIR}/idf_component.yml" \
+    "version: ${CJSON_VERSION}" "cJSON"
+require_manifest_entry "${RLCD_CJSON_DIR}/idf_component.yml" \
+    "  commit_sha: 721d625669f4e4fdfe6e02cf7e11f15b33f13e3a" \
+    "cJSON"
+if ! grep -Fq -- "SPDX-License-Identifier: Apache-2.0" \
+    "${RLCD_DL_FFT_DIR}/base/isa/esp32s3/dl_fft2r_fc32_aes3.S"; then
+    echo "dl_fft ESP32-S3 源文件的 Apache-2.0 标识已改变" >&2
+    exit 1
+fi
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/lwIP.txt" \
     "${RLCD_IDF_DIR}/components/lwip/lwip/COPYING" "lwIP"
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/WPA-Supplicant.txt" \
@@ -112,6 +176,19 @@ notice_entries=(
     "HTTP Parser"
     "cJSON"
     "Copyright (c) 2009-2017 Dave Gamble and cJSON contributors"
+    "ESP-SR"
+    "v${ESP_SR_VERSION}"
+    "2f8c4b0459db5bbb39abd77adae27962d6d94bcb"
+    "ESPRESSIF MIT"
+    "ESP-DSP"
+    "v${ESP_DSP_VERSION}"
+    "196825deaa4848b2c8e87b6126491cd7fc87e5bf"
+    "dl_fft"
+    "v${DL_FFT_VERSION}"
+    "a8a7b60ea5bfd6ce46960ea061641fffa9589440"
+    "组件清单声明 MIT"
+    "Espressif 组件 v${CJSON_VERSION}"
+    "721d625669f4e4fdfe6e02cf7e11f15b33f13e3a"
     "Espressif QR Code"
     "Mbed TLS"
     "lwIP"

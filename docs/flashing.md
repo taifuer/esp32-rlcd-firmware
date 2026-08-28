@@ -55,6 +55,7 @@ Wrote ... rlcd_firmware_factory.bin, ready to flash to offset 0x0
 ```text
 rlcd_firmware_factory.bin  # 首次安装、分区迁移与恢复
 rlcd_firmware_ota.bin      # 在线更新、设置门户本地 OTA 或保留配置的串行应用更新
+srmodels/srmodels.bin      # v0.18.0+ 离线语音模型，串行 app+model 更新使用
 ```
 
 ### 2. 进入 ROM 下载模式
@@ -101,28 +102,47 @@ Factory 镜像是带 `0xFF` 填充的 raw 文件，覆盖范围包含位于 `0x9
 分区。因此含联网功能的版本在按本流程烧录后会清除已保存的 Wi-Fi 凭据，首次启动需要
 重新配网。它不会清除映像覆盖范围以外的整片 Flash，也不等同于 `erase-flash`。
 
-### 4. 保留 Wi-Fi 的串行应用更新
+### 4. 保留 Wi-Fi 的串行应用与模型更新
 
-仅当设备已经完整安装 v0.7.0 或更新版本的双 OTA 分区表，而且本次没有修改 Bootloader
-或 `partitions.csv` 时使用：
+仅当设备已经完整安装 v0.7.0 或更新版本的双 OTA 应用布局，而且本次不需要更新
+Bootloader 时使用。v0.18.0 新增的模型区域位于旧布局原本未分配的固定地址，不要求先
+改写旧分区表：
 
 ```bash
 ./scripts/update-app.sh --port COM5 --confirm
 ```
 
-脚本先把 `rlcd_firmware_ota.bin` 写入固定的 `ota_0` 地址 `0x10000` 并完成哈希校验，再只
-清除 `0xd000` 起的 8 KiB OTA 选择数据，使 Bootloader 下次选择 `ota_0`。它不会触碰
-`0x9000` 的 NVS，所以家庭 Wi-Fi 配置保持不变。此流程仍需手动进入 ROM 下载模式。
+脚本先验证 `build/SHA256SUMS`，然后在同一次 `write-flash` 中把
+`rlcd_firmware_ota.bin` 写入固定的 `ota_0` 地址 `0x10000`，把
+`build/srmodels/srmodels.bin` 写入固定模型地址 `0x610000`；两个文件都不得超过各自的
+`0x300000` 区域。写入成功后只清除 `0xd000` 起的 8 KiB OTA 选择数据，使 Bootloader
+下次选择 `ota_0`。它不会触碰 `0x9000` 的 NVS，所以家庭 Wi-Fi 和设备偏好保持不变。
+使用发布目录时可分别通过 `--firmware` 与 `--model` 指定已列入同一 `SHA256SUMS` 的文件。
+此流程仍需手动进入 ROM 下载模式。
 
-普通用户和日常开发优先从设备 `SETTINGS` 页开启设置门户并使用本地 OTA，无需数据线和
-ROM 下载模式。完整步骤见[固件安装与更新](firmware-update.md)。
+仓库中的 v0.18.0 正式发布目录可以直接使用：
+
+```bash
+./scripts/update-app.sh \
+  --port COM5 \
+  --firmware dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-ota.bin \
+  --model dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-model.bin \
+  --confirm
+```
+
+发布目录中的 `SHA256SUMS` 同时覆盖 Factory、OTA 和模型；如果同版本的 `-model.bin` 与
+`-ota.bin` 位于同一目录，脚本也能自动找到模型，可省略 `--model`。
+
+旧设备首次启用 v0.18.0 离线语音时需要执行一次本流程来安装模型；在线更新和设置门户
+本地 OTA 仍只更新应用。模型已经安装后，普通用户和日常开发继续优先使用设备内更新，
+无需数据线和 ROM 下载模式。完整步骤见[固件安装与更新](firmware-update.md)。
 
 ### 构建版本与在线通道
 
-仓库默认生成 `0.16.0`。构建后续预发布候选时使用环境变量，例如：
+仓库默认生成 `0.18.0`。构建后续预发布候选时使用环境变量，例如：
 
 ```bash
-RLCD_PROJECT_VERSION=0.17.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.19.0-dev.1 ./scripts/build.sh
 ```
 
 所有版本默认读取 `stable.json`，只有在设备设置中显式开启 Beta 更新后才读取
@@ -165,10 +185,12 @@ USB 手动校时掩盖联网问题。烧录旧的离线版本，或需要后备�
 - 串口中的电池电压处于合理范围，屏幕电量百分比能够显示。
 
 含自动网络校时的版本还应按[自动配网与网络校时](network-time.md)完成首次配网、SNTP、
-RTC 写后回读和错误密码恢复；验证 `BOOT` 的日常页面路径，以及 `KEY` 的“状态、音频、
-设置、在线更新”四个系统页面。“状态”页长按 2 秒应手动校时；“设置”页长按 3 秒应
-开启设置门户，并能保存 `NORMAL/SAVING`、时区、温度单位、音量与更新通道，完成手机
-校时、清除 Wi-Fi 配置和本地 OTA。USB `RESET_WIFI` 也应只清除项目网络配置。
+RTC 写后回读和错误密码恢复；验证 `BOOT` 的日常页面路径，以及 `KEY` 的“状态、语音、
+设置、在线更新”四个系统页面。“状态”页长按 2 秒应手动校时；“语音”页长按 2 秒并
+松开后应完成一次本地识别，`KEY` 可提前结束输入，`BOOT` 可取消；“设置”页长按 3 秒应
+开启设置门户，并能保存时区、温度单位、音量与更新通道，完成手机校时、清除 Wi-Fi 配置
+和本地 OTA。“设置”页长按 `BOOT` 2 秒应切换手动提前省电。USB `RESET_WIFI` 也应只
+清除项目网络配置。
 
 在线更新还需用两个递增的预发布版本验证完整路径：第一次通过设置门户本地 OTA 或串行
 方式安装，

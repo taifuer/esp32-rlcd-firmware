@@ -1,6 +1,9 @@
 idf_component_register(
     SRCS "audio_diagnostics.c" "audio_level.c" "audio_session_state.c"
+         "voice_command_policy.c" "voice_session_state.c"
     INCLUDE_DIRS "include"
-    REQUIRES audio_codec board esp_driver_i2c esp_driver_i2s heap
-    PRIV_REQUIRES freertos log
+    REQUIRES audio_codec board esp_driver_i2c esp_driver_i2s esp_partition
+             espressif__esp-sr espressif__esp-dsp espressif__dl_fft
+             espressif__cjson heap mbedtls spi_flash
+    PRIV_REQUIRES esp_pm freertos log
 )

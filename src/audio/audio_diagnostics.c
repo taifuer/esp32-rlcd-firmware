@@ -1,5 +1,6 @@
 #include "audio_diagnostics.h"
 #include "audio_alert.h"
+#include "audio_voice.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -7,6 +8,8 @@
 #include <string.h>
 
 #include "audio_level.h"
+#include "voice_command_policy.h"
+#include "voice_model_manifest.h"
 #include "board_pins.h"
 #include "driver/i2s_std.h"
 #include "driver/i2s_tdm.h"
@@ -16,9 +19,16 @@
 #include "esp_codec_dev_defaults.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_mn_models.h"
+#include "esp_mn_speech_commands.h"
+#include "esp_partition.h"
+#include "esp_pm.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "model_path.h"
+#include "mbedtls/sha256.h"
+#include "spi_flash_mmap.h"
 
 enum {
     AUDIO_I2S_PORT = I2S_NUM_0,
@@ -50,12 +60,24 @@ enum {
     AUDIO_PLAYBACK_TARGET_PEAK = 12000,
     AUDIO_PLAYBACK_GAIN_ONE = 4096,
     AUDIO_PLAYBACK_MAX_GAIN = AUDIO_PLAYBACK_GAIN_ONE * 4,
-    AUDIO_WORKER_STACK_SIZE = 6144,
+    /* Espressif's MultiNet task examples reserve 8 KiB. The same worker also
+     * owns codec arbitration, so do not reuse the smaller loopback stack. */
+    AUDIO_WORKER_STACK_SIZE = 8192,
     AUDIO_WORKER_PRIORITY = 4,
+    AUDIO_VOICE_PREPARE_STACK_SIZE = 8192,
+    AUDIO_VOICE_PREPARE_PRIORITY = 1,
     AUDIO_ALERT_NOTE_MS = 170,
     AUDIO_ALERT_GAP_MS = 70,
     AUDIO_ALERT_REPEAT_GAP_MS = 900,
     AUDIO_ALERT_SAFETY_TIMEOUT_MS = 65U * 1000U,
+    AUDIO_VOICE_MODEL_OFFSET = 0x610000,
+    AUDIO_VOICE_MODEL_SIZE = 0x300000,
+    AUDIO_VOICE_MODEL_HEADER_BYTES = 36,
+    AUDIO_VOICE_MODEL_HASH_CHUNK_BYTES = 4096,
+    AUDIO_VOICE_MODEL_MMAP_PAGE_BYTES = 64 * 1024,
+    AUDIO_VOICE_MAX_MODEL_COUNT = 8,
+    AUDIO_VOICE_CAPTURE_SETTLE_CHUNKS = 4,
+    AUDIO_VOICE_DETECTION_THRESHOLD_PERCENT = 65,
 };
 
 static const char *TAG = "audio_diagnostics";
@@ -71,6 +93,7 @@ typedef enum {
 typedef enum {
     AUDIO_WORK_NONE = 0,
     AUDIO_WORK_DIAGNOSTIC,
+    AUDIO_WORK_VOICE,
     AUDIO_WORK_ALERT,
 } audio_work_t;
 
@@ -87,17 +110,29 @@ typedef struct {
     esp_codec_dev_handle_t microphone_device;
     SemaphoreHandle_t mutex;
     TaskHandle_t worker_task;
+    TaskHandle_t voice_prepare_task;
     bool stop_requested;
     bool cancel_requested;
-    bool alert_cancelled_diagnostic;
+    bool alert_cancelled_session;
     bool diagnostic_requested;
+    bool voice_requested;
     bool alert_requested;
     bool alert_running;
     bool alert_stop_requested;
     audio_diagnostics_status_t status;
+    audio_voice_status_t voice_status;
+    esp_pm_lock_handle_t voice_cpu_lock;
 } audio_diagnostics_context_t;
 
 static audio_diagnostics_context_t s_audio;
+static srmodel_list_t *s_voice_models;
+static const esp_mn_iface_t *s_voice_multinet;
+static model_iface_data_t *s_voice_model_data;
+static const esp_partition_t *s_voice_model_partition;
+
+static void secure_wipe(void *buffer, size_t size);
+static void release_audio_workspace(void *workspace,
+                                    size_t workspace_bytes);
 
 static esp_err_t codec_error(int error)
 {
@@ -124,6 +159,340 @@ static void bump_revision_locked(void)
     if (s_audio.status.revision == 0U) {
         s_audio.status.revision = 1U;
     }
+}
+
+static void bump_voice_revision_locked(void)
+{
+    ++s_audio.voice_status.revision;
+    if (s_audio.voice_status.revision == 0U) {
+        s_audio.voice_status.revision = 1U;
+    }
+}
+
+static void set_voice_state(audio_voice_state_t state)
+{
+    lock_context();
+    s_audio.voice_status.state = state;
+    s_audio.voice_status.running =
+        state == AUDIO_VOICE_STATE_PREPARING ||
+        state == AUDIO_VOICE_STATE_LISTENING;
+    bump_voice_revision_locked();
+    unlock_context();
+}
+
+static void update_voice_elapsed(uint32_t elapsed_ms)
+{
+    lock_context();
+    s_audio.voice_status.elapsed_ms = elapsed_ms;
+    bump_voice_revision_locked();
+    unlock_context();
+}
+
+static uint32_t read_little_endian_u32(const uint8_t bytes[4])
+{
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8U) |
+           ((uint32_t)bytes[2] << 16U) |
+           ((uint32_t)bytes[3] << 24U);
+}
+
+static bool voice_model_header_is_valid(const esp_partition_t *partition)
+{
+    if (partition == NULL ||
+        partition->size < AUDIO_VOICE_MODEL_HEADER_BYTES) {
+        return false;
+    }
+
+    uint8_t header[AUDIO_VOICE_MODEL_HEADER_BYTES] = {0};
+    const esp_err_t error = esp_partition_read(
+        partition, 0U, header, sizeof(header));
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "could not read voice model header: %s",
+                 esp_err_to_name(error));
+        return false;
+    }
+
+    const uint32_t model_count = read_little_endian_u32(header);
+    const bool valid =
+        model_count > 0U && model_count <= AUDIO_VOICE_MAX_MODEL_COUNT &&
+        header[4] == 'm' && header[5] == 'n' &&
+        memchr(&header[4], '\0', 32U) != NULL;
+    secure_wipe(header, sizeof(header));
+    return valid;
+}
+
+static int hex_digit_value(char digit)
+{
+    if (digit >= '0' && digit <= '9') {
+        return digit - '0';
+    }
+    if (digit >= 'a' && digit <= 'f') {
+        return digit - 'a' + 10;
+    }
+    if (digit >= 'A' && digit <= 'F') {
+        return digit - 'A' + 10;
+    }
+    return -1;
+}
+
+static bool sha256_matches_hex(const uint8_t actual[32],
+                               const char *expected_hex)
+{
+    if (actual == NULL || expected_hex == NULL ||
+        strlen(expected_hex) != 64U) {
+        return false;
+    }
+    uint8_t difference = 0U;
+    for (size_t index = 0U; index < 32U; ++index) {
+        const int high = hex_digit_value(expected_hex[index * 2U]);
+        const int low = hex_digit_value(expected_hex[index * 2U + 1U]);
+        if (high < 0 || low < 0) {
+            return false;
+        }
+        difference |= actual[index] ^
+                      (uint8_t)((unsigned)high << 4U | (unsigned)low);
+    }
+    return difference == 0U;
+}
+
+static esp_err_t verify_voice_model_image(
+    const esp_partition_t *partition)
+{
+    if (partition == NULL ||
+        partition->size < AUDIO_VOICE_MODEL_IMAGE_SIZE) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    uint8_t *buffer = heap_caps_malloc(
+        AUDIO_VOICE_MODEL_HASH_CHUNK_BYTES,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (buffer == NULL) {
+        buffer = heap_caps_malloc(AUDIO_VOICE_MODEL_HASH_CHUNK_BYTES,
+                                  MALLOC_CAP_8BIT);
+    }
+    if (buffer == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    uint8_t actual_sha256[32] = {0};
+    mbedtls_sha256_context digest;
+    mbedtls_sha256_init(&digest);
+    esp_err_t error = mbedtls_sha256_starts(&digest, 0) == 0
+                          ? ESP_OK
+                          : ESP_FAIL;
+    size_t offset = 0U;
+    while (error == ESP_OK &&
+           offset < AUDIO_VOICE_MODEL_IMAGE_SIZE) {
+        const size_t remaining =
+            AUDIO_VOICE_MODEL_IMAGE_SIZE - offset;
+        const size_t length =
+            remaining < AUDIO_VOICE_MODEL_HASH_CHUNK_BYTES
+                ? remaining
+                : AUDIO_VOICE_MODEL_HASH_CHUNK_BYTES;
+        error = esp_partition_read(partition, offset, buffer, length);
+        if (error == ESP_OK &&
+            mbedtls_sha256_update(&digest, buffer, length) != 0) {
+            error = ESP_FAIL;
+        }
+        offset += error == ESP_OK ? length : 0U;
+    }
+    if (error == ESP_OK &&
+        mbedtls_sha256_finish(&digest, actual_sha256) != 0) {
+        error = ESP_FAIL;
+    }
+    mbedtls_sha256_free(&digest);
+    if (error == ESP_OK &&
+        !sha256_matches_hex(actual_sha256,
+                            AUDIO_VOICE_MODEL_SHA256_HEX)) {
+        error = ESP_ERR_INVALID_CRC;
+    }
+    secure_wipe(actual_sha256, sizeof(actual_sha256));
+    release_audio_workspace(buffer, AUDIO_VOICE_MODEL_HASH_CHUNK_BYTES);
+    return error;
+}
+
+static void set_voice_model_integrity(bool ready, esp_err_t error)
+{
+    lock_context();
+    const bool changed = s_audio.voice_status.model_ready != ready ||
+                         s_audio.voice_status.last_error != error;
+    s_audio.voice_status.model_ready = ready;
+    s_audio.voice_status.last_error = error;
+    if (changed) {
+        bump_voice_revision_locked();
+    }
+    unlock_context();
+}
+
+static const esp_partition_t *find_voice_model_partition(void)
+{
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "model");
+    if (partition != NULL) {
+        return partition;
+    }
+
+    const esp_err_t error = esp_partition_register_external(
+        NULL, AUDIO_VOICE_MODEL_OFFSET, AUDIO_VOICE_MODEL_SIZE, "model",
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS,
+        &partition);
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG,
+                 "legacy partition table has no usable voice model region: %s",
+                 esp_err_to_name(error));
+        return NULL;
+    }
+    ESP_LOGI(TAG,
+             "registered legacy voice model region at 0x%x (%u bytes)",
+             AUDIO_VOICE_MODEL_OFFSET, AUDIO_VOICE_MODEL_SIZE);
+    return partition;
+}
+
+typedef struct {
+    int command_id;
+    const char *phrase;
+} voice_phrase_t;
+
+static const voice_phrase_t VOICE_PHRASES[] = {
+    /* MultiNet Chinese command grammar uses space-separated pinyin. The
+     * display presents the corresponding Han characters to the user. */
+    {VOICE_COMMAND_ID_HOME, "hui dao zhu ye"},
+    {VOICE_COMMAND_ID_HOME, "cha kan shi jian"},
+    {VOICE_COMMAND_ID_CALENDAR, "da kai ri li"},
+    {VOICE_COMMAND_ID_CALENDAR, "cha kan ri qi"},
+    {VOICE_COMMAND_ID_STATUS, "cha kan zhuang tai"},
+    {VOICE_COMMAND_ID_STATUS, "she bei zhuang tai"},
+    {VOICE_COMMAND_ID_IMAGE, "da kai tu pian"},
+    {VOICE_COMMAND_ID_IMAGE, "cha kan tu pian"},
+    {VOICE_COMMAND_ID_SETTINGS, "da kai she zhi"},
+    {VOICE_COMMAND_ID_SETTINGS, "cha kan she zhi"},
+    {VOICE_COMMAND_ID_CANCEL, "qu xiao"},
+};
+
+static void release_voice_engine(bool commands_allocated)
+{
+    if (commands_allocated) {
+        (void)esp_mn_commands_free();
+    }
+    if (s_voice_model_data != NULL && s_voice_multinet != NULL) {
+        s_voice_multinet->destroy(s_voice_model_data);
+    }
+    s_voice_model_data = NULL;
+    s_voice_multinet = NULL;
+    if (s_voice_models != NULL) {
+        esp_srmodel_deinit(s_voice_models);
+    }
+    s_voice_models = NULL;
+}
+
+static esp_err_t prepare_voice_engine(void)
+{
+    if (s_voice_model_data != NULL && s_voice_multinet != NULL) {
+        s_voice_multinet->clean(s_voice_model_data);
+        return ESP_OK;
+    }
+    if (!voice_model_header_is_valid(s_voice_model_partition)) {
+        set_voice_model_integrity(false, ESP_ERR_NOT_FOUND);
+        return ESP_ERR_NOT_FOUND;
+    }
+    const esp_err_t integrity_error =
+        verify_voice_model_image(s_voice_model_partition);
+    if (integrity_error != ESP_OK) {
+        set_voice_model_integrity(false, integrity_error);
+        ESP_LOGW(TAG, "offline voice model integrity failed: %s",
+                 esp_err_to_name(integrity_error));
+        return integrity_error;
+    }
+    set_voice_model_integrity(true, ESP_OK);
+
+    const size_t required_mmap_pages =
+        (s_voice_model_partition->size +
+         AUDIO_VOICE_MODEL_MMAP_PAGE_BYTES - 1U) /
+        AUDIO_VOICE_MODEL_MMAP_PAGE_BYTES;
+    const int free_mmap_pages =
+        spi_flash_mmap_get_free_pages(ESP_PARTITION_MMAP_DATA);
+    if (free_mmap_pages < 0 ||
+        (size_t)free_mmap_pages < required_mmap_pages) {
+        ESP_LOGW(TAG,
+                 "offline voice model needs %u mmap pages; only %d available",
+                 (unsigned)required_mmap_pages, free_mmap_pages);
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_voice_models = esp_srmodel_init("model");
+    if (s_voice_models == NULL) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    char *model_name = esp_srmodel_filter(
+        s_voice_models, ESP_MN_PREFIX, ESP_MN_CHINESE);
+    if (model_name == NULL) {
+        release_voice_engine(false);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    s_voice_multinet = esp_mn_handle_from_name(model_name);
+    if (s_voice_multinet == NULL) {
+        release_voice_engine(false);
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    s_voice_model_data = s_voice_multinet->create(
+        model_name, AUDIO_VOICE_MAX_LISTENING_MS);
+    if (s_voice_model_data == NULL) {
+        release_voice_engine(false);
+        return ESP_ERR_NO_MEM;
+    }
+
+    esp_err_t error = esp_mn_commands_alloc(
+        s_voice_multinet, s_voice_model_data);
+    bool commands_allocated = error == ESP_OK;
+    for (size_t index = 0U;
+         error == ESP_OK && index < sizeof(VOICE_PHRASES) /
+                                         sizeof(VOICE_PHRASES[0]);
+         ++index) {
+        error = esp_mn_commands_add(VOICE_PHRASES[index].command_id,
+                                    VOICE_PHRASES[index].phrase);
+    }
+    if (error == ESP_OK && esp_mn_commands_update() != NULL) {
+        error = ESP_ERR_INVALID_STATE;
+    }
+    if (error == ESP_OK && s_voice_multinet->set_det_threshold != NULL &&
+        s_voice_multinet->set_det_threshold(
+            s_voice_model_data,
+            AUDIO_VOICE_DETECTION_THRESHOLD_PERCENT / 100.0F) != 0) {
+        error = ESP_ERR_INVALID_STATE;
+    }
+    if (error != ESP_OK) {
+        release_voice_engine(commands_allocated);
+        return error;
+    }
+
+    s_voice_multinet->clean(s_voice_model_data);
+    ESP_LOGI(TAG, "offline voice engine ready: model=%s commands=%u",
+             model_name,
+             (unsigned)(sizeof(VOICE_PHRASES) / sizeof(VOICE_PHRASES[0])));
+    return ESP_OK;
+}
+
+static void voice_model_prepare_task(void *argument)
+{
+    (void)argument;
+    const esp_err_t error = prepare_voice_engine();
+
+    lock_context();
+    s_audio.voice_prepare_task = NULL;
+    s_audio.voice_status.engine_preparing = false;
+    s_audio.voice_status.engine_ready = error == ESP_OK;
+    s_audio.voice_status.last_error = error;
+    bump_voice_revision_locked();
+    unlock_context();
+
+    if (error == ESP_OK) {
+        ESP_LOGI(TAG,
+                 "offline voice model prepared without claiming audio hardware");
+    } else {
+        ESP_LOGW(TAG, "offline voice model preparation failed: %s",
+                 esp_err_to_name(error));
+    }
+    vTaskDelete(NULL);
 }
 
 static void remember_initialization_error(esp_err_t error)
@@ -197,7 +566,7 @@ static audio_control_t take_control(void)
     if (s_audio.cancel_requested) {
         control = AUDIO_CONTROL_CANCEL;
         s_audio.cancel_requested = false;
-        s_audio.alert_cancelled_diagnostic = false;
+        s_audio.alert_cancelled_session = false;
         s_audio.stop_requested = false;
     } else if (s_audio.stop_requested) {
         control = AUDIO_CONTROL_STOP;
@@ -232,7 +601,7 @@ static void secure_wipe(void *buffer, size_t size)
     }
 }
 
-static void release_audio_workspace(int16_t *workspace,
+static void release_audio_workspace(void *workspace,
                                     size_t workspace_bytes)
 {
     if (workspace != NULL) {
@@ -630,7 +999,7 @@ static esp_err_t play_test_tone(int16_t *playback_buffer, uint8_t volume,
     return result;
 }
 
-static esp_err_t open_microphones(void)
+static esp_err_t open_microphones_at_rate(uint32_t sample_rate_hz)
 {
     if (s_audio.microphone_device == NULL) {
         return ESP_ERR_NOT_FOUND;
@@ -640,7 +1009,7 @@ static esp_err_t open_microphones(void)
         .channel = AUDIO_CAPTURE_CHANNEL_COUNT,
         .channel_mask = I2S_TDM_SLOT0 | I2S_TDM_SLOT1 |
                         I2S_TDM_SLOT2 | I2S_TDM_SLOT3,
-        .sample_rate = AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ,
+        .sample_rate = sample_rate_hz,
         .mclk_multiple = 0,
     };
     esp_err_t error = codec_error(
@@ -653,6 +1022,11 @@ static esp_err_t open_microphones(void)
         (void)esp_codec_dev_close(s_audio.microphone_device);
     }
     return error;
+}
+
+static esp_err_t open_microphones(void)
+{
+    return open_microphones_at_rate(AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ);
 }
 
 static esp_err_t settle_microphones(int16_t *capture_buffer,
@@ -922,7 +1296,7 @@ static void finish_cancelled(void)
     s_audio.status.state = AUDIO_SESSION_STATE_CANCELLED;
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
-    s_audio.alert_cancelled_diagnostic = false;
+    s_audio.alert_cancelled_session = false;
     bump_revision_locked();
     unlock_context();
     ESP_LOGI(TAG, "temporary audio session cancelled and cleared");
@@ -939,7 +1313,7 @@ static void finish_failed(esp_err_t error)
     s_audio.status.state = AUDIO_SESSION_STATE_FAILED;
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
-    s_audio.alert_cancelled_diagnostic = false;
+    s_audio.alert_cancelled_session = false;
     bump_revision_locked();
     unlock_context();
     ESP_LOGW(TAG, "temporary audio session failed: %s",
@@ -957,7 +1331,7 @@ static void finish_completed(bool voice_played, bool playback_stopped)
     s_audio.status.state = AUDIO_SESSION_STATE_COMPLETED;
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
-    s_audio.alert_cancelled_diagnostic = false;
+    s_audio.alert_cancelled_session = false;
     bump_revision_locked();
     const audio_diagnostics_status_t completed = s_audio.status;
     unlock_context();
@@ -981,7 +1355,7 @@ static void finish_alert(esp_err_t error)
     lock_context();
     s_audio.alert_running = false;
     s_audio.alert_stop_requested = false;
-    s_audio.alert_cancelled_diagnostic = false;
+    s_audio.alert_cancelled_session = false;
     unlock_context();
     if (error == ESP_OK) {
         ESP_LOGI(TAG, "alert playback stopped");
@@ -1045,6 +1419,279 @@ static void run_audio_alert(void)
 
     const esp_err_t close_error = close_speaker();
     finish_alert(error != ESP_OK ? error : close_error);
+}
+
+static void finish_voice_cancelled(void)
+{
+    lock_context();
+    s_audio.voice_status.running = false;
+    s_audio.voice_status.speech_detected = false;
+    s_audio.voice_status.command_id = VOICE_COMMAND_ID_NONE;
+    s_audio.voice_status.confidence = 0.0F;
+    s_audio.voice_status.state = AUDIO_VOICE_STATE_CANCELLED;
+    s_audio.voice_status.result = AUDIO_VOICE_RESULT_CANCELLED;
+    s_audio.voice_status.last_error = ESP_OK;
+    s_audio.stop_requested = false;
+    s_audio.cancel_requested = false;
+    s_audio.alert_cancelled_session = false;
+    bump_voice_revision_locked();
+    unlock_context();
+    ESP_LOGI(TAG,
+             "voice session cancelled; temporary audio buffer cleared");
+}
+
+static void finish_voice_failed(esp_err_t error)
+{
+    lock_context();
+    s_audio.voice_status.running = false;
+    s_audio.voice_status.speech_detected = false;
+    s_audio.voice_status.command_id = VOICE_COMMAND_ID_NONE;
+    s_audio.voice_status.confidence = 0.0F;
+    s_audio.voice_status.state = AUDIO_VOICE_STATE_FAILED;
+    s_audio.voice_status.result = AUDIO_VOICE_RESULT_FAILED;
+    s_audio.voice_status.last_error = error != ESP_OK ? error : ESP_FAIL;
+    s_audio.stop_requested = false;
+    s_audio.cancel_requested = false;
+    s_audio.alert_cancelled_session = false;
+    bump_voice_revision_locked();
+    unlock_context();
+    ESP_LOGW(TAG, "voice session failed: %s",
+             esp_err_to_name(error != ESP_OK ? error : ESP_FAIL));
+}
+
+static void finish_voice_completed(audio_voice_result_t result,
+                                   bool speech_detected, int command_id,
+                                   float confidence, uint32_t elapsed_ms)
+{
+    lock_context();
+    s_audio.voice_status.running = false;
+    s_audio.voice_status.speech_detected = speech_detected;
+    s_audio.voice_status.command_id = command_id;
+    s_audio.voice_status.confidence = confidence;
+    s_audio.voice_status.elapsed_ms = elapsed_ms;
+    s_audio.voice_status.state = AUDIO_VOICE_STATE_COMPLETED;
+    s_audio.voice_status.result = result;
+    s_audio.voice_status.last_error = ESP_OK;
+    s_audio.stop_requested = false;
+    s_audio.cancel_requested = false;
+    s_audio.alert_cancelled_session = false;
+    bump_voice_revision_locked();
+    const uint32_t generation = s_audio.voice_status.generation;
+    unlock_context();
+
+    ESP_LOGI(TAG,
+             "voice session: generation=%u result=%s command=%d confidence=%.3f duration=%ums",
+             (unsigned)generation, audio_voice_result_name(result),
+             command_id, (double)confidence, (unsigned)elapsed_ms);
+}
+
+static void run_voice_session(void)
+{
+    bool cpu_locked = false;
+    bool microphone_open = false;
+    bool cancelled = false;
+    int16_t *workspace = NULL;
+    size_t workspace_bytes = 0U;
+    esp_err_t error = ESP_OK;
+    audio_voice_result_t result = AUDIO_VOICE_RESULT_NOT_UNDERSTOOD;
+    int command_id = VOICE_COMMAND_ID_NONE;
+    float confidence = 0.0F;
+    uint32_t elapsed_ms = 0U;
+    audio_level_result_t levels = {0};
+    audio_level_accumulator_t accumulator;
+    audio_level_init(&accumulator);
+
+    if (s_audio.voice_cpu_lock == NULL) {
+        error = ESP_ERR_INVALID_STATE;
+        goto cleanup;
+    }
+    error = esp_pm_lock_acquire(s_audio.voice_cpu_lock);
+    if (error != ESP_OK) {
+        goto cleanup;
+    }
+    cpu_locked = true;
+
+    const audio_control_t initial_control = take_control();
+    if (initial_control == AUDIO_CONTROL_CANCEL) {
+        cancelled = true;
+        goto cleanup;
+    }
+    if (initial_control == AUDIO_CONTROL_STOP) {
+        result = AUDIO_VOICE_RESULT_NO_VOICE;
+        goto cleanup;
+    }
+
+    error = prepare_voice_engine();
+    if (error != ESP_OK) {
+        goto cleanup;
+    }
+    const audio_control_t prepared_control = take_control();
+    if (prepared_control == AUDIO_CONTROL_CANCEL) {
+        cancelled = true;
+        goto cleanup;
+    }
+    if (prepared_control == AUDIO_CONTROL_STOP) {
+        result = AUDIO_VOICE_RESULT_NO_VOICE;
+        goto cleanup;
+    }
+    const int chunk_frames =
+        s_voice_multinet->get_samp_chunksize(s_voice_model_data);
+    const int sample_rate =
+        s_voice_multinet->get_samp_rate(s_voice_model_data);
+    if (chunk_frames <= 0 || chunk_frames > 4096 ||
+        sample_rate != AUDIO_VOICE_SAMPLE_RATE_HZ) {
+        error = ESP_ERR_NOT_SUPPORTED;
+        goto cleanup;
+    }
+
+    const size_t capture_samples =
+        (size_t)chunk_frames * AUDIO_CAPTURE_CHANNEL_COUNT;
+    const size_t mono_samples = (size_t)chunk_frames;
+    workspace_bytes =
+        (capture_samples + mono_samples) * sizeof(int16_t);
+    workspace = heap_caps_malloc(
+        workspace_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (workspace == NULL) {
+        workspace = heap_caps_malloc(workspace_bytes, MALLOC_CAP_8BIT);
+    }
+    if (workspace == NULL) {
+        error = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+    int16_t *capture_buffer = workspace;
+    int16_t *mono_buffer = workspace + capture_samples;
+
+    error = open_microphones_at_rate(AUDIO_VOICE_SAMPLE_RATE_HZ);
+    if (error != ESP_OK) {
+        goto cleanup;
+    }
+    microphone_open = true;
+
+    for (uint32_t settle = 0U;
+         settle < AUDIO_VOICE_CAPTURE_SETTLE_CHUNKS; ++settle) {
+        const audio_control_t control = take_control();
+        if (control == AUDIO_CONTROL_CANCEL) {
+            cancelled = true;
+            goto cleanup;
+        }
+        if (control == AUDIO_CONTROL_STOP) {
+            result = AUDIO_VOICE_RESULT_NO_VOICE;
+            goto cleanup;
+        }
+        error = codec_error(esp_codec_dev_read(
+            s_audio.microphone_device, capture_buffer,
+            (int)(capture_samples * sizeof(capture_buffer[0]))));
+        if (error != ESP_OK) {
+            goto cleanup;
+        }
+    }
+
+    set_voice_state(AUDIO_VOICE_STATE_LISTENING);
+    uint32_t processed_frames = 0U;
+    uint32_t next_status_ms = 500U;
+    bool finished = false;
+    while (!finished &&
+           processed_frames <
+               AUDIO_VOICE_SAMPLE_RATE_HZ *
+                   AUDIO_VOICE_MAX_LISTENING_MS / 1000U) {
+        const audio_control_t control = take_control();
+        if (control == AUDIO_CONTROL_CANCEL) {
+            cancelled = true;
+            break;
+        }
+        if (control == AUDIO_CONTROL_STOP) {
+            break;
+        }
+
+        error = codec_error(esp_codec_dev_read(
+            s_audio.microphone_device, capture_buffer,
+            (int)(capture_samples * sizeof(capture_buffer[0]))));
+        if (error != ESP_OK) {
+            break;
+        }
+        if (!audio_level_add_tdm16(
+                &accumulator, capture_buffer, (size_t)chunk_frames,
+                AUDIO_CAPTURE_CHANNEL_COUNT,
+                AUDIO_CAPTURE_MICROPHONE_1_SLOT,
+                AUDIO_CAPTURE_MICROPHONE_2_SLOT)) {
+            error = ESP_ERR_INVALID_STATE;
+            break;
+        }
+        for (int frame = 0; frame < chunk_frames; ++frame) {
+            mono_buffer[frame] =
+                capture_buffer[
+                    (size_t)frame * AUDIO_CAPTURE_CHANNEL_COUNT +
+                    AUDIO_CAPTURE_MICROPHONE_1_SLOT];
+        }
+
+        const esp_mn_state_t detection = s_voice_multinet->detect(
+            s_voice_model_data, mono_buffer);
+        processed_frames += (uint32_t)chunk_frames;
+        elapsed_ms = processed_frames * 1000U /
+                     AUDIO_VOICE_SAMPLE_RATE_HZ;
+        if (elapsed_ms >= next_status_ms) {
+            update_voice_elapsed(elapsed_ms);
+            next_status_ms += 500U;
+        }
+        if (detection == ESP_MN_STATE_DETECTED) {
+            const esp_mn_results_t *results =
+                s_voice_multinet->get_results(s_voice_model_data);
+            if (results != NULL && results->num > 0 &&
+                results->command_id[0] >= VOICE_COMMAND_ID_HOME &&
+                results->command_id[0] <= VOICE_COMMAND_ID_CANCEL) {
+                command_id = results->command_id[0];
+                confidence = results->prob[0];
+                result = AUDIO_VOICE_RESULT_MATCHED;
+            }
+            finished = true;
+        } else if (detection == ESP_MN_STATE_TIMEOUT) {
+            finished = true;
+        }
+    }
+
+cleanup:
+    if (microphone_open) {
+        const esp_err_t close_error =
+            codec_error(esp_codec_dev_close(s_audio.microphone_device));
+        if (error == ESP_OK && close_error != ESP_OK) {
+            error = close_error;
+        }
+    }
+    if (s_voice_model_data != NULL && s_voice_multinet != NULL) {
+        s_voice_multinet->clean(s_voice_model_data);
+    }
+    if (accumulator.frame_count > 0U &&
+        audio_level_finish(&accumulator, &levels)) {
+        const bool active = levels.active[0] || levels.active[1];
+        if (result != AUDIO_VOICE_RESULT_MATCHED) {
+            result = active ? AUDIO_VOICE_RESULT_NOT_UNDERSTOOD
+                            : AUDIO_VOICE_RESULT_NO_VOICE;
+        }
+    } else if (result != AUDIO_VOICE_RESULT_MATCHED) {
+        result = AUDIO_VOICE_RESULT_NO_VOICE;
+    }
+    if (workspace != NULL) {
+        release_audio_workspace(workspace, workspace_bytes);
+    }
+    if (cpu_locked) {
+        const esp_err_t unlock_error =
+            esp_pm_lock_release(s_audio.voice_cpu_lock);
+        if (error == ESP_OK && unlock_error != ESP_OK) {
+            error = unlock_error;
+        }
+    }
+
+    if (cancelled) {
+        finish_voice_cancelled();
+    } else if (error != ESP_OK) {
+        finish_voice_failed(error);
+    } else {
+        const bool speech_detected =
+            result == AUDIO_VOICE_RESULT_MATCHED ||
+            result == AUDIO_VOICE_RESULT_NOT_UNDERSTOOD;
+        finish_voice_completed(result, speech_detected, command_id,
+                               confidence, elapsed_ms);
+    }
 }
 
 static void run_audio_session(void)
@@ -1162,12 +1809,15 @@ static void audio_worker_task(void *argument)
         while (true) {
             audio_work_t work = AUDIO_WORK_NONE;
             lock_context();
-            /* If both requests arrived before this task ran, start the
-             * diagnostic only so it can observe cancellation and release its
-             * resources before the alert opens the speaker. */
+            /* If an alert arrives with a session request, let the session
+             * observe its cancellation first so codec/I2S ownership is
+             * released before alert playback starts. */
             if (s_audio.diagnostic_requested) {
                 s_audio.diagnostic_requested = false;
                 work = AUDIO_WORK_DIAGNOSTIC;
+            } else if (s_audio.voice_requested) {
+                s_audio.voice_requested = false;
+                work = AUDIO_WORK_VOICE;
             } else if (s_audio.alert_requested) {
                 s_audio.alert_requested = false;
                 s_audio.alert_running = true;
@@ -1177,6 +1827,8 @@ static void audio_worker_task(void *argument)
 
             if (work == AUDIO_WORK_DIAGNOSTIC) {
                 run_audio_session();
+            } else if (work == AUDIO_WORK_VOICE) {
+                run_voice_session();
             } else if (work == AUDIO_WORK_ALERT) {
                 run_audio_alert();
             } else {
@@ -1207,6 +1859,21 @@ esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus)
     s_audio.status.result = AUDIO_DIAGNOSTICS_RESULT_NOT_RUN;
     s_audio.status.state = AUDIO_SESSION_STATE_IDLE;
     s_audio.status.revision = 1U;
+    s_audio.voice_status.initialized = true;
+    s_audio.voice_status.state = AUDIO_VOICE_STATE_IDLE;
+    s_audio.voice_status.result = AUDIO_VOICE_RESULT_NONE;
+    s_audio.voice_status.revision = 1U;
+    s_voice_model_partition = find_voice_model_partition();
+    s_audio.voice_status.model_ready =
+        voice_model_header_is_valid(s_voice_model_partition);
+    esp_err_t voice_lock_error = esp_pm_lock_create(
+        ESP_PM_CPU_FREQ_MAX, 0, "rlcd_voice", &s_audio.voice_cpu_lock);
+    if (voice_lock_error != ESP_OK) {
+        s_audio.voice_status.initialized = false;
+        s_audio.voice_status.last_error = voice_lock_error;
+        ESP_LOGW(TAG, "voice CPU lock unavailable: %s",
+                 esp_err_to_name(voice_lock_error));
+    }
     const esp_err_t speaker_probe = i2c_master_probe(
         i2c_bus, BOARD_AUDIO_ES8311_I2C_ADDRESS, 100);
     const esp_err_t microphone_probe = i2c_master_probe(
@@ -1247,13 +1914,44 @@ esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus)
                  s_audio.status.microphones_ready);
     }
 
-    if (s_audio.status.speaker_ready) {
+    s_audio.voice_status.microphone_ready =
+        s_audio.status.microphones_ready;
+    if (!s_audio.voice_status.model_ready) {
+        ESP_LOGW(TAG,
+                 "offline voice model is missing or invalid; clock remains available");
+    }
+
+    if (s_audio.status.speaker_ready ||
+        s_audio.status.microphones_ready) {
         const BaseType_t task_created = xTaskCreate(
             audio_worker_task, "audio_worker", AUDIO_WORKER_STACK_SIZE,
             NULL, AUDIO_WORKER_PRIORITY, &s_audio.worker_task);
         if (task_created != pdPASS) {
             s_audio.status.last_error = ESP_ERR_NO_MEM;
+            s_audio.voice_status.initialized = false;
+            s_audio.voice_status.last_error = ESP_ERR_NO_MEM;
+            bump_voice_revision_locked();
             return ESP_ERR_NO_MEM;
+        }
+    }
+
+    if (s_audio.voice_status.initialized &&
+        s_audio.voice_status.model_ready &&
+        s_audio.voice_status.microphone_ready &&
+        s_audio.worker_task != NULL) {
+        s_audio.voice_status.engine_preparing = true;
+        bump_voice_revision_locked();
+        const BaseType_t task_created = xTaskCreate(
+            voice_model_prepare_task, "voice_prepare",
+            AUDIO_VOICE_PREPARE_STACK_SIZE, NULL,
+            AUDIO_VOICE_PREPARE_PRIORITY,
+            &s_audio.voice_prepare_task);
+        if (task_created != pdPASS) {
+            s_audio.voice_status.engine_preparing = false;
+            s_audio.voice_status.last_error = ESP_ERR_NO_MEM;
+            bump_voice_revision_locked();
+            ESP_LOGW(TAG,
+                     "offline voice model preparation task unavailable");
         }
     }
 
@@ -1261,8 +1959,10 @@ esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus)
         s_audio.status.microphones_ready &&
         s_audio.worker_task != NULL) {
         ESP_LOGI(TAG,
-                 "ES8311 speaker and ES7210 dual microphones ready at %u Hz",
-                 AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ);
+                 "audio ready: diagnostics=%u Hz voice=%u Hz model=%s",
+                 AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ,
+                 AUDIO_VOICE_SAMPLE_RATE_HZ,
+                 s_audio.voice_status.model_ready ? "ready" : "missing");
         return ESP_OK;
     }
     return s_audio.status.last_error != ESP_OK
@@ -1288,6 +1988,7 @@ esp_err_t audio_diagnostics_set_playback_volume(uint8_t volume_percent)
 
     lock_context();
     if (audio_session_state_is_active(s_audio.status.state) ||
+        s_audio.voice_requested || s_audio.voice_status.running ||
         s_audio.alert_requested || s_audio.alert_running) {
         unlock_context();
         return ESP_ERR_INVALID_STATE;
@@ -1303,6 +2004,7 @@ esp_err_t audio_diagnostics_start(void)
     if (!s_audio.status.initialized || !s_audio.status.speaker_ready ||
         !s_audio.status.microphones_ready || s_audio.worker_task == NULL ||
         audio_session_state_is_active(s_audio.status.state) ||
+        s_audio.voice_requested || s_audio.voice_status.running ||
         s_audio.alert_requested || s_audio.alert_running) {
         unlock_context();
         return ESP_ERR_INVALID_STATE;
@@ -1310,7 +2012,7 @@ esp_err_t audio_diagnostics_start(void)
 
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
-    s_audio.alert_cancelled_diagnostic = false;
+    s_audio.alert_cancelled_session = false;
     s_audio.diagnostic_requested = true;
     s_audio.status.running = true;
     s_audio.status.test_completed = false;
@@ -1348,9 +2050,10 @@ esp_err_t audio_alert_start(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    s_audio.alert_cancelled_diagnostic = false;
-    if (audio_session_state_is_active(s_audio.status.state)) {
-        s_audio.alert_cancelled_diagnostic =
+    s_audio.alert_cancelled_session = false;
+    if (audio_session_state_is_active(s_audio.status.state) ||
+        s_audio.voice_requested || s_audio.voice_status.running) {
+        s_audio.alert_cancelled_session =
             !s_audio.cancel_requested;
         s_audio.cancel_requested = true;
     }
@@ -1368,9 +2071,9 @@ esp_err_t audio_alert_stop(void)
     if (s_audio.alert_requested && !s_audio.alert_running) {
         s_audio.alert_requested = false;
         s_audio.alert_stop_requested = false;
-        if (s_audio.alert_cancelled_diagnostic) {
+        if (s_audio.alert_cancelled_session) {
             s_audio.cancel_requested = false;
-            s_audio.alert_cancelled_diagnostic = false;
+            s_audio.alert_cancelled_session = false;
         }
         unlock_context();
         return ESP_OK;
@@ -1413,10 +2116,110 @@ esp_err_t audio_diagnostics_cancel(void)
         return ESP_ERR_INVALID_STATE;
     }
     s_audio.cancel_requested = true;
-    s_audio.alert_cancelled_diagnostic = false;
+    s_audio.alert_cancelled_session = false;
     s_audio.stop_requested = false;
     unlock_context();
     return ESP_OK;
+}
+
+void audio_voice_get_status(audio_voice_status_t *status)
+{
+    if (status == NULL) {
+        return;
+    }
+    lock_context();
+    *status = s_audio.voice_status;
+    unlock_context();
+}
+
+esp_err_t audio_voice_start(uint32_t generation)
+{
+    if (generation == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    lock_context();
+    if (!s_audio.voice_status.initialized ||
+        !s_audio.voice_status.model_ready ||
+        !s_audio.voice_status.engine_ready ||
+        !s_audio.voice_status.microphone_ready ||
+        s_audio.worker_task == NULL || s_audio.voice_requested ||
+        s_audio.voice_status.running ||
+        audio_session_state_is_active(s_audio.status.state) ||
+        s_audio.diagnostic_requested || s_audio.alert_requested ||
+        s_audio.alert_running) {
+        const esp_err_t error =
+            !s_audio.voice_status.model_ready ? ESP_ERR_NOT_FOUND
+                                              : ESP_ERR_INVALID_STATE;
+        unlock_context();
+        return error;
+    }
+
+    s_audio.stop_requested = false;
+    s_audio.cancel_requested = false;
+    s_audio.alert_cancelled_session = false;
+    s_audio.voice_requested = true;
+    s_audio.voice_status.running = true;
+    s_audio.voice_status.speech_detected = false;
+    s_audio.voice_status.generation = generation;
+    s_audio.voice_status.elapsed_ms = 0U;
+    s_audio.voice_status.command_id = VOICE_COMMAND_ID_NONE;
+    s_audio.voice_status.confidence = 0.0F;
+    s_audio.voice_status.state = AUDIO_VOICE_STATE_PREPARING;
+    s_audio.voice_status.result = AUDIO_VOICE_RESULT_NONE;
+    s_audio.voice_status.last_error = ESP_OK;
+    bump_voice_revision_locked();
+    unlock_context();
+
+    xTaskNotifyGive(s_audio.worker_task);
+    return ESP_OK;
+}
+
+esp_err_t audio_voice_request_stop(void)
+{
+    lock_context();
+    if (!s_audio.voice_requested &&
+        s_audio.voice_status.state != AUDIO_VOICE_STATE_PREPARING &&
+        s_audio.voice_status.state != AUDIO_VOICE_STATE_LISTENING) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_audio.stop_requested = true;
+    unlock_context();
+    return ESP_OK;
+}
+
+esp_err_t audio_voice_cancel(void)
+{
+    lock_context();
+    if (!s_audio.voice_requested && !s_audio.voice_status.running) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_audio.cancel_requested = true;
+    s_audio.alert_cancelled_session = false;
+    s_audio.stop_requested = false;
+    unlock_context();
+    return ESP_OK;
+}
+
+const char *audio_voice_result_name(audio_voice_result_t result)
+{
+    switch (result) {
+    case AUDIO_VOICE_RESULT_MATCHED:
+        return "matched";
+    case AUDIO_VOICE_RESULT_NO_VOICE:
+        return "no_voice";
+    case AUDIO_VOICE_RESULT_NOT_UNDERSTOOD:
+        return "not_understood";
+    case AUDIO_VOICE_RESULT_CANCELLED:
+        return "cancelled";
+    case AUDIO_VOICE_RESULT_FAILED:
+        return "failed";
+    case AUDIO_VOICE_RESULT_NONE:
+    default:
+        return "none";
+    }
 }
 
 const char *audio_diagnostics_result_name(audio_diagnostics_result_t result)

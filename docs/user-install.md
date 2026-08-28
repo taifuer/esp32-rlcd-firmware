@@ -8,9 +8,10 @@
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.16.0/`](../dist/v0.16.0/)。
+[`dist/v0.18.0/`](../dist/v0.18.0/)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
-v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明。
+v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明；v0.18.0
+起还包含离线语音模型。
 从 v0.2.0 开始，版本目录还包含对应的界面效果图。
 下文命令假定终端当前位于仓库根目录，安装其他版本时同步替换目录和文件名。
 
@@ -20,12 +21,13 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 
 | 文件 | 用途 | 安装方式 |
 | --- | --- | --- |
-| `esp32-rlcd-firmware-v0.16.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，会清除 NVS |
-| `esp32-rlcd-firmware-v0.16.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
+| `esp32-rlcd-firmware-v0.18.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，包含语音模型并清除 NVS |
+| `esp32-rlcd-firmware-v0.18.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
+| `esp32-rlcd-firmware-v0.18.0-model.bin` | 为旧设备补装 v0.18.0 离线语音模型 | 仅与同版本 OTA 通过项目 USB 脚本写入，不可单独启动或上传网页 |
 
 目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
-参数；两类文件的 SHA-256 见
-[`dist/v0.16.0/SHA256SUMS`](../dist/v0.16.0/SHA256SUMS)。
+参数；全部发布二进制的 SHA-256 见
+[`dist/v0.18.0/SHA256SUMS`](../dist/v0.18.0/SHA256SUMS)。
 
 不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
 镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
@@ -34,8 +36,13 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 ### 从旧版本升级
 
 v0.7.0—v0.9.0 没有在线更新客户端，可从原系统中心最后一页的本地更新入口上传
-v0.16.0 `-ota.bin`，或使用 USB 写入。v0.10.0—v0.15.0 可直接从 `ONLINE UPDATE`
+v0.18.0 `-ota.bin`，或使用 USB 写入。v0.10.0 及更新版本可直接从 `ONLINE UPDATE`
 升级到当前稳定版，不需要逐版本安装；v0.6.0 及更早版本必须使用 Factory 固件完整安装。
+
+在线更新和网页本地 OTA 只更新应用，不写语音模型。从 v0.16.0 等旧正式版升级后，时钟、
+低功耗及其他功能可以正常使用，但离线语音页会提示模型不可用。要使用语音功能，可执行
+一次“USB 应用与模型更新”；该方法保留 Wi-Fi 和其他 NVS 设置。首次安装或允许重新配网时，
+直接写入 v0.18.0 Factory 即可同时安装应用和模型。
 
 设备默认只检查 `stable.json`；只有在设置门户明确开启 Beta 更新后才检查
 `testing.json`，版本名本身不会切换通道。联网后的自动流程只记录检查结果，不会自动下载
@@ -53,7 +60,7 @@ v0.16.0 `-ota.bin`，或使用 USB 写入。v0.10.0—v0.15.0 可直接从 `ONLI
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.16.0
+cd dist/v0.18.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -61,16 +68,18 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.16.0/esp32-rlcd-firmware-v0.16.0-factory.bin
-shasum -a 256 dist/v0.16.0/esp32-rlcd-firmware-v0.16.0-ota.bin
+shasum -a 256 dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-factory.bin
+shasum -a 256 dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-ota.bin
+shasum -a 256 dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-model.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.16.0\esp32-rlcd-firmware-v0.16.0-factory.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.16.0\esp32-rlcd-firmware-v0.16.0-ota.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.16.0\SHA256SUMS
+(Get-FileHash .\dist\v0.18.0\esp32-rlcd-firmware-v0.18.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.18.0\esp32-rlcd-firmware-v0.18.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.18.0\esp32-rlcd-firmware-v0.18.0-model.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.18.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -90,7 +99,7 @@ Get-Content .\dist\v0.16.0\SHA256SUMS
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.16.0/esp32-rlcd-firmware-v0.16.0-factory.bin \
+  --firmware dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-factory.bin \
   --confirm
 ```
 
@@ -131,7 +140,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.16.0\esp32-rlcd-firmware-v0.16.0-factory.bin
+  0x0 .\dist\v0.18.0\esp32-rlcd-firmware-v0.18.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -149,7 +158,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.16.0/esp32-rlcd-firmware-v0.16.0-factory.bin
+  0x0 dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -162,6 +171,22 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
 4. 等待数秒，让全反射屏完成刷新。
 
 全反射屏断电后可能保留旧画面，所以“仍看到旧内容”不代表新固件没有写入。
+
+## 旧设备补装离线语音模型
+
+已经运行 v0.7.0 或更新版本、并且希望保留 Wi-Fi 与设备偏好的设备，可通过 Windows + WSL
+一次写入 v0.18.0 应用和同版本模型。先把 OTA、模型和 `SHA256SUMS` 放在同一目录；从
+Release 下载或使用仓库 `dist/v0.18.0/` 即已满足这一条件。进入 ROM 下载模式后执行：
+
+```bash
+./scripts/update-app.sh --port COM5 \
+  --firmware dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-ota.bin \
+  --confirm
+```
+
+脚本会自动找到同目录同版本的 `-model.bin`，校验两者后分别写入固定的应用槽和模型区域，
+只重置 OTA 选择数据，不覆盖 NVS。烧录完成后按上一节的步骤物理关机并正常开机。该方法
+只适用于已经具有 v0.7.0+ 分区布局的设备；更早版本仍须写入 Factory。
 
 ## 首次配网与自动校时
 
@@ -181,7 +206,8 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
 配网热点最多开放 5 分钟，二维码显示 60 秒后设备会恢复首屏；没有网络时也可按屏幕上的
 `BOOT: OFFLINE` 立即使用本地功能。热点超时后需要配网可重新开机。
 已保存网络的设备在 Wi-Fi 或互联网不可用时不会卡在连接界面，也不会自动清除凭据或反复
-进入配网：RTC、月历、温湿度、电量和音频继续离线运行，网络在后台按逐步延长的间隔重试。
+进入配网：RTC、月历、温湿度、电量和离线语音继续正常使用，网络在后台按逐步延长的间隔
+重试。
 RTC 同时无效且无法联网时，首屏显示 `--:--:--`，可使用下方 USB 后备流程校时。
 
 安装 RTC 备用电池后，“状态”页的 `RTC BACKUP` 首先显示 `UNTESTED`。保持 RTC 已校时，
@@ -212,9 +238,10 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 
 | 按键 | 正常运行时的用途 |
 | --- | --- |
-| `BOOT` | 日常页面中短按切换首屏和月历；microSD 有有效图片时条件加入图片页；系统中心中短按返回首屏；运行时长按无操作 |
-| `KEY` | 主界面和日历中短按进入系统中心；多图图片页中短按切换下一张，单图时进入系统中心；系统中心中短按依次切换“状态 → 音频 → 设置 → 在线更新” |
-| `KEY` 长按 | 图片页按住 2 秒进入当前图片的删除确认；“状态”页按住 2 秒立即校时；“音频”页按住 2 秒开始临时语音回放测试；“设置”页按住 3 秒开启设置门户；“在线更新”页按住 2 秒检查或进入 `REVIEW`，确认页按住 3 秒安装；其他页面无操作 |
+| `BOOT` | 日常页面中短按切换首屏和月历；microSD 有有效图片时条件加入图片页；系统中心中短按返回首屏；除“设置”页外运行时长按无操作 |
+| `KEY` | 主界面和日历中短按进入系统中心；多图图片页中短按切换下一张，单图时进入系统中心；系统中心中短按依次切换“状态 → 语音 → 设置 → 在线更新” |
+| `KEY` 长按 | 图片页按住 2 秒进入当前图片的删除确认；“状态”页按住 2 秒立即校时；“语音”页按住 2 秒并松开后开始离线识别；“设置”页按住 3 秒开启设置门户；“在线更新”页按住 2 秒检查或进入 `REVIEW`，确认页按住 3 秒安装；其他页面无操作 |
+| `BOOT` 长按 | 仅在“设置”页按住 2 秒切换手动省电覆盖；其他运行页面不执行隐藏操作 |
 | `PWR` | 开机或长按关机 |
 
 月历、图片和系统页停留 30 秒会自动回到首屏。在线更新的检查、连接和确认阶段可按 `BOOT`
@@ -224,14 +251,26 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 图片删除确认页必须先完整松开发起长按的 `KEY`，再短按 `KEY` 才会删除；短按 `BOOT`
 或等待 10 秒取消。删除完成后无需重启，详细行为见[microSD 图片](microsd-images.md)。
 
+“语音”页按住 `KEY` 2 秒，屏幕提示后松开，设备会监听最多 5 秒；监听时短按 `KEY` 可
+提前结束输入，短按 `BOOT` 可取消。支持“回到主页 / 查看时间”“打开日历 / 查看日期”、
+“查看状态 / 设备状态”“打开图片 / 查看图片”“打开设置 / 查看设置”和“取消”。图片页
+仅在 microSD 中存在有效图片时可打开。识别完全在设备本地完成，不依赖 Wi-Fi；原始声音
+只在内存中短暂处理，结束、取消或失败后清除，不写入 Flash、microSD 或网络。模型缺失时
+页面会明确提示不可用，不影响其他功能。
+
 “设置”页按住 `KEY` 3 秒后，设备会开启最多 5 分钟的临时 WPA2 热点并显示二维码、随机
 密码和 `http://192.168.4.1`。手机进入“设备设置”页面后可以：
 
-- 修改 `NORMAL / SAVING`、时区、摄氏/华氏温标、回放音量、单个每周闹钟和 Beta 更新偏好；
+- 修改时区、摄氏/华氏温标、回放音量、单个每周闹钟和 Beta 更新偏好；
 - 使用手机当前时间校准 RTC，或恢复偏好默认值；
 - v0.15.0 起可导入、逐张预览、选择和二次确认删除 microSD 图片；
 - 清除家庭 Wi-Fi 配置；该操作不会删除其他偏好，设备不重启，设置热点关闭后原地进入配网；
 - 上传本项目发布的 `-ota.bin` 完成本地升级；不要上传 `-factory.bin`。
+
+电源模式无需进入热点设置：设备根据电量和 USB 数据主机状态自动决定，低电时进入
+`SAVING`，连接电脑 USB 时立即退出；“设置”页按住 `BOOT` 2 秒可手动提前进入或取消
+省电覆盖。省电时停止后台 Wi-Fi、隐藏秒数并降低刷新频率；需要联网的主动操作仍会按需
+连接。电量百分比来自电压估算，插拔电源后的短时跳变不等同于实际容量瞬间变化。
 
 Beta 更新默认关闭，仅建议能够使用本地 OTA 或 USB 恢复设备的开发者开启。普通偏好和
 恢复默认值保存后直接生效，设置热点保持连接；清除 Wi-Fi 会切换热点，手机需要按屏幕
@@ -242,13 +281,8 @@ Beta 更新默认关闭，仅建议能够使用本地 OTA 或 USB 恢复设备�
 短按 `BOOT` 停止；首次响铃可短按 `KEY` 延后 5 分钟，单次响铃最长 60 秒。物理关机时
 设备与扬声器没有供电，因此不会响铃，也不会在下次开机补发。
 
-音频测试会先播放两声提示音，再录制最多 5 秒并自动回放；录制或回放时短按 `KEY` 可
-提前结束当前阶段，短按 `BOOT` 可取消整个测试。语音只临时存放在 PSRAM，结束后立即
-清除，不会写入设备存储或上传网络。播放音量为 `0%` 时不会启用扬声器，但仍会完成录音
-和双麦克风分析；提示音不会播放，回放结果显示为 `NOT PLAYED`。
-
 `BOOT` 在开机时和正常运行时具有不同含义：关机后按住它再按 `PWR` 会选择 ROM 下载
-模式；固件正常运行后只处理短按页面导航，长按不执行操作。
+模式；固件正常运行后短按用于页面导航或取消，只有“设置”页定义了长按动作。
 
 ## 常见问题
 
@@ -274,6 +308,12 @@ Beta 更新默认关闭，仅建议能够使用本地 OTA 或 USB 恢复设备�
 USB 校时脚本。若希望关机仍保持时间，应按微雪产品文档使用 PH1.0 接口的兼容可充电 RTC
 电池，不要接入不可充电纽扣电池。安装后按“首次配网与自动校时”的断电步骤检查“状态”
 页；`UNTESTED` 表示尚未完成一次有效断电测试，不是故障。
+
+### 语音页显示模型不可用
+
+这通常表示设备从旧版本仅通过在线更新或网页 OTA 安装了 v0.18.0 应用。其他功能不受
+影响；按“旧设备补装离线语音模型”通过 USB 同时写入同版本 OTA 和模型，或使用 Factory
+重新完整安装。`-model.bin` 不能单独启动，也不能上传到设置门户。
 
 ## 参考资料
 

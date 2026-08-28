@@ -1,26 +1,26 @@
 # ESP32 RLCD Firmware
 
 面向 Waveshare ESP32-S3-RLCD-4.2 的原生 ESP-IDF 固件。它以离线可用的 RTC 时钟为
-核心，提供月历、环境信息、microSD 图片、网络校时、音频诊断和安全的双槽固件更新。
+核心，提供月历、环境信息、microSD 图片、离线语音、网络校时和安全的双槽固件更新。
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.16.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.18.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
-以下界面反映 v0.16.0 正式版。
+以下界面反映 v0.18.0 正式版。
 
 | 首屏 | 月历 |
 | :---: | :---: |
 | ![首屏效果图](docs/assets/home-screen.svg) | ![月历页效果图](docs/assets/calendar-screen.svg) |
 | microSD 图片 | 状态 |
 | ![microSD 图片页效果图](docs/assets/image-screen.svg) | ![状态页效果图](docs/assets/status.svg) |
-| 音频 | 设置 |
-| ![音频页效果图](docs/assets/audio.svg) | ![设置页效果图](dist/v0.16.0/settings.svg) |
+| 语音 | 设置 |
+| ![离线语音页效果图](docs/assets/voice.svg) | ![设置页效果图](docs/assets/settings.svg) |
 | 闹钟 | 在线更新 |
 | ![闹钟提醒效果图](docs/assets/alarm.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
 
@@ -32,12 +32,14 @@
   等大显示 `HH:MM:SS`，`SAVING` 显示 `HH:MM`；
 - PCF85063 RTC、SHTC3、GPIO4 电池采样和 8 MB Octal PSRAM；
 - 首次启动使用临时 WPA2 热点配网，凭据保存在 NVS，随后自动 SNTP 校时；
-- 网络不可用时继续使用 RTC、月历、传感器、按键和音频；`NORMAL` 后台退避重试，
+- 网络不可用时继续使用 RTC、月历、传感器、按键和离线语音；`NORMAL` 后台退避重试，
   `SAVING` 保持离线；
-- ES8311 与 ES7210 本机音频诊断，最多临时采集并回放 5 秒语音，不持久化或上传；
-- 四页系统中心依次为状态、音频、设置和在线更新，低频维护不再占用独立页面；
-- 设置门户支持省电模式、时区、温度单位、播放音量、单个每周闹钟、更新通道、手机校时、
-  microSD 图片管理、清除 Wi-Fi 和本地 OTA；
+- 离线语音使用板载 ES7210 和 ESP-SR 中文模型：在“语音”页按住 `KEY` 2 秒并松开后，
+  可用“回到主页”“打开日历”“查看状态”“打开图片”“打开设置”等安全指令导航；
+  不使用唤醒词或云端服务，原始音频不持久化、不上传；
+- 四页系统中心依次为状态、语音、设置和在线更新，低频维护不再占用独立页面；
+- “设置”页支持手动提前省电；设置门户支持时区、温度单位、播放音量、单个每周闹钟、
+  更新通道、手机校时、microSD 图片管理、清除 Wi-Fi 和本地 OTA；
 - 离线闹钟按 RTC 本地时间触发；到点播放提示音并显示大字提醒，支持停止、首次延后
   5 分钟和 60 秒自动停止，断网及 `SAVING` 模式不影响已保存规则；
 - `NORMAL` 保持 `HH:MM:SS` 与自动联网；`SAVING` 隐藏秒数、降低刷新和采样频率，并关闭
@@ -56,27 +58,30 @@
 3 秒才安装。正式固件默认只检查稳定版；开发者可在“设置”门户主动加入测试通道。完整说明见
 [界面与按键](docs/home-screen.md)和[固件安装与更新](docs/firmware-update.md)。
 
-已安装 v0.10.0—v0.15.0 的设备可直接从“在线更新”页升级，不需要逐版本安装；
-v0.7.0—v0.9.0 可通过原有本地更新入口上传 v0.16.0 OTA 固件，v0.6.0 及更早版本需使用
-Factory 固件完整安装。
+v0.18.0 首次加入独立语音模型。全新安装和完整恢复使用包含模型的 Factory 固件；
+v0.7.0—v0.16.0 若要保留 NVS、Wi-Fi 和设备偏好，应通过 USB 使用 `update-app.sh`
+一次写入 OTA 应用与同版本模型。在线更新和设置门户本地 OTA 只更新应用，不能为旧设备
+补装模型；已经安装兼容模型后，后续应用 OTA 可以继续复用它。v0.6.0 及更早版本仍需
+使用 Factory 固件完整安装。
 microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 [microSD 图片准备](docs/microsd-images.md)。
 
 ## 安装使用
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
-中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`。v0.16.0 的离线更新
-位于“设置”门户。下载、校验、Windows、Linux 和 macOS 的完整步骤见
+中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
+更早版本迁移到 v0.18.0 语音功能时还需同时写入 `-model.bin`。离线更新位于“设置”门户。
+下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
 
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.16.0
+cd dist/v0.18.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.16.0/esp32-rlcd-firmware-v0.16.0-factory.bin \
+  --firmware dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-factory.bin \
   --confirm
 ```
 
@@ -95,7 +100,7 @@ cd ../..
 ├── src/                 # ESP-IDF 组件与项目源码
 │   ├── alarm/           # 离线闹钟调度、按键门控与触发去重
 │   ├── app/             # 应用入口、页面状态与 USB 命令
-│   ├── audio/           # 扬声器、双麦克风与音频诊断
+│   ├── audio/           # 扬声器、双麦克风、音频诊断与离线语音
 │   ├── board/           # 板级总线和引脚
 │   ├── calendar/        # 公历月份与农历换算
 │   ├── display/         # ST7305 界面
@@ -151,6 +156,8 @@ cd ../..
 - [ESP-IDF v5.5.3 编程指南](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/)、
   [OTA API](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/system/ota.html)
   与 [HTTP Client](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/protocols/esp_http_client.html)；
+- [ESP-SR Speech Command Recognition](https://docs.espressif.com/projects/esp-sr/en/latest/esp32s3/speech_command_recognition/README.html)
+  与 [Flash Model](https://docs.espressif.com/projects/esp-sr/en/latest/esp32s3/flash_model/README.html)；
 - [U8g2](https://github.com/olikraus/u8g2)、
   [Espressif QR Code](https://components.espressif.com/components/espressif/qrcode/versions/0.2.0/readme)、
   [esp_codec_dev](https://github.com/espressif/esp-adf/tree/9b35bca1a6db3d989936f228d6e28f33089fa9e7/components/esp_codec_dev)

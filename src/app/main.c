@@ -12,6 +12,7 @@
 #include "alarm_scheduler.h"
 #include "audio_alert.h"
 #include "audio_diagnostics.h"
+#include "audio_voice.h"
 #include "battery.h"
 #include "board_buttons.h"
 #include "board_i2c.h"
@@ -43,6 +44,8 @@
 #include "shtc3.h"
 #include "settings_power_policy.h"
 #include "usb_commands.h"
+#include "voice_command_policy.h"
+#include "voice_session_state.h"
 
 static const char *TAG = "rlcd_firmware";
 typedef enum {
@@ -55,7 +58,7 @@ typedef enum {
     APP_DISPLAY_IMAGE_DELETE_CONFIRMATION,
     APP_DISPLAY_IMAGE_DELETE_STATUS,
     APP_DISPLAY_STATUS,
-    APP_DISPLAY_AUDIO,
+    APP_DISPLAY_VOICE,
     APP_DISPLAY_ALARM,
     APP_DISPLAY_SETTINGS,
     APP_DISPLAY_ONLINE_UPDATE,
@@ -180,8 +183,8 @@ static const char *page_name(app_page_t page)
         return "image";
     case APP_PAGE_STATUS:
         return "status";
-    case APP_PAGE_AUDIO:
-        return "audio";
+    case APP_PAGE_VOICE:
+        return "voice";
     case APP_PAGE_SETTINGS:
         return "settings";
     case APP_PAGE_ONLINE_UPDATE:
@@ -330,29 +333,190 @@ static alarm_clock_observation_t alarm_clock_from_rtc(
     return observation;
 }
 
-static display_audio_state_t display_audio_state(
-    audio_session_state_t state)
+static display_voice_state_t display_voice_state(
+    const voice_session_state_t *session,
+    const audio_voice_status_t *engine)
 {
-    switch (state) {
-    case AUDIO_SESSION_STATE_PLAYING_TONE:
-        return DISPLAY_AUDIO_STATE_PLAYING_TONE;
-    case AUDIO_SESSION_STATE_PREPARING_RECORDING:
-        return DISPLAY_AUDIO_STATE_PREPARING_RECORDING;
-    case AUDIO_SESSION_STATE_RECORDING:
-        return DISPLAY_AUDIO_STATE_RECORDING;
-    case AUDIO_SESSION_STATE_ANALYZING:
-        return DISPLAY_AUDIO_STATE_ANALYZING;
-    case AUDIO_SESSION_STATE_PLAYBACK:
-        return DISPLAY_AUDIO_STATE_PLAYBACK;
-    case AUDIO_SESSION_STATE_COMPLETED:
-        return DISPLAY_AUDIO_STATE_COMPLETED;
-    case AUDIO_SESSION_STATE_CANCELLED:
-        return DISPLAY_AUDIO_STATE_CANCELLED;
-    case AUDIO_SESSION_STATE_FAILED:
-        return DISPLAY_AUDIO_STATE_FAILED;
-    case AUDIO_SESSION_STATE_IDLE:
+    const voice_session_phase_t phase =
+        voice_session_state_phase(session);
+    switch (phase) {
+    case VOICE_SESSION_PHASE_WAITING_FOR_RELEASE:
+        return DISPLAY_VOICE_STATE_WAITING_FOR_RELEASE;
+    case VOICE_SESSION_PHASE_LISTENING:
+        return engine != NULL &&
+                       engine->state == AUDIO_VOICE_STATE_PREPARING
+                   ? DISPLAY_VOICE_STATE_PREPARING
+                   : DISPLAY_VOICE_STATE_LISTENING;
+    case VOICE_SESSION_PHASE_RECOGNIZING:
+        return DISPLAY_VOICE_STATE_RECOGNIZING;
+    case VOICE_SESSION_PHASE_SUCCEEDED:
+        return DISPLAY_VOICE_STATE_SUCCEEDED;
+    case VOICE_SESSION_PHASE_NO_VOICE:
+        return DISPLAY_VOICE_STATE_NO_VOICE;
+    case VOICE_SESSION_PHASE_NOT_UNDERSTOOD:
+        return DISPLAY_VOICE_STATE_NOT_UNDERSTOOD;
+    case VOICE_SESSION_PHASE_TARGET_UNAVAILABLE:
+        return DISPLAY_VOICE_STATE_TARGET_UNAVAILABLE;
+    case VOICE_SESSION_PHASE_ENGINE_UNAVAILABLE:
+        return DISPLAY_VOICE_STATE_UNAVAILABLE;
+    case VOICE_SESSION_PHASE_CANCELLED:
+        return DISPLAY_VOICE_STATE_CANCELLED;
+    case VOICE_SESSION_PHASE_FAILED:
+        return DISPLAY_VOICE_STATE_FAILED;
+    case VOICE_SESSION_PHASE_READY:
     default:
-        return DISPLAY_AUDIO_STATE_IDLE;
+        if (engine != NULL && engine->engine_preparing) {
+            return DISPLAY_VOICE_STATE_PREPARING;
+        }
+        return engine != NULL && engine->initialized &&
+                       engine->model_ready && engine->engine_ready &&
+                       engine->microphone_ready
+                   ? DISPLAY_VOICE_STATE_READY
+                   : DISPLAY_VOICE_STATE_UNAVAILABLE;
+    }
+}
+
+static bool voice_engine_available(
+    const audio_voice_status_t *status)
+{
+    return status != NULL && status->initialized &&
+           status->model_ready && status->engine_ready &&
+           status->microphone_ready;
+}
+
+static const char *voice_unavailable_detail(
+    const audio_voice_status_t *status)
+{
+    if (status == NULL || !status->initialized) {
+        return "Audio service not ready";
+    }
+    if (status->engine_preparing) {
+        return "Starting offline voice";
+    }
+    if (!status->model_ready) {
+        return "Voice model not installed";
+    }
+    if (!status->microphone_ready) {
+        return "Microphones not ready";
+    }
+    if (!status->engine_ready) {
+        return status->last_error == ESP_OK
+                   ? "Voice engine is not ready"
+                   : esp_err_to_name(status->last_error);
+    }
+    return "Voice engine is busy";
+}
+
+static const char *voice_command_detail(
+    voice_command_action_t action)
+{
+    switch (action) {
+    case VOICE_COMMAND_ACTION_OPEN_HOME:
+        return "Opening home";
+    case VOICE_COMMAND_ACTION_OPEN_CALENDAR:
+        return "Opening calendar";
+    case VOICE_COMMAND_ACTION_OPEN_STATUS:
+        return "Opening status";
+    case VOICE_COMMAND_ACTION_OPEN_IMAGE:
+        return "Opening image";
+    case VOICE_COMMAND_ACTION_OPEN_SETTINGS:
+        return "Opening settings";
+    case VOICE_COMMAND_ACTION_NONE:
+    default:
+        return "Command accepted";
+    }
+}
+
+static app_page_t voice_command_page(
+    voice_command_action_t action)
+{
+    switch (action) {
+    case VOICE_COMMAND_ACTION_OPEN_CALENDAR:
+        return APP_PAGE_CALENDAR;
+    case VOICE_COMMAND_ACTION_OPEN_STATUS:
+        return APP_PAGE_STATUS;
+    case VOICE_COMMAND_ACTION_OPEN_IMAGE:
+        return APP_PAGE_IMAGE;
+    case VOICE_COMMAND_ACTION_OPEN_SETTINGS:
+        return APP_PAGE_SETTINGS;
+    case VOICE_COMMAND_ACTION_OPEN_HOME:
+    case VOICE_COMMAND_ACTION_NONE:
+    default:
+        return APP_PAGE_HOME;
+    }
+}
+
+static bool accept_voice_engine_result(
+    voice_session_state_t *session,
+    const audio_voice_status_t *status, bool image_available,
+    voice_command_action_t *pending_action,
+    esp_err_t *session_error)
+{
+    if (session == NULL || status == NULL ||
+        pending_action == NULL || session_error == NULL ||
+        status->generation == 0U ||
+        status->generation != voice_session_state_generation(session) ||
+        (status->state != AUDIO_VOICE_STATE_COMPLETED &&
+         status->state != AUDIO_VOICE_STATE_CANCELLED &&
+         status->state != AUDIO_VOICE_STATE_FAILED)) {
+        return false;
+    }
+
+    *pending_action = VOICE_COMMAND_ACTION_NONE;
+    *session_error = status->last_error;
+    if (status->state == AUDIO_VOICE_STATE_CANCELLED ||
+        status->result == AUDIO_VOICE_RESULT_CANCELLED) {
+        (void)voice_session_state_cancel(session);
+        return true;
+    }
+
+    if (status->result == AUDIO_VOICE_RESULT_NO_VOICE) {
+        (void)voice_session_state_finish_listening(session);
+        return true;
+    }
+
+    /* A failed capture and a recognized/unknown utterance both pass through
+     * RECOGNIZING so the generation gate remains the sole result handoff. */
+    voice_session_state_note_speech(session);
+    (void)voice_session_state_finish_listening(session);
+    if (status->state == AUDIO_VOICE_STATE_FAILED ||
+        status->result == AUDIO_VOICE_RESULT_FAILED) {
+        return voice_session_state_report_result(
+            session, status->generation,
+            VOICE_SESSION_RESULT_ERROR);
+    }
+    if (status->result == AUDIO_VOICE_RESULT_NOT_UNDERSTOOD) {
+        return voice_session_state_report_result(
+            session, status->generation,
+            VOICE_SESSION_RESULT_NOT_UNDERSTOOD);
+    }
+    if (status->result != AUDIO_VOICE_RESULT_MATCHED) {
+        return voice_session_state_report_result(
+            session, status->generation,
+            VOICE_SESSION_RESULT_ERROR);
+    }
+
+    const voice_command_decision_t decision =
+        voice_command_policy_decide(status->command_id,
+                                    image_available);
+    switch (decision.kind) {
+    case VOICE_COMMAND_DECISION_EXECUTE:
+        *pending_action = decision.action;
+        return voice_session_state_report_result(
+            session, status->generation,
+            VOICE_SESSION_RESULT_MATCHED);
+    case VOICE_COMMAND_DECISION_UNAVAILABLE:
+        return voice_session_state_report_result(
+            session, status->generation,
+            VOICE_SESSION_RESULT_TARGET_UNAVAILABLE);
+    case VOICE_COMMAND_DECISION_CANCEL:
+        (void)voice_session_state_cancel(session);
+        return true;
+    case VOICE_COMMAND_DECISION_REJECTED:
+    default:
+        return voice_session_state_report_result(
+            session, status->generation,
+            VOICE_SESSION_RESULT_NOT_UNDERSTOOD);
     }
 }
 
@@ -850,6 +1014,14 @@ void app_main(void)
                              BUTTON_LONG_PRESS_DISABLED_MS);
     app_page_state_t page_state;
     app_page_state_init(&page_state);
+    voice_session_state_t voice_session;
+    voice_session_state_init(&voice_session);
+    audio_voice_status_t voice_status = {0};
+    audio_voice_get_status(&voice_status);
+    uint32_t previous_voice_revision = voice_status.revision;
+    voice_command_action_t pending_voice_action =
+        VOICE_COMMAND_ACTION_NONE;
+    esp_err_t voice_session_error = ESP_OK;
     app_image_delete_ui_t image_delete_ui;
     app_image_delete_ui_init(&image_delete_ui);
     char image_delete_target[SD_IMAGE_FILENAME_CAPACITY] = {0};
@@ -1006,13 +1178,31 @@ void app_main(void)
                 render_requested = true;
             }
         }
-        audio_diagnostics_status_t latest_audio_status = {0};
-        audio_diagnostics_get_status(&latest_audio_status);
-        const bool audio_data_changed =
-            latest_audio_status.revision != audio_status.revision;
-        audio_status = latest_audio_status;
-        const bool audio_session_active =
-            audio_session_state_is_active(audio_status.state);
+        audio_voice_status_t latest_voice_status = {0};
+        audio_voice_get_status(&latest_voice_status);
+        const bool voice_data_changed =
+            latest_voice_status.revision != previous_voice_revision;
+        voice_status = latest_voice_status;
+        if (voice_data_changed) {
+            previous_voice_revision = voice_status.revision;
+            const bool image_available =
+                latest_sd_image_status.state ==
+                    SD_IMAGE_STATE_READY &&
+                latest_sd_image_status.image_count > 0U;
+            if (accept_voice_engine_result(
+                    &voice_session, &voice_status,
+                    image_available, &pending_voice_action,
+                    &voice_session_error)) {
+                ESP_LOGI(TAG,
+                         "offline voice result accepted: %s",
+                         voice_session_state_name(
+                             voice_session_state_phase(
+                                 &voice_session)));
+            }
+            render_requested = true;
+        }
+        const bool voice_session_active =
+            voice_session_state_is_active(&voice_session);
 
         (void)firmware_update_get_status(&firmware_update_status);
         if (firmware_update_status.state != previous_update_state ||
@@ -1436,6 +1626,15 @@ void app_main(void)
                              esp_err_to_name(history_error));
                 }
             }
+            if (voice_session_state_is_active(&voice_session)) {
+                (void)audio_voice_cancel();
+                (void)voice_session_state_alarm_started(
+                    &voice_session);
+                pending_voice_action = VOICE_COMMAND_ACTION_NONE;
+                voice_session_error = ESP_OK;
+                ESP_LOGI(TAG,
+                         "alarm preempted offline voice session");
+            }
             const esp_err_t alert_error = audio_alert_start();
             if (alert_error != ESP_OK) {
                 ESP_LOGW(TAG,
@@ -1521,28 +1720,64 @@ void app_main(void)
             }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
-        } else if (audio_session_active) {
-            audio_session_input_t audio_input = AUDIO_SESSION_INPUT_NONE;
+        } else if (voice_session_active) {
+            const voice_session_phase_t voice_phase =
+                voice_session_state_phase(&voice_session);
             if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
-                audio_input = AUDIO_SESSION_INPUT_BOOT_SHORT_PRESS;
-            } else if (key_event == BUTTON_EVENT_SHORT_PRESS) {
-                audio_input = AUDIO_SESSION_INPUT_KEY_SHORT_PRESS;
-            }
-            const audio_session_action_t audio_action =
-                audio_session_input_action(audio_status.state, audio_input);
-            if (audio_action == AUDIO_SESSION_ACTION_CANCEL) {
-                const esp_err_t cancel_error = audio_diagnostics_cancel();
-                if (cancel_error == ESP_OK) {
+                (void)audio_voice_cancel();
+                if (voice_session_state_boot_short_press(
+                        &voice_session) !=
+                    VOICE_SESSION_ACTION_NONE) {
+                    pending_voice_action =
+                        VOICE_COMMAND_ACTION_NONE;
+                    voice_session_error = ESP_OK;
                     ESP_LOGI(TAG,
-                             "BOOT short press: cancelling temporary audio");
+                             "BOOT short press: offline voice cancelled");
                 }
                 render_requested = true;
-            } else if (audio_action == AUDIO_SESSION_ACTION_STOP) {
+            } else if (voice_phase ==
+                           VOICE_SESSION_PHASE_WAITING_FOR_RELEASE &&
+                       !key_pressed_or_debounced) {
+                const voice_session_action_t release_action =
+                    voice_session_state_key_released(
+                        &voice_session);
+                if (release_action ==
+                    VOICE_SESSION_ACTION_START_LISTENING) {
+                    const uint32_t generation =
+                        voice_session_state_generation(
+                            &voice_session);
+                    const esp_err_t start_error =
+                        audio_voice_start(generation);
+                    if (start_error == ESP_OK) {
+                        audio_voice_get_status(&voice_status);
+                        previous_voice_revision =
+                            voice_status.revision;
+                        ESP_LOGI(TAG,
+                                 "KEY released: offline voice listening started");
+                    } else {
+                        voice_session_error = start_error;
+                        (void)voice_session_state_alarm_started(
+                            &voice_session);
+                        uint32_t unused_generation = 0U;
+                        (void)voice_session_state_begin(
+                            &voice_session, false,
+                            &unused_generation);
+                        ESP_LOGW(TAG,
+                                 "offline voice could not start: %s",
+                                 esp_err_to_name(start_error));
+                    }
+                    render_requested = true;
+                }
+            } else if (key_event == BUTTON_EVENT_SHORT_PRESS &&
+                       (voice_phase ==
+                            VOICE_SESSION_PHASE_LISTENING ||
+                        voice_phase ==
+                            VOICE_SESSION_PHASE_RECOGNIZING)) {
                 const esp_err_t stop_error =
-                    audio_diagnostics_request_stop();
+                    audio_voice_request_stop();
                 if (stop_error == ESP_OK) {
-                    ESP_LOGI(TAG, "KEY short press: stopping %s",
-                             audio_session_state_name(audio_status.state));
+                    ESP_LOGI(TAG,
+                             "KEY short press: finishing offline voice input");
                 }
                 render_requested = true;
             }
@@ -1750,18 +1985,32 @@ void app_main(void)
                              esp_err_to_name(manual_sync_error));
                 }
                 render_requested = true;
-            } else if (key_action == APP_PAGE_ACTION_TEST_AUDIO &&
+            } else if (key_action == APP_PAGE_ACTION_START_VOICE &&
                        manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                        !firmware_update_ui_active &&
                        !online_update_busy) {
-                const esp_err_t start_error = audio_diagnostics_start();
-                if (start_error == ESP_OK) {
-                    ESP_LOGI(TAG,
-                             "KEY long press: temporary audio loopback started");
-                } else {
-                    ESP_LOGW(TAG,
-                             "temporary audio loopback could not start: %s",
-                             esp_err_to_name(start_error));
+                audio_voice_get_status(&voice_status);
+                const bool engine_available =
+                    voice_engine_available(&voice_status);
+                uint32_t generation = 0U;
+                if (voice_session_state_begin(
+                        &voice_session, engine_available,
+                        &generation)) {
+                    pending_voice_action =
+                        VOICE_COMMAND_ACTION_NONE;
+                    voice_session_error =
+                        engine_available ? ESP_OK
+                                         : voice_status.last_error;
+                    if (engine_available) {
+                        ESP_LOGI(TAG,
+                                 "KEY long press: release to start offline voice generation=%u",
+                                 (unsigned)generation);
+                    } else {
+                        ESP_LOGW(TAG,
+                                 "offline voice unavailable: %s",
+                                 voice_unavailable_detail(
+                                     &voice_status));
+                    }
                 }
                 previous_display_mode = APP_DISPLAY_NONE;
                 render_requested = true;
@@ -2036,6 +2285,44 @@ void app_main(void)
             image_delete_target_snapshot.ready = false;
             render_requested = true;
         }
+        const voice_session_phase_t voice_phase_before_tick =
+            voice_session_state_phase(&voice_session);
+        if (!alarm_modal_active &&
+            voice_phase_before_tick !=
+                VOICE_SESSION_PHASE_LISTENING &&
+            voice_phase_before_tick !=
+                VOICE_SESSION_PHASE_RECOGNIZING) {
+            const voice_session_action_t voice_tick_action =
+                voice_session_state_tick(&voice_session,
+                                         button_elapsed_ms);
+            if (voice_tick_action ==
+                VOICE_SESSION_ACTION_CANCEL_AND_CLEAR) {
+                (void)audio_voice_cancel();
+                pending_voice_action = VOICE_COMMAND_ACTION_NONE;
+                render_requested = true;
+            } else if (voice_tick_action ==
+                       VOICE_SESSION_ACTION_COMPLETE_COMMAND) {
+                const app_page_t target_page =
+                    voice_command_page(pending_voice_action);
+                if (app_page_state_open_page(&page_state,
+                                             target_page)) {
+                    if (target_page == APP_PAGE_STATUS) {
+                        status_refresh_pending = true;
+                    }
+                    ESP_LOGI(TAG,
+                             "offline voice opened %s page",
+                             page_name(target_page));
+                }
+                pending_voice_action = VOICE_COMMAND_ACTION_NONE;
+                voice_session_error = ESP_OK;
+                render_requested = true;
+            } else if (voice_tick_action ==
+                       VOICE_SESSION_ACTION_RETURN_TO_READY) {
+                pending_voice_action = VOICE_COMMAND_ACTION_NONE;
+                voice_session_error = ESP_OK;
+                render_requested = true;
+            }
+        }
         if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
             !image_delete_hold_prompt_active &&
             !app_image_delete_ui_is_active(&image_delete_ui) &&
@@ -2047,7 +2334,7 @@ void app_main(void)
               (online_update_busy ||
                online_update_confirmation_active)) &&
             !alarm_button_events_suppressed && !alarm_modal_active &&
-            !audio_session_active &&
+            !voice_session_state_is_active(&voice_session) &&
             !button_interaction_active &&
             app_page_state_tick(&page_state, button_elapsed_ms)) {
             render_requested = true;
@@ -2359,6 +2646,7 @@ void app_main(void)
             network_status.state == NETWORK_TIME_STATE_SYNCHRONIZED &&
             !firmware_update_ui_active && !gallery_download_ui_active &&
             !app_image_delete_ui_is_active(&image_delete_ui) &&
+            !voice_session_state_is_active(&voice_session) &&
             !online_update_busy &&
             !online_update_confirmation_active) {
             if (online_update_status.state == ONLINE_UPDATE_STATE_AVAILABLE) {
@@ -2672,8 +2960,8 @@ void app_main(void)
             previous_portal_seconds = 0U;
         } else if (display_ready && app_page_is_system(active_page)) {
             app_display_mode_t system_display_mode = APP_DISPLAY_STATUS;
-            if (active_page == APP_PAGE_AUDIO) {
-                system_display_mode = APP_DISPLAY_AUDIO;
+            if (active_page == APP_PAGE_VOICE) {
+                system_display_mode = APP_DISPLAY_VOICE;
             } else if (active_page == APP_PAGE_SETTINGS) {
                 system_display_mode = APP_DISPLAY_SETTINGS;
             } else if (active_page == APP_PAGE_ONLINE_UPDATE) {
@@ -2682,8 +2970,8 @@ void app_main(void)
             const bool system_data_changed =
                 (active_page == APP_PAGE_STATUS &&
                  system_status_data_changed) ||
-                (active_page == APP_PAGE_AUDIO &&
-                 audio_data_changed) ||
+                (active_page == APP_PAGE_VOICE &&
+                 voice_data_changed) ||
                 (active_page == APP_PAGE_ONLINE_UPDATE &&
                  online_update_data_changed);
             if (render_requested ||
@@ -2726,43 +3014,47 @@ void app_main(void)
                 };
                 if (active_page == APP_PAGE_STATUS) {
                     display_show_system_status(&system_status);
-                } else if (active_page == APP_PAGE_AUDIO) {
-                    audio_diagnostics_get_status(&audio_status);
-                    const display_audio_status_t display_audio_status = {
-                        .initialized = audio_status.initialized,
-                        .speaker_ready = audio_status.speaker_ready,
-                        .microphones_ready =
-                            audio_status.microphones_ready,
-                        .test_completed = audio_status.test_completed,
-                        .tone_played = audio_status.tone_played,
-                        .microphone_capture_completed =
-                            audio_status.microphone_capture_completed,
-                        .voice_played = audio_status.voice_played,
-                        .playback_stopped =
-                            audio_status.playback_stopped,
-                        .microphone_1_level_percent =
-                            audio_status.microphone_1_level_percent,
-                        .microphone_2_level_percent =
-                            audio_status.microphone_2_level_percent,
-                        .playback_microphone =
-                            audio_status.playback_microphone,
-                        .recording_elapsed_ms =
-                            audio_status.recording_elapsed_ms,
-                        .recording_duration_ms =
-                            audio_status.recording_duration_ms,
-                        .playback_elapsed_ms =
-                            audio_status.playback_elapsed_ms,
-                        .max_recording_ms =
-                            AUDIO_DIAGNOSTICS_MAX_RECORDING_MS,
-                        .sample_rate_hz =
-                            AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ,
-                        .bits_per_sample =
-                            AUDIO_DIAGNOSTICS_BITS_PER_SAMPLE,
-                        .state = display_audio_state(audio_status.state),
-                        .result = audio_diagnostics_result_name(
-                            audio_status.result),
+                } else if (active_page == APP_PAGE_VOICE) {
+                    audio_voice_get_status(&voice_status);
+                    const voice_session_phase_t voice_phase =
+                        voice_session_state_phase(&voice_session);
+                    const char *voice_detail = NULL;
+                    if (voice_phase ==
+                        VOICE_SESSION_PHASE_SUCCEEDED) {
+                        voice_detail = voice_command_detail(
+                            pending_voice_action);
+                    } else if (voice_phase ==
+                               VOICE_SESSION_PHASE_TARGET_UNAVAILABLE) {
+                        voice_detail = "No image available";
+                    } else if (voice_phase ==
+                               VOICE_SESSION_PHASE_ENGINE_UNAVAILABLE) {
+                        voice_detail = voice_unavailable_detail(
+                            &voice_status);
+                    } else if (voice_phase ==
+                               VOICE_SESSION_PHASE_FAILED) {
+                        voice_detail =
+                            voice_session_error == ESP_OK
+                                ? "Recognition stopped unexpectedly"
+                                : esp_err_to_name(
+                                      voice_session_error);
+                    }
+                    const display_voice_status_t display_voice_status = {
+                        .engine_available =
+                            voice_engine_available(&voice_status),
+                        .elapsed_ms =
+                            voice_phase ==
+                                        VOICE_SESSION_PHASE_LISTENING ||
+                                    voice_phase ==
+                                        VOICE_SESSION_PHASE_RECOGNIZING
+                                ? voice_status.elapsed_ms
+                                : voice_session.elapsed_ms,
+                        .max_listening_ms =
+                            AUDIO_VOICE_MAX_LISTENING_MS,
+                        .state = display_voice_state(
+                            &voice_session, &voice_status),
+                        .detail = voice_detail,
                     };
-                    display_show_audio(&display_audio_status);
+                    display_show_voice(&display_voice_status);
                 } else if (active_page == APP_PAGE_SETTINGS) {
                     const display_settings_status_t settings_status = {
                         .manual_saving_requested =
@@ -2842,7 +3134,7 @@ void app_main(void)
         } else if (display_ready &&
                    (periodic_update || render_requested ||
                     previous_display_mode == APP_DISPLAY_STATUS ||
-                    previous_display_mode == APP_DISPLAY_AUDIO ||
+                    previous_display_mode == APP_DISPLAY_VOICE ||
                     previous_display_mode == APP_DISPLAY_SETTINGS ||
                     previous_display_mode == APP_DISPLAY_ALARM ||
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||

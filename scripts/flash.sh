@@ -82,12 +82,22 @@ case "${firmware_name}" in
         echo "首次安装请使用 factory 镜像；已安装 v0.7.0+ 可使用 update-app.sh。" >&2
         exit 2
         ;;
+    srmodels.bin|*-model.bin)
+        echo "拒绝把离线语音模型写入 0x0: ${firmware_name}" >&2
+        echo "首次安装请使用包含模型的 factory 镜像；旧设备补装模型请使用 update-app.sh。" >&2
+        exit 2
+        ;;
+    rlcd_firmware_factory.bin|rlcd_firmware_merged.bin|*-factory.bin|esp32-rlcd-firmware-v0.[1-6].*.bin)
+        ;;
+    *)
+        echo "拒绝把无法识别的文件写入 0x0: ${firmware_name}" >&2
+        echo "请选择本项目发布的 factory 镜像。" >&2
+        exit 2
+        ;;
 esac
-if [[ ! -f "${firmware_dir}/SHA256SUMS" ]]; then
-    echo "固件目录缺少 SHA256SUMS，拒绝烧录: ${firmware_dir}" >&2
-    exit 1
-fi
-(cd "${firmware_dir}" && sha256sum --check SHA256SUMS)
+verify_sha256_manifest_entry \
+    "${firmware_dir}/SHA256SUMS" "${firmware_path}" \
+    "${firmware_name}" "${firmware_name}"
 
 "${RLCD_SCRIPT_DIR}/install-esptool-windows.sh"
 esptool_exe="${RLCD_ESPTOOL_WINDOWS_DIR}/esptool.exe"

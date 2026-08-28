@@ -100,38 +100,27 @@ typedef struct {
 } display_alarm_status_t;
 
 typedef enum {
-    DISPLAY_AUDIO_STATE_IDLE = 0,
-    DISPLAY_AUDIO_STATE_PLAYING_TONE,
-    DISPLAY_AUDIO_STATE_PREPARING_RECORDING,
-    DISPLAY_AUDIO_STATE_RECORDING,
-    DISPLAY_AUDIO_STATE_ANALYZING,
-    DISPLAY_AUDIO_STATE_PLAYBACK,
-    DISPLAY_AUDIO_STATE_COMPLETED,
-    DISPLAY_AUDIO_STATE_CANCELLED,
-    DISPLAY_AUDIO_STATE_FAILED,
-} display_audio_state_t;
+    DISPLAY_VOICE_STATE_READY = 0,
+    DISPLAY_VOICE_STATE_WAITING_FOR_RELEASE,
+    DISPLAY_VOICE_STATE_PREPARING,
+    DISPLAY_VOICE_STATE_LISTENING,
+    DISPLAY_VOICE_STATE_RECOGNIZING,
+    DISPLAY_VOICE_STATE_SUCCEEDED,
+    DISPLAY_VOICE_STATE_NO_VOICE,
+    DISPLAY_VOICE_STATE_NOT_UNDERSTOOD,
+    DISPLAY_VOICE_STATE_TARGET_UNAVAILABLE,
+    DISPLAY_VOICE_STATE_UNAVAILABLE,
+    DISPLAY_VOICE_STATE_CANCELLED,
+    DISPLAY_VOICE_STATE_FAILED,
+} display_voice_state_t;
 
 typedef struct {
-    bool initialized;
-    bool speaker_ready;
-    bool microphones_ready;
-    bool test_completed;
-    bool tone_played;
-    bool microphone_capture_completed;
-    bool voice_played;
-    bool playback_stopped;
-    uint8_t microphone_1_level_percent;
-    uint8_t microphone_2_level_percent;
-    uint8_t playback_microphone;
-    uint32_t recording_elapsed_ms;
-    uint32_t recording_duration_ms;
-    uint32_t playback_elapsed_ms;
-    uint32_t max_recording_ms;
-    uint32_t sample_rate_hz;
-    uint8_t bits_per_sample;
-    display_audio_state_t state;
-    const char *result;
-} display_audio_status_t;
+    bool engine_available;
+    uint32_t elapsed_ms;
+    uint32_t max_listening_ms;
+    display_voice_state_t state;
+    const char *detail;
+} display_voice_status_t;
 
 typedef enum {
     DISPLAY_ONLINE_UPDATE_STATE_NOT_CHECKED = 0,
@@ -180,7 +169,7 @@ void display_show_image_delete_confirmation(
     size_t selected_index, size_t image_count, bool delete_ready);
 void display_show_image_delete_status(display_image_delete_status_t status);
 void display_show_system_status(const display_system_status_t *status);
-void display_show_audio(const display_audio_status_t *status);
+void display_show_voice(const display_voice_status_t *status);
 void display_show_settings(const display_settings_status_t *status);
 void display_show_alarm(const display_alarm_status_t *status);
 void display_show_online_update(const display_online_update_status_t *status);

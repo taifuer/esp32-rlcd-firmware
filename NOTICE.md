@@ -19,7 +19,10 @@ Copyright 2026 taifu
 | FreeRTOS Kernel | ESP-IDF v5.5.3 内含 V10.5.1 | 实时操作系统内核 | MIT；见 [`LICENSES/FreeRTOS.txt`](LICENSES/FreeRTOS.txt) |
 | Mbed TLS | ESP-IDF 内含 3.6.5，`ffb280bb63c78bfec1e1ab55040671768c85c923` | HTTPS 服务器认证、固件哈希与 Wi-Fi 加密支持 | Apache-2.0 OR GPL-2.0-or-later；本固件选择 Apache-2.0，见 [`LICENSES/Mbed-TLS.txt`](LICENSES/Mbed-TLS.txt) |
 | lwIP | ESP-IDF 内含 2.2.0 | TCP/IP、DHCP、DNS 与 SNTP | BSD-3-Clause；见 [`LICENSES/lwIP.txt`](LICENSES/lwIP.txt) |
-| cJSON | ESP-IDF v5.5.3 内含 | 解析在线固件升级清单 | MIT；见 [`LICENSES/cJSON.txt`](LICENSES/cJSON.txt) |
+| ESP-SR | v2.4.7，`2f8c4b0459db5bbb39abd77adae27962d6d94bcb` | 离线语音前端、中文命令识别和模型 | ESPRESSIF MIT 及部分 Apache-2.0 源文件；定制许可见 [`LICENSES/ESP-SR.txt`](LICENSES/ESP-SR.txt)，Apache-2.0 文本见 [`LICENSE`](LICENSE) |
+| ESP-DSP | v1.8.0，`196825deaa4848b2c8e87b6126491cd7fc87e5bf` | ESP-SR 的数字信号处理依赖 | Apache-2.0；见 [`LICENSE`](LICENSE) |
+| `dl_fft` | v0.6.0，`a8a7b60ea5bfd6ce46960ea061641fffa9589440` | ESP-SR 的 FFT 依赖 | 组件清单声明 MIT，部分源文件明确为 Apache-2.0；见 [`LICENSES/dl_fft-MIT.txt`](LICENSES/dl_fft-MIT.txt) 和 [`LICENSE`](LICENSE) |
+| cJSON | Espressif 组件 v1.7.19，`721d625669f4e4fdfe6e02cf7e11f15b33f13e3a` | 解析在线固件、图库和 ESP-SR 模型清单 | MIT；见 [`LICENSES/cJSON.txt`](LICENSES/cJSON.txt) |
 | wpa_supplicant | ESP-IDF 内含 2.10 | WPA2/WPA3 客户端认证 | BSD-3-Clause；见 [`LICENSES/WPA-Supplicant.txt`](LICENSES/WPA-Supplicant.txt) 和 [`LICENSES/WPA-Supplicant-COPYING.txt`](LICENSES/WPA-Supplicant-COPYING.txt) |
 | HTTP Parser | ESP-IDF 内含 2.7.0 | 本地配网页面的 HTTP 请求解析 | MIT；见 [`LICENSES/HTTP-Parser.txt`](LICENSES/HTTP-Parser.txt) |
 | Espressif QR Code | v0.2.0，`3117b1e6806738c0271bbd18df17f6d74ec66452` | 在配网页面显示标准 Wi-Fi 加入二维码 | Espressif 包装层为 Apache-2.0，见 [`LICENSE`](LICENSE)；内含 Nayuki QR Code Generator，MIT，见 [`LICENSES/Nayuki-QR-Code-Generator.txt`](LICENSES/Nayuki-QR-Code-Generator.txt) |
@@ -44,6 +47,10 @@ Release 同时附带该版本打包时的本文件与完整许可文本。
 - wpa_supplicant：Copyright (c) 2002-2022, Jouni Malinen 及贡献者；
 - HTTP Parser：基于 Igor Sysoev 的 NGINX 解析器，并包含 Joyent, Inc. 及 Node 贡献者的
   修改；
+- ESP-SR：Copyright (c) 2018 ESPRESSIF SYSTEMS (SHANGHAI) PTE LTD；其定制许可仅允许
+  在 ESPRESSIF SYSTEMS 产品上免费使用，本项目目标硬件采用 ESP32-S3；
+- ESP-DSP 与 `dl_fft`：Espressif Systems (Shanghai) PTE LTD、Espressif Systems
+  (Shanghai) CO LTD 及贡献者；
 - cJSON：Copyright (c) 2009-2017 Dave Gamble and cJSON contributors；
 - Espressif QR Code：Copyright 2015-2021 Espressif Systems (Shanghai) CO LTD；底层
   QR Code Generator：Copyright (c) Project Nayuki；

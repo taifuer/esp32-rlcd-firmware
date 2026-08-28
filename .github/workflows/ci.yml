@@ -32,27 +32,17 @@ jobs:
           RLCD_DEPS_DIR: ${{ runner.temp }}/esp32-rlcd-firmware-deps
         run: |
           source ./tool-versions.env
-          idf_root="${RLCD_DEPS_DIR}/toolchains/esp-idf-v${ESP_IDF_VERSION}"
-          mkdir -p "$(dirname -- "${idf_root}")"
-          git clone --filter=blob:none --no-checkout --depth 1 \
-            --branch "v${ESP_IDF_VERSION}" \
-            "${ESP_IDF_REPOSITORY_URL}" "${idf_root}"
-          git -C "${idf_root}" sparse-checkout init --cone
-          git -C "${idf_root}" sparse-checkout set components/json
-          git -C "${idf_root}" checkout --detach "${ESP_IDF_COMMIT}"
-          test "$(git -C "${idf_root}" rev-parse HEAD)" = \
-            "${ESP_IDF_COMMIT}"
-
-          cjson_path="components/json/cJSON"
-          cjson_expected_commit="$(
-            git -C "${idf_root}" rev-parse "HEAD:${cjson_path}"
-          )"
-          git -C "${idf_root}" submodule update --init --depth 1 \
-            --filter=blob:none -- "${cjson_path}"
-          cjson_actual_commit="$(
-            git -C "${idf_root}/${cjson_path}" rev-parse HEAD
-          )"
-          test "${cjson_actual_commit}" = "${cjson_expected_commit}"
+          cjson_archive="${RLCD_DEPS_DIR}/downloads/espressif__cjson-v${CJSON_VERSION}.zip"
+          cjson_root="${RLCD_DEPS_DIR}/sources/espressif/espressif__cjson"
+          mkdir -p "$(dirname -- "${cjson_archive}")" \
+            "$(dirname -- "${cjson_root}")"
+          curl --fail --location --retry 3 \
+            --output "${cjson_archive}" "${CJSON_ARCHIVE_URL}"
+          echo "${CJSON_ARCHIVE_SHA256}  ${cjson_archive}" | \
+            sha256sum --check --strict
+          unzip -q "${cjson_archive}" -d "${cjson_root}"
+          test -f "${cjson_root}/cJSON/cJSON.c"
+          test -f "${cjson_root}/cJSON/cJSON.h"
 
       - name: Prepare pinned QR test dependency
         shell: bash

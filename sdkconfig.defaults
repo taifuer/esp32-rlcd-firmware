@@ -27,6 +27,16 @@ CONFIG_LWIP_SNTP_MAX_SERVERS=3
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 
+# Push-to-talk offline Chinese command recognition. Only the compact
+# MultiNet5 Q8 model is packed; wake word, VAD and noise-suppression models are
+# intentionally excluded because this release never listens continuously.
+CONFIG_MODEL_IN_FLASH=y
+# CONFIG_MODEL_IN_SDCARD is not set
+CONFIG_SR_NSN_WEBRTC=y
+CONFIG_SR_VADN_WEBRTC=y
+CONFIG_SR_MN_CN_MULTINET5_RECOGNITION_QUANT8=y
+CONFIG_SR_MN_EN_NONE=y
+
 # Project defaults for the temporary provisioning access point. Keep the
 # password empty so each provisioning session receives a fresh random value.
 CONFIG_RLCD_SETUP_AP_SSID="ESP32-RLCD"

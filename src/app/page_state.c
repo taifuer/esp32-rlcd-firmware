@@ -23,8 +23,8 @@ static app_page_t next_system_page(app_page_t page)
 {
     switch (page) {
     case APP_PAGE_STATUS:
-        return APP_PAGE_AUDIO;
-    case APP_PAGE_AUDIO:
+        return APP_PAGE_VOICE;
+    case APP_PAGE_VOICE:
         return APP_PAGE_SETTINGS;
     case APP_PAGE_SETTINGS:
         return APP_PAGE_ONLINE_UPDATE;
@@ -45,11 +45,20 @@ void app_page_state_init(app_page_state_t *state)
 
 void app_page_state_go_home(app_page_state_t *state)
 {
-    if (state == NULL) {
-        return;
+    (void)app_page_state_open_page(state, APP_PAGE_HOME);
+}
+
+bool app_page_state_open_page(app_page_state_t *state, app_page_t page)
+{
+    if (state == NULL ||
+        (!app_page_is_daily(page) && !app_page_is_system(page)) ||
+        (page == APP_PAGE_IMAGE && !state->image_available)) {
+        return false;
     }
-    state->current = APP_PAGE_HOME;
+
+    state->current = page;
     state->inactive_ms = 0U;
+    return true;
 }
 
 void app_page_state_set_image_available(app_page_state_t *state,
@@ -88,8 +97,8 @@ app_page_action_t app_page_key_hold_action(app_page_t page)
     if (page == APP_PAGE_STATUS) {
         return APP_PAGE_ACTION_SYNC_TIME;
     }
-    if (page == APP_PAGE_AUDIO) {
-        return APP_PAGE_ACTION_TEST_AUDIO;
+    if (page == APP_PAGE_VOICE) {
+        return APP_PAGE_ACTION_START_VOICE;
     }
     if (page == APP_PAGE_SETTINGS) {
         return APP_PAGE_ACTION_OPEN_SETTINGS;
@@ -107,8 +116,8 @@ uint32_t app_page_key_hold_threshold_ms(app_page_t page)
         return APP_PAGE_IMAGE_DELETE_HOLD_MS;
     case APP_PAGE_ACTION_SYNC_TIME:
         return APP_PAGE_MANUAL_SYNC_HOLD_MS;
-    case APP_PAGE_ACTION_TEST_AUDIO:
-        return APP_PAGE_AUDIO_TEST_HOLD_MS;
+    case APP_PAGE_ACTION_START_VOICE:
+        return APP_PAGE_VOICE_HOLD_MS;
     case APP_PAGE_ACTION_OPEN_SETTINGS:
         return APP_PAGE_SETTINGS_HOLD_MS;
     case APP_PAGE_ACTION_CHECK_ONLINE_UPDATE:
