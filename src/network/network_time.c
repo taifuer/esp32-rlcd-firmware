@@ -87,6 +87,9 @@ static httpd_handle_t s_http_server;
 static bool s_initialized;
 static bool s_storage_ready;
 static bool s_automatic_sync_enabled = true;
+/* Suppress the normal STA_START auto-connect while a settings-portal
+ * candidate is being configured in APSTA mode. */
+static bool s_station_connect_deferred;
 static volatile uint32_t s_station_retries;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static network_session_policy_t s_session_policy;
@@ -352,6 +355,56 @@ esp_err_t network_time_end_maintenance_and_request_provisioning(void)
     return ESP_OK;
 }
 
+esp_err_t network_time_end_maintenance_and_request_sync(void)
+{
+    if (!s_initialized || !s_storage_ready || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    network_time_saved_network_t network = {0};
+    const esp_err_t credentials_error =
+        network_time_get_saved_network(&network);
+    const bool configured = credentials_error == ESP_OK && network.configured;
+    memset(&network, 0, sizeof(network));
+    if (!configured) {
+        return credentials_error == ESP_OK ? ESP_ERR_INVALID_STATE
+                                           : credentials_error;
+    }
+
+    bool accepted = false;
+    portENTER_CRITICAL(&s_status_lock);
+    /* The caller has already stopped the settings HTTP server and Wi-Fi AP.
+     * Do not alter link state unless the ownership transfer succeeds. */
+    if (s_http_server == NULL &&
+        s_session_policy.owner == NETWORK_SESSION_OWNER_MAINTENANCE &&
+        !s_session_policy.task_active) {
+        accepted = network_session_policy_release_to_task(
+            &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
+        if (accepted) {
+            network_station_link_stop(&s_station_link);
+            s_station_connect_deferred = false;
+            s_status.state = NETWORK_TIME_STATE_STARTING;
+            s_status.configured = true;
+            s_status.automatic_sync_enabled = s_automatic_sync_enabled;
+            s_status.last_error = ESP_OK;
+            s_status.last_failure = NETWORK_TIME_FAILURE_NONE;
+            memset(s_status.setup_ssid, 0, sizeof(s_status.setup_ssid));
+            memset(s_status.setup_password, 0,
+                   sizeof(s_status.setup_password));
+            memset(s_status.setup_url, 0, sizeof(s_status.setup_url));
+        }
+    }
+    portEXIT_CRITICAL(&s_status_lock);
+    if (!accepted) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xEventGroupSetBits(s_events, NETWORK_EVENT_SYNC_REQUEST |
+                                    NETWORK_EVENT_MAINTENANCE_CHANGED);
+    ESP_LOGI(TAG, "network maintenance handed off to saved Wi-Fi sync");
+    return ESP_OK;
+}
+
 static bool exclusive_session_active(void)
 {
     bool active;
@@ -481,7 +534,28 @@ static esp_err_t save_credentials(const network_credentials_t *credentials)
     return error;
 }
 
-esp_err_t network_time_clear_credentials(void)
+esp_err_t network_time_get_saved_network(
+    network_time_saved_network_t *network)
+{
+    if (network == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    memset(network, 0, sizeof(*network));
+
+    network_credentials_t credentials = {0};
+    const esp_err_t error = load_credentials(&credentials);
+    if (error == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_OK;
+    }
+    if (error == ESP_OK) {
+        network->configured = true;
+        memcpy(network->ssid, credentials.ssid, sizeof(network->ssid));
+    }
+    memset(&credentials, 0, sizeof(credentials));
+    return error;
+}
+
+static esp_err_t erase_credentials(void)
 {
     if (!s_storage_ready) {
         return ESP_ERR_INVALID_STATE;
@@ -498,6 +572,12 @@ esp_err_t network_time_clear_credentials(void)
     if (handle != 0) {
         nvs_close(handle);
     }
+    return error;
+}
+
+esp_err_t network_time_clear_credentials(void)
+{
+    const esp_err_t error = erase_credentials();
     if (error == ESP_OK) {
         portENTER_CRITICAL(&s_status_lock);
         if (s_status.state == NETWORK_TIME_STATE_PROVISIONING) {
@@ -677,6 +757,7 @@ static esp_err_t stop_wifi(void)
 {
     portENTER_CRITICAL(&s_status_lock);
     network_station_link_stop(&s_station_link);
+    s_station_connect_deferred = false;
     portEXIT_CRITICAL(&s_status_lock);
     const esp_err_t error = esp_wifi_stop();
     if (error == ESP_ERR_WIFI_NOT_STARTED) {
@@ -813,10 +894,12 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
     (void)argument;
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         bool station_active;
+        bool connect_deferred;
         portENTER_CRITICAL(&s_status_lock);
         station_active = network_station_link_is_active(&s_station_link);
+        connect_deferred = s_station_connect_deferred;
         portEXIT_CRITICAL(&s_status_lock);
-        if (!station_active) {
+        if (!station_active || connect_deferred) {
             return;
         }
         const esp_err_t error = esp_wifi_connect();
@@ -936,6 +1019,7 @@ static esp_err_t start_station(const network_credentials_t *credentials,
 
     s_station_retries = 0U;
     portENTER_CRITICAL(&s_status_lock);
+    s_station_connect_deferred = false;
     network_station_link_begin(&s_station_link);
     portEXIT_CRITICAL(&s_status_lock);
     xEventGroupClearBits(s_events, NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED);
@@ -970,6 +1054,151 @@ static esp_err_t start_station(const network_credentials_t *credentials,
     }
     memset(&wifi_config, 0, sizeof(wifi_config));
     return error;
+}
+
+static esp_err_t restore_settings_access_point(void)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    network_station_link_stop(&s_station_link);
+    s_station_connect_deferred = false;
+    portEXIT_CRITICAL(&s_status_lock);
+    const esp_err_t disconnect_error = esp_wifi_disconnect();
+    xEventGroupClearBits(s_events,
+                         NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED);
+    esp_err_t error = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (error == ESP_OK) {
+        if (disconnect_error != ESP_OK &&
+            disconnect_error != ESP_ERR_WIFI_NOT_CONNECT) {
+            ESP_LOGW(TAG, "candidate STA disconnect reported: %s",
+                     esp_err_to_name(disconnect_error));
+        }
+        return ESP_OK;
+    }
+
+    /* A failed dynamic mode change must not leave a page that claims it can
+     * accept another attempt. Rebuild the already-configured settings AP. */
+    ESP_LOGW(TAG, "dynamic settings AP restore failed, rebuilding: %s",
+             esp_err_to_name(error));
+    const esp_err_t stop_error = esp_wifi_stop();
+    if (stop_error != ESP_OK && stop_error != ESP_ERR_WIFI_NOT_STARTED) {
+        return stop_error;
+    }
+    error = esp_wifi_set_mode(WIFI_MODE_AP);
+    if (error == ESP_OK) {
+        error = esp_wifi_start();
+    }
+    return error;
+}
+
+esp_err_t network_time_validate_and_save_credentials(
+    const network_credentials_t *credentials, uint32_t timeout_ms,
+    bool *portal_available)
+{
+    if (portal_available == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    *portal_available = true;
+    if (!s_initialized || !s_storage_ready || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (timeout_ms == 0U ||
+        !network_credentials_are_valid(credentials)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    network_credentials_t previous = {0};
+    const esp_err_t previous_error = load_credentials(&previous);
+    const bool previous_available = previous_error == ESP_OK;
+    if (!previous_available && previous_error != ESP_ERR_NVS_NOT_FOUND) {
+        memset(&previous, 0, sizeof(previous));
+        return previous_error;
+    }
+
+    bool accepted = false;
+    portENTER_CRITICAL(&s_status_lock);
+    if (s_session_policy.owner == NETWORK_SESSION_OWNER_MAINTENANCE &&
+        !network_station_link_is_active(&s_station_link) &&
+        s_http_server == NULL) {
+        s_station_connect_deferred = true;
+        accepted = true;
+    }
+    portEXIT_CRITICAL(&s_status_lock);
+    if (!accepted) {
+        memset(&previous, 0, sizeof(previous));
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    wifi_config_t wifi_config = {0};
+    const size_t ssid_length = strlen(credentials->ssid);
+    const size_t password_length = strlen(credentials->password);
+    memcpy(wifi_config.sta.ssid, credentials->ssid, ssid_length);
+    memcpy(wifi_config.sta.password, credentials->password, password_length);
+    wifi_config.sta.threshold.authmode =
+        password_length == 0U ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.pmf_cfg.capable = true;
+    wifi_config.sta.pmf_cfg.required = false;
+    wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+
+    xEventGroupClearBits(s_events,
+                         NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED);
+    esp_err_t error = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    if (error == ESP_OK) {
+        error = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
+    }
+    if (error == ESP_OK) {
+        s_station_retries = 0U;
+        portENTER_CRITICAL(&s_status_lock);
+        network_station_link_begin(&s_station_link);
+        portEXIT_CRITICAL(&s_status_lock);
+        error = esp_wifi_connect();
+    }
+    memset(&wifi_config, 0, sizeof(wifi_config));
+
+    if (error == ESP_OK) {
+        const EventBits_t bits = xEventGroupWaitBits(
+            s_events, NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED,
+            pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
+        if ((bits & NETWORK_EVENT_CONNECTED) == 0U) {
+            error = ESP_ERR_TIMEOUT;
+        }
+    }
+
+    if (error == ESP_OK) {
+        error = save_credentials(credentials);
+        if (error != ESP_OK) {
+            const esp_err_t rollback_error =
+                previous_available
+                    ? save_credentials(&previous)
+                    : erase_credentials();
+            if (rollback_error != ESP_OK) {
+                ESP_LOGE(TAG,
+                         "could not restore credentials after save failure: %s",
+                         esp_err_to_name(rollback_error));
+                error = rollback_error;
+            }
+        }
+    }
+    memset(&previous, 0, sizeof(previous));
+    if (error != ESP_OK) {
+        const esp_err_t restore_error = restore_settings_access_point();
+        if (restore_error != ESP_OK) {
+            *portal_available = false;
+            ESP_LOGE(TAG, "could not restore settings access point: %s",
+                     esp_err_to_name(restore_error));
+            error = restore_error;
+        }
+        ESP_LOGW(TAG,
+                 "candidate Wi-Fi was not saved (SSID length %u): %s",
+                 (unsigned)ssid_length, esp_err_to_name(error));
+        return error;
+    }
+
+    /* Keep APSTA alive just long enough for the settings server to return its
+     * success response. The portal task stops Wi-Fi before ownership is
+     * handed back to the normal network task. */
+    ESP_LOGI(TAG, "candidate Wi-Fi validated and saved (SSID length %u)",
+             (unsigned)ssid_length);
+    return ESP_OK;
 }
 
 static esp_err_t connect_and_synchronize(

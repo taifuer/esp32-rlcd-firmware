@@ -2887,6 +2887,14 @@ void app_main(void)
                         firmware_update_status.access_point_password,
                         firmware_update_status.access_url);
                 } else if (firmware_update_status.state ==
+                           FIRMWARE_UPDATE_STATE_WIFI_VALIDATING) {
+                    display_show_status("TESTING WI-FI",
+                                        "Old network remains saved");
+                } else if (firmware_update_status.state ==
+                           FIRMWARE_UPDATE_STATE_WIFI_SAVED) {
+                    display_show_status("WI-FI SAVED",
+                                        "Connecting without restart");
+                } else if (firmware_update_status.state ==
                            FIRMWARE_UPDATE_STATE_RECEIVING) {
                     char detail[64];
                     snprintf(

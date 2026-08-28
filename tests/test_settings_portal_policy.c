@@ -78,6 +78,21 @@ int main(void)
     assert(!settings_portal_confirmation_matches(
         "confirm=FORGET&yes=1", 20U, "FORGET"));
 
+    char escaped[64] = {0};
+    assert(settings_portal_json_escape("Home Wi-Fi", escaped,
+                                       sizeof(escaped)));
+    assert(strcmp(escaped, "Home Wi-Fi") == 0);
+    assert(settings_portal_json_escape("A\"B\\C", escaped,
+                                       sizeof(escaped)));
+    assert(strcmp(escaped, "A\\\"B\\\\C") == 0);
+    assert(settings_portal_json_escape("家里", escaped, sizeof(escaped)));
+    assert(strcmp(escaped, "家里") == 0);
+    assert(settings_portal_json_escape("A\nB", escaped, sizeof(escaped)));
+    assert(strcmp(escaped, "A\\u000aB") == 0);
+    assert(!settings_portal_json_escape("abcdef", escaped, 4U));
+    assert(escaped[0] == '\0');
+    assert(!settings_portal_json_escape(NULL, escaped, sizeof(escaped)));
+
     puts("settings portal policy tests passed");
     return 0;
 }

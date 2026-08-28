@@ -120,3 +120,44 @@ bool settings_portal_confirmation_matches(const char *body, size_t length,
            memcmp(body + sizeof(prefix) - 1U, expected_word,
                   word_length) == 0;
 }
+
+bool settings_portal_json_escape(const char *text, char *escaped,
+                                 size_t capacity)
+{
+    static const char hexadecimal[] = "0123456789abcdef";
+    if (text == NULL || escaped == NULL || capacity == 0U) {
+        return false;
+    }
+
+    size_t output = 0U;
+    for (size_t input = 0U; text[input] != '\0'; ++input) {
+        const unsigned char value = (unsigned char)text[input];
+        if (value == '"' || value == '\\') {
+            if (output + 2U >= capacity) {
+                escaped[0] = '\0';
+                return false;
+            }
+            escaped[output++] = '\\';
+            escaped[output++] = (char)value;
+        } else if (value < 0x20U || value == 0x7fU) {
+            if (output + 6U >= capacity) {
+                escaped[0] = '\0';
+                return false;
+            }
+            escaped[output++] = '\\';
+            escaped[output++] = 'u';
+            escaped[output++] = '0';
+            escaped[output++] = '0';
+            escaped[output++] = hexadecimal[value >> 4U];
+            escaped[output++] = hexadecimal[value & 0x0fU];
+        } else {
+            if (output + 1U >= capacity) {
+                escaped[0] = '\0';
+                return false;
+            }
+            escaped[output++] = (char)value;
+        }
+    }
+    escaped[output] = '\0';
+    return true;
+}

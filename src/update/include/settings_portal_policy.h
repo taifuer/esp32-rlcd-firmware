@@ -40,6 +40,9 @@ bool settings_portal_parse_unix_form(const char *body, size_t length,
                                      int64_t *unix_seconds);
 bool settings_portal_confirmation_matches(const char *body, size_t length,
                                           const char *expected_word);
+/* Escape a UTF-8 byte string for use between JSON quotes. */
+bool settings_portal_json_escape(const char *text, char *escaped,
+                                 size_t capacity);
 
 #ifdef __cplusplus
 }

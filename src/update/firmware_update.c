@@ -33,21 +33,26 @@
 #define UPDATE_EVENT_REPROVISION BIT4
 #define UPDATE_EVENT_MUTATION_ENDED BIT5
 #define UPDATE_EVENT_GALLERY_INSTALL BIT6
+#define UPDATE_EVENT_WIFI_CHANGED BIT7
 #define UPDATE_EVENT_SESSION                                                    \
     (UPDATE_EVENT_COMPLETE | UPDATE_EVENT_FAILED | UPDATE_EVENT_CANCEL |       \
-     UPDATE_EVENT_REPROVISION | UPDATE_EVENT_GALLERY_INSTALL)
+     UPDATE_EVENT_REPROVISION | UPDATE_EVENT_GALLERY_INSTALL |                 \
+     UPDATE_EVENT_WIFI_CHANGED)
 #define UPDATE_EVENT_ALL                                                       \
     (UPDATE_EVENT_SESSION | UPDATE_EVENT_MUTATION_ENDED)
 
 #define SETTINGS_WINDOW_MS 300000U
-#define SETTINGS_ACTIVE_REQUEST_GRACE_MS 20000U
+#define SETTINGS_ACTIVE_REQUEST_GRACE_MS 35000U
 #define UPDATE_RESTART_DELAY_MS 1800U
 #define UPDATE_SERVER_STOP_DELAY_MS 250U
+#define SETTINGS_WIFI_SUCCESS_DISPLAY_MS 1200U
 #define UPDATE_HTTP_BUFFER_SIZE 4096U
 #define SETTINGS_IMAGE_UPLOAD_BYTES \
     (MONO_IMAGE_BITMAP_BYTES + sizeof("P4\n400 300\n") - 1U)
 #define SETTINGS_PORTAL_FORM_CAPACITY (APP_SETTINGS_FORM_MAX_LENGTH + 1U)
 #define SETTINGS_PORTAL_SMALL_FORM_CAPACITY 64U
+#define SETTINGS_WIFI_FORM_CAPACITY 385U
+#define SETTINGS_WIFI_VALIDATION_TIMEOUT_MS 15000U
 #define SETTINGS_IMAGE_FORM_CAPACITY 96U
 #define SETTINGS_IMAGE_LIST_JSON_CAPACITY                                  \
     (128U + SD_IMAGE_MAX_IMAGES * (SD_IMAGE_FILENAME_CAPACITY + 3U))
@@ -68,9 +73,9 @@ static const char SETTINGS_PAGE[] =
     "h2{font-size:1.15rem;margin:0 0 .9rem}h3{font-size:1rem;margin:0 0 .65rem}p{line-height:1.55;margin:.45rem 0;color:#555}section{background:#fff;"
     "border:1px solid #e2e4e7;border-radius:.8rem;padding:1.15rem;margin:1rem 0}label{display:block;font-weight:600;"
     "margin:.9rem 0 .35rem}input,select,button{width:100%;font:inherit;border-radius:.55rem;padding:.72rem .8rem;"
-    "border:1px solid #a9adb2;background:#fff}input[type=range]{padding:.35rem 0;border:0}.days{display:grid;"
+    "border:1px solid #a9adb2;background:#fff;min-height:44px}input[type=range]{padding:.35rem 0;border:0;min-height:0}.days{display:grid;"
     "grid-template-columns:repeat(7,minmax(0,1fr));gap:.35rem}.day{display:flex;flex-direction:column;align-items:center;"
-    "gap:.35rem;margin:0;padding:.55rem .2rem;border:1px solid #d7dade;border-radius:.55rem;font-weight:500}.day input{width:auto;margin:0;padding:0;accent-color:#171717}button{margin-top:.9rem;"
+    "gap:.35rem;margin:0;padding:.55rem .2rem;border:1px solid #d7dade;border-radius:.55rem;font-weight:500}.day input{width:auto;margin:0;padding:0;min-height:0;accent-color:#171717}button{margin-top:.9rem;"
     "border-color:#171717;background:#171717;color:#fff;font-weight:650}button.secondary{background:#fff;color:#171717}"
     "button.danger{background:#fff;color:#a32626;border-color:#c96c6c}small,.note{font-size:.88rem;color:#676b70}"
     ".row{display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:center}.row output{min-width:3ch;text-align:right}"
@@ -82,13 +87,33 @@ static const char SETTINGS_PAGE[] =
     ".reserved{position:absolute;left:0;right:0;bottom:0;height:16.6667%;display:grid;place-items:center;border-top:1px dashed #8a8a8a;"
     "color:#ddd;background:rgba(0,0,0,.72);font-size:.72rem;letter-spacing:.02em;pointer-events:none}.advanced{margin-top:.9rem;"
     "border:1px solid #e2e4e7;border-radius:.55rem;padding:.7rem .8rem}.advanced summary{cursor:pointer;font-weight:600}.advanced label{font-weight:500}"
-    ".check{display:flex;align-items:center;gap:.55rem}.check input{width:auto;margin:0;padding:0;accent-color:#171717}.divider{border:0;border-top:1px solid #e5e7e9;margin:1.15rem 0}"
+    ".check{display:flex;align-items:center;gap:.55rem}.check input{width:auto;margin:0;padding:0;min-height:0;accent-color:#171717}.divider{border:0;border-top:1px solid #e5e7e9;margin:1.15rem 0}"
     ".stored-manager{margin-top:1rem}.image-meta{display:flex;align-items:baseline;justify-content:space-between;gap:.8rem;margin:.65rem 0 0}"
     ".image-meta strong{white-space:nowrap}.image-meta small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}"
     ".button-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.button-row button{margin-top:.7rem}"
+    ".wifi-summary{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;padding:.8rem .9rem;"
+    "border-radius:.55rem;background:#f2f3f4}.wifi-summary span{color:#676b70}.wifi-summary strong{min-width:0;overflow-wrap:anywhere;text-align:right}"
+    ".wifi-form{margin-top:.9rem;padding-top:.1rem}.wifi-form[hidden]{display:none}.compact{margin-top:.7rem}"
+    "@media(max-width:26rem){.button-row{grid-template-columns:1fr}.wifi-summary{align-items:flex-start;flex-direction:column;gap:.25rem}.wifi-summary strong{text-align:left}}"
     "</style></head><body><main><header><h1>设备设置</h1>"
-    "<p>设置只保存在设备中。临时热点关闭后，本页面将无法继续访问。</p></header>"
-    "<section><h2>偏好设置</h2><form id=\"settings\">"
+    "<p>普通设置保存后立即生效，无需重启。临时热点最多开放 5 分钟。</p></header>"
+    "<section><h2>Wi-Fi</h2><div class=\"wifi-summary\"><span id=\"wifiLabel\">已保存网络</span>"
+    "<strong id=\"wifiName\">正在读取…</strong></div>"
+    "<p id=\"wifiStatus\" class=\"note\">设置期间设备通过临时热点提供本页面。</p>"
+    "<button id=\"wifiEdit\" type=\"button\" class=\"secondary\">更换 Wi-Fi</button>"
+    "<form id=\"wifiForm\" class=\"wifi-form\" autocomplete=\"off\" hidden>"
+    "<label for=\"wifiSsid\">Wi-Fi 名称</label><input id=\"wifiSsid\" maxlength=\"32\" required>"
+    "<label for=\"wifiPassword\">Wi-Fi 密码</label><input id=\"wifiPassword\" type=\"password\" maxlength=\"63\" autocomplete=\"new-password\">"
+    "<label class=\"check compact\"><input id=\"showWifiPassword\" type=\"checkbox\">显示密码</label>"
+    "<label class=\"check compact\"><input id=\"openWifi\" type=\"checkbox\">这是开放网络</label>"
+    "<p class=\"note\">仅支持 2.4 GHz。密码不会显示或预填；受保护网络请重新输入 8—63 位英文字符、数字或符号。</p>"
+    "<div class=\"button-row\"><button id=\"wifiSave\" type=\"submit\">连接并保存</button>"
+    "<button id=\"wifiCancel\" type=\"button\" class=\"secondary\">取消</button></div></form>"
+    "<p id=\"wifiMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
+    "<details class=\"advanced\"><summary>移除已保存的 Wi-Fi</summary>"
+    "<p class=\"note\">移除后将关闭设置热点并进入首次配网；时间、偏好和图片不会被删除，设备不会重启。</p>"
+    "<button id=\"forgetWifi\" type=\"button\" class=\"danger\">移除 Wi-Fi</button></details></section>"
+    "<section><h2>常用设置</h2><form id=\"settings\">"
     "<label for=\"timezone\">时区</label><select id=\"timezone\" name=\"timezone\"></select>"
     "<label for=\"unit\">温度单位</label><select id=\"unit\" name=\"unit\">"
     "<option value=\"c\">摄氏度（°C）</option><option value=\"f\">华氏度（°F）</option></select>"
@@ -111,14 +136,17 @@ static const char SETTINGS_PAGE[] =
     "<label class=\"day\"><input class=\"alarm-day\" type=\"checkbox\" data-bit=\"32\" checked>五</label>"
     "<label class=\"day\"><input class=\"alarm-day\" type=\"checkbox\" data-bit=\"64\">六</label></div>"
     "<p class=\"note\">设备开机时按本地 RTC 时间响铃，无需网络；关闭后仍会保留时间和重复日期。</p>"
+    "<details class=\"advanced\"><summary>高级设置</summary>"
     "<label for=\"updates\">Beta 更新</label><select id=\"updates\" name=\"updates\">"
     "<option value=\"stable\">关闭（默认）</option><option value=\"beta\">开启（开发者）</option></select>"
     "<p class=\"note\">测试固件可能不稳定，仅适合能使用本地 OTA 或 USB 恢复的开发者；安装仍需在设备上确认。关闭后不会自动降级。</p>"
+    "<button id=\"defaults\" type=\"button\" class=\"secondary\">恢复偏好默认值</button>"
+    "<p id=\"maintenanceMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details>"
     "<button type=\"submit\">保存设置</button></form>"
-    "<p id=\"settingsMessage\" class=\"message\"></p></section>"
+    "<p id=\"settingsMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
     "<section><h2>日期与时间</h2><p>无需互联网，使用当前手机时间校准设备 RTC。</p>"
     "<button id=\"setTime\" type=\"button\" class=\"secondary\">使用手机时间校准</button>"
-    "<p id=\"timeMessage\" class=\"message\"></p></section>"
+    "<p id=\"timeMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
     "<section><h2>microSD 图片</h2><p id=\"sdState\" class=\"sd-state\" data-state=\"loading\" aria-live=\"polite\">正在检测 microSD…</p>"
     "<div id=\"storedManager\" class=\"stored-manager\" hidden><div class=\"canvas-shell\">"
     "<canvas id=\"storedCanvas\" width=\"400\" height=\"300\" aria-label=\"microSD 当前图片预览\"></canvas>"
@@ -145,22 +173,28 @@ static const char SETTINGS_PAGE[] =
     "<button id=\"starterImages\" type=\"button\" class=\"secondary\" disabled>安装演示图集</button>"
     "<p id=\"starterMessage\" class=\"message\"></p>"
     "<small>若当前页面无法选择图片，请在手机系统浏览器中打开 192.168.4.1。</small></section>"
-    "<section><h2>维护</h2><button id=\"defaults\" type=\"button\" class=\"secondary\">恢复偏好默认值</button>"
-    "<button id=\"forgetWifi\" type=\"button\" class=\"danger\">清除 Wi-Fi 配置</button>"
-    "<p class=\"note\">清除后设备会关闭设置热点并进入配网；其他偏好不会被删除。</p>"
-    "<p id=\"maintenanceMessage\" class=\"message\"></p></section>"
     "<section><h2>本地固件升级</h2><p>请选择本项目发布的 <strong>OTA 固件</strong>。升级不会清除设置。</p>"
     "<input id=\"file\" type=\"file\" accept=\".bin,application/octet-stream\">"
     "<button id=\"upload\" type=\"button\">开始升级</button>"
     "<progress id=\"progress\" max=\"100\" value=\"0\"></progress>"
     "<p id=\"updateMessage\" class=\"message\">等待选择固件</p>"
     "<small>写入期间请保持设备供电。校验成功后设备会自动重启。</small></section>"
-    "<script>let token='',initialUpdates='stable',sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
+    "<script>let token='',initialUpdates='stable',wifiConfigured=false,savedWifi='',wifiBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
     "storedImages=[],storedIndex=0,storedSelected='',storedBusy=false,storedRequest=0;"
     "const $=id=>document.getElementById(id);const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
     "const SOURCE_MAX_BYTES=32*1024*1024,SOURCE_MAX_PIXELS=40000000;"
     "const show=(id,text)=>{$(id).textContent=text};const alarmDays=()=>document.querySelectorAll('.alarm-day');"
     "const unix=()=>String(Math.floor(Date.now()/1000));"
+    "function wifiControls(){const open=$('openWifi').checked;$('wifiForm').setAttribute('aria-busy',wifiBusy?'true':'false');"
+    "$('wifiEdit').disabled=wifiBusy;$('wifiSsid').disabled=wifiBusy;$('wifiPassword').disabled=wifiBusy||open;"
+    "$('showWifiPassword').disabled=wifiBusy||open;$('openWifi').disabled=wifiBusy;$('wifiSave').disabled=wifiBusy;"
+    "$('wifiCancel').disabled=wifiBusy;$('forgetWifi').disabled=wifiBusy||!wifiConfigured}"
+    "function setWifiState(configured,ssid){wifiConfigured=configured===true;savedWifi=wifiConfigured&&typeof ssid==='string'?ssid:'';"
+    "$('wifiLabel').textContent=wifiConfigured?'已保存网络':'网络状态';$('wifiName').textContent=wifiConfigured?savedWifi:'尚未配置';"
+    "$('wifiStatus').textContent=wifiConfigured?'设置期间家庭 Wi-Fi 暂停；退出设置后设备会按需连接。':'尚未保存家庭 Wi-Fi，可直接在这里完成配置。';"
+    "$('wifiEdit').textContent=wifiConfigured?'更换 Wi-Fi':'配置 Wi-Fi';if($('wifiForm').hidden)$('wifiSsid').value=savedWifi;wifiControls()}"
+    "function wifiEditing(value){$('wifiForm').hidden=!value;if(value){$('wifiSsid').value=savedWifi;$('wifiPassword').value='';"
+    "$('openWifi').checked=false;$('showWifiPassword').checked=false;$('wifiPassword').type='password';$('wifiSsid').focus()}wifiControls()}"
     "function storedControls(){const available=storedImages.length>0&&!imageBusy&&!storedBusy;"
     "$('storedPrevious').disabled=!available||storedImages.length<2;$('storedNext').disabled=!available||storedImages.length<2;"
     "$('storedSelect').disabled=!available||storedImages[storedIndex]===storedSelected;$('storedDelete').disabled=!available}"
@@ -237,7 +271,7 @@ static const char SETTINGS_PAGE[] =
     "'X-RLCD-Token':token};const response=await fetch(path,{method:'POST',"
     "headers,body});const text=await response.text();if(!response.ok)throw new Error(text||'操作失败');return text;}"
     "async function load(preferred){const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw new Error('无法读取设备设置');"
-    "const state=await response.json();token=state.token;$('timezone').value=state.timezone;"
+    "const state=await response.json();token=state.token;setWifiState(state.wifi_configured,state.wifi_ssid);$('timezone').value=state.timezone;"
     "$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume;$('updates').value=state.updates;"
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
     "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});initialUpdates=state.updates;"
@@ -252,12 +286,20 @@ static const char SETTINGS_PAGE[] =
     "const message=await post('/api/settings',body);await load();show('settingsMessage',message)}catch(error){show('settingsMessage',error.message)}};"
     "$('setTime').onclick=async()=>{show('timeMessage','正在校准…');try{show('timeMessage',await post('/api/time','unix='+unix()))}"
     "catch(error){show('timeMessage',error.message)}};"
+    "$('wifiEdit').onclick=()=>wifiEditing(true);$('wifiCancel').onclick=()=>{wifiEditing(false);show('wifiMessage','')};"
+    "$('showWifiPassword').onchange=()=>{$('wifiPassword').type=$('showWifiPassword').checked?'text':'password'};"
+    "$('openWifi').onchange=()=>{if($('openWifi').checked){$('wifiPassword').value='';$('showWifiPassword').checked=false;$('wifiPassword').type='password'}wifiControls()};"
+    "$('wifiForm').onsubmit=async event=>{event.preventDefault();if(wifiBusy)return;const ssid=$('wifiSsid').value,password=$('wifiPassword').value,open=$('openWifi').checked;"
+    "if(!ssid||new TextEncoder().encode(ssid).length>32){show('wifiMessage','Wi-Fi 名称应为 1—32 字节。');return}"
+    "if(!open&&!/^[\\x20-\\x7e]{8,63}$/.test(password)){show('wifiMessage','请输入 8—63 位英文字符、数字或符号，开放网络请勾选对应选项。');return}"
+    "wifiBusy=true;wifiControls();show('wifiMessage','正在验证新网络，设置热点可能短暂重新连接…');try{const body='ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(open?'':password);"
+    "show('wifiMessage',await post('/api/wifi/change',body))}catch(error){show('wifiMessage',error.name==='TypeError'?'设置热点刚刚断开。请查看设备是否已连接新网络；若热点仍在，可刷新页面确认原配置仍保留。':error.message);wifiBusy=false;wifiControls()}};"
     "$('defaults').onclick=async()=>{if(!confirm('恢复偏好默认值？Wi-Fi 配置不会被删除。'))return;"
     "show('maintenanceMessage','正在恢复…');try{const message=await post('/api/settings/defaults','confirm=DEFAULTS');await load();show('maintenanceMessage',message)}"
     "catch(error){show('maintenanceMessage',error.message)}};"
-    "$('forgetWifi').onclick=async()=>{if(!confirm('清除 Wi-Fi 配置？设置热点随后会关闭，并进入配网。'))return;"
-    "show('maintenanceMessage','正在清除…');try{show('maintenanceMessage',await post('/api/wifi/clear','confirm=FORGET'))}"
-    "catch(error){show('maintenanceMessage',error.message)}};"
+    "$('forgetWifi').onclick=async()=>{if(!confirm('移除已保存的 Wi-Fi？设置热点随后会关闭并进入首次配网。'))return;"
+    "wifiBusy=true;wifiControls();show('wifiMessage','正在移除…');try{show('wifiMessage',await post('/api/wifi/clear','confirm=FORGET'))}"
+    "catch(error){wifiBusy=false;wifiControls();show('wifiMessage',error.message)}};"
     "$('storedPrevious').onclick=()=>browseStored(-1);$('storedNext').onclick=()=>browseStored(1);"
     "$('storedSelect').onclick=async()=>{const name=storedImages[storedIndex];if(!name||imageBusy||storedBusy)return;imageBusyState(true);"
     "show('storedMessage','正在设置…');try{const message=await post('/api/images/select','name='+encodeURIComponent(name));"
@@ -933,16 +975,30 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
     portEXIT_CRITICAL(&s_status_lock);
     sd_image_status_t sd_status = {0};
     sd_image_store_get_status(&sd_status);
-    char json[512];
+    network_time_saved_network_t saved_network = {0};
+    const esp_err_t network_error =
+        network_time_get_saved_network(&saved_network);
+    char escaped_ssid[NETWORK_SSID_MAX_LENGTH * 6U + 1U] = {0};
+    if (network_error != ESP_OK ||
+        !settings_portal_json_escape(saved_network.ssid, escaped_ssid,
+                                     sizeof(escaped_ssid))) {
+        memset(&saved_network, 0, sizeof(saved_network));
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8",
+                         "已保存的 Wi-Fi 状态暂不可用。\n");
+    }
+    char json[768];
     const int written = snprintf(
         json, sizeof(json),
-        "{\"timezone\":%d,\"unit\":\"%s\","
+        "{\"wifi_configured\":%s,\"wifi_ssid\":\"%s\","
+        "\"timezone\":%d,\"unit\":\"%s\","
         "\"volume\":%u,\"updates\":\"%s\","
         "\"alarm\":\"%s\","
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
         "\"sd_state\":\"%s\",\"image_count\":%u,"
         "\"token\":\"%s\"}",
-        settings.utc_offset_minutes,
+        saved_network.configured ? "true" : "false",
+        escaped_ssid, settings.utc_offset_minutes,
         settings.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT ? "f"
                                                                      : "c",
         settings.audio_playback_volume,
@@ -956,6 +1012,8 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         (unsigned int)sd_status.image_count,
         token);
     memset(token, 0, sizeof(token));
+    memset(escaped_ssid, 0, sizeof(escaped_ssid));
+    memset(&saved_network, 0, sizeof(saved_network));
     if (written <= 0 || (size_t)written >= sizeof(json)) {
         return send_page(request, "500 Internal Server Error",
                          "text/plain; charset=utf-8",
@@ -1072,6 +1130,33 @@ static esp_err_t finish_reprovisioning_request(httpd_req_t *request,
     s_session_closing = true;
     portEXIT_CRITICAL(&s_status_lock);
     xEventGroupSetBits(s_events, UPDATE_EVENT_REPROVISION);
+    return response_error;
+}
+
+static esp_err_t finish_wifi_change_request(httpd_req_t *request,
+                                            const char *message)
+{
+    const esp_err_t response_error = send_page(
+        request, "200 OK", "text/plain; charset=utf-8", message);
+    portENTER_CRITICAL(&s_status_lock);
+    s_mutation_active = false;
+    s_session_closing = true;
+    portEXIT_CRITICAL(&s_status_lock);
+    xEventGroupSetBits(s_events, UPDATE_EVENT_WIFI_CHANGED);
+    return response_error;
+}
+
+static esp_err_t finish_broken_portal_request(httpd_req_t *request,
+                                              const char *message)
+{
+    const esp_err_t response_error = send_page(
+        request, "503 Service Unavailable", "text/plain; charset=utf-8",
+        message);
+    portENTER_CRITICAL(&s_status_lock);
+    s_mutation_active = false;
+    s_session_closing = true;
+    portEXIT_CRITICAL(&s_status_lock);
+    xEventGroupSetBits(s_events, UPDATE_EVENT_CANCEL);
     return response_error;
 }
 
@@ -1251,6 +1336,68 @@ static esp_err_t wifi_clear_post_handler(httpd_req_t *request)
     return finish_reprovisioning_request(
         request,
         "Wi-Fi 配置已清除，设置热点将关闭并切换到配网；设备不会重启。\n");
+}
+
+static esp_err_t wifi_change_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    char body[SETTINGS_WIFI_FORM_CAPACITY] = {0};
+    size_t length = 0U;
+    network_credentials_t credentials = {0};
+    const esp_err_t receive_error = receive_form(
+        request, body, sizeof(body), &length);
+    const network_credentials_result_t parse_result =
+        receive_error == ESP_OK
+            ? network_credentials_parse_form(body, length, &credentials)
+            : NETWORK_CREDENTIALS_INVALID_FORM;
+    memset(body, 0, sizeof(body));
+    if (receive_error == ESP_ERR_TIMEOUT) {
+        memset(&credentials, 0, sizeof(credentials));
+        return send_deadline_response(request);
+    }
+    if (receive_error != ESP_OK || parse_result != NETWORK_CREDENTIALS_OK) {
+        ESP_LOGW(TAG, "rejected settings Wi-Fi form: %s",
+                 network_credentials_result_name(parse_result));
+        memset(&credentials, 0, sizeof(credentials));
+        return send_page(
+            request, "400 Bad Request", "text/plain; charset=utf-8",
+            "Wi-Fi 名称或密码无效。受保护网络需要 8—63 个 ASCII 字符，开放网络请明确勾选。\n");
+    }
+    if (!begin_regular_mutation()) {
+        memset(&credentials, 0, sizeof(credentials));
+        return send_mutation_unavailable(request);
+    }
+
+    set_state(FIRMWARE_UPDATE_STATE_WIFI_VALIDATING, ESP_OK);
+    bool portal_available = true;
+    const esp_err_t error = network_time_validate_and_save_credentials(
+        &credentials, SETTINGS_WIFI_VALIDATION_TIMEOUT_MS,
+        &portal_available);
+    memset(&credentials, 0, sizeof(credentials));
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "settings Wi-Fi validation failed: %s",
+                 esp_err_to_name(error));
+        if (!portal_available) {
+            return finish_broken_portal_request(
+                request,
+                "无线服务未能恢复设置热点，本次设置会话将关闭。候选网络未启用，请重新打开设置后确认。\n");
+        }
+        set_state(FIRMWARE_UPDATE_STATE_READY, ESP_OK);
+        if (error != ESP_ERR_TIMEOUT) {
+            return finish_regular_request(
+                request, "503 Service Unavailable",
+                "候选网络未启用。设备存储或无线服务暂不可用，请刷新确认后重试。\n");
+        }
+        return finish_regular_request(
+            request, "422 Unprocessable Content",
+            "无法连接新网络，原 Wi-Fi 配置未更改。请检查名称、密码和 2.4 GHz 支持后重试。\n");
+    }
+    set_state(FIRMWARE_UPDATE_STATE_WIFI_SAVED, ESP_OK);
+    return finish_wifi_change_request(
+        request,
+        "新 Wi-Fi 已验证并保存。设置热点将关闭，设备随后会连接并校时；不会重启。\n");
 }
 
 static esp_err_t image_select_post_handler(httpd_req_t *request)
@@ -1723,6 +1870,11 @@ static esp_err_t start_web_server(void)
         .method = HTTP_POST,
         .handler = wifi_clear_post_handler,
     };
+    const httpd_uri_t wifi_change_uri = {
+        .uri = "/api/wifi/change",
+        .method = HTTP_POST,
+        .handler = wifi_change_post_handler,
+    };
     const httpd_uri_t image_list_uri = {
         .uri = "/api/images",
         .method = HTTP_GET,
@@ -1773,6 +1925,9 @@ static esp_err_t start_web_server(void)
     }
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &wifi_clear_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server, &wifi_change_uri);
     }
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server,
@@ -1988,7 +2143,8 @@ static EventBits_t finish_active_request_after_timeout(void)
     } else if (action == SETTINGS_PORTAL_TIMEOUT_WAIT_FOR_MUTATION) {
         wait_for = UPDATE_EVENT_MUTATION_ENDED |
                    UPDATE_EVENT_REPROVISION |
-                   UPDATE_EVENT_GALLERY_INSTALL;
+                   UPDATE_EVENT_GALLERY_INSTALL |
+                   UPDATE_EVENT_WIFI_CHANGED;
     }
     if (wait_for == 0U) {
         return 0U;
@@ -2055,6 +2211,23 @@ static void update_task(void *argument)
             network_time_end_maintenance();
             ESP_LOGW(TAG, "could not enter provisioning mode: %s",
                      esp_err_to_name(reprovision_error));
+        }
+        vTaskDelete(NULL);
+        return;
+    }
+    if ((bits & UPDATE_EVENT_WIFI_CHANGED) != 0U) {
+        vTaskDelay(pdMS_TO_TICKS(SETTINGS_WIFI_SUCCESS_DISPLAY_MS));
+        stop_web_server();
+        const esp_err_t stop_error = stop_update_ap();
+        set_state(FIRMWARE_UPDATE_STATE_IDLE, ESP_OK);
+        esp_err_t sync_error = stop_error;
+        if (sync_error == ESP_OK) {
+            sync_error = network_time_end_maintenance_and_request_sync();
+        }
+        if (sync_error != ESP_OK) {
+            network_time_end_maintenance();
+            ESP_LOGW(TAG, "could not reconnect saved Wi-Fi after change: %s",
+                     esp_err_to_name(sync_error));
         }
         vTaskDelete(NULL);
         return;

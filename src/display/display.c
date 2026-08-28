@@ -597,7 +597,7 @@ void display_show_settings_portal_ready(const char *ssid,
     snprintf(line, sizeof(line), "PASS: %s",
              password != NULL ? password : "-");
     draw_setup_line(qr_rendered ? 258 : 158, line);
-    snprintf(line, sizeof(line), "OPEN: %s | BOOT: CANCEL",
+    snprintf(line, sizeof(line), "OPEN: %s | BOOT: CLOSE",
              url != NULL ? url : "192.168.4.1");
     draw_setup_line(qr_rendered ? 280 : 197, line);
 

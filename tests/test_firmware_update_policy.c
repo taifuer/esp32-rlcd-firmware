@@ -13,6 +13,10 @@ int main(void)
     assert(firmware_update_state_is_session_active(
         FIRMWARE_UPDATE_STATE_READY));
     assert(firmware_update_state_is_session_active(
+        FIRMWARE_UPDATE_STATE_WIFI_VALIDATING));
+    assert(firmware_update_state_is_session_active(
+        FIRMWARE_UPDATE_STATE_WIFI_SAVED));
+    assert(firmware_update_state_is_session_active(
         FIRMWARE_UPDATE_STATE_RECEIVING));
     assert(firmware_update_state_is_session_active(
         FIRMWARE_UPDATE_STATE_VERIFYING));

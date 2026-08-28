@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
   <title id="title">ESP32 RLCD Firmware settings portal</title>
-  <desc id="description">A white-on-black settings portal screen with a working Wi-Fi QR code, temporary access point credentials, local address and cancel action.</desc>
+  <desc id="description">A white-on-black settings portal screen with a working Wi-Fi QR code, temporary access point credentials, local address and close action.</desc>
   <rect width="400" height="300" rx="3" fill="#090b0a"/>
   <rect x="3" y="3" width="394" height="294" fill="none" stroke="#eef3e8"/>
   <g fill="#eef3e8" stroke="#eef3e8">
@@ -13,7 +13,7 @@
     <g stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">
       <text x="200" y="238">SSID: ESP32-RLCD-SETTINGS-A1B2C3</text>
       <text x="200" y="258">PASS: 7K9M2P4R</text>
-      <text x="200" y="280">OPEN: 192.168.4.1 | BOOT: CANCEL</text>
+      <text x="200" y="280">OPEN: 192.168.4.1 | BOOT: CLOSE</text>
     </g>
   </g>
 </svg>
