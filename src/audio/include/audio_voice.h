@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "voice_reliability_metrics.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -48,10 +49,18 @@ typedef struct {
     esp_err_t last_error;
 } audio_voice_status_t;
 
+typedef struct {
+    audio_voice_status_t status;
+    voice_reliability_summary_t reliability;
+} audio_voice_snapshot_t;
+
 void audio_voice_get_status(audio_voice_status_t *status);
+void audio_voice_get_snapshot(audio_voice_snapshot_t *snapshot);
+esp_err_t audio_voice_reset_reliability(void);
 esp_err_t audio_voice_start(uint32_t generation);
 esp_err_t audio_voice_request_stop(void);
 esp_err_t audio_voice_cancel(void);
+const char *audio_voice_state_name(audio_voice_state_t state);
 const char *audio_voice_result_name(audio_voice_result_t result);
 
 #ifdef __cplusplus

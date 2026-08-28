@@ -203,6 +203,8 @@ GET_TIME
 SET_TIME YYYY-MM-DD HH:MM:SS
 GET_NETWORK
 GET_AUDIO
+GET_VOICE
+RESET_VOICE_DIAG
 GET_SETTINGS
 RESET_WIFI
 ```
@@ -211,6 +213,12 @@ RESET_WIFI
   最近错误，不输出家庭 Wi-Fi 名称或密码；
 - `GET_AUDIO` 返回 codec 就绪、测试阶段、录制时长、回放来源和两路强度百分比，不输出
   原始音频；
+- `GET_VOICE` 以同一快照返回当前语音状态、本次启动以来的 audio worker 会话结果计数、
+  送入识别器的采集时长与 worker 耗时上限、内部
+  RAM、PSRAM、最大连续块、任务栈余量和 CPU 性能锁结果；这些字段都是不可还原音频的
+  标量诊断信息；
+- `RESET_VOICE_DIAG` 只在没有语音会话运行时清空上述易失计数，不修改模型、设置、NVS
+  或页面；
 - `GET_SETTINGS` 返回是否请求手动提前省电、UTC 偏移、温度单位、播放音量、更新通道和闹钟规则，
   不修改设置；实际状态可在设备“设置”页查看；
 - `RESET_WIFI` 是开发和恢复入口，只清除本项目的网络凭据命名空间，然后唤醒网络任务

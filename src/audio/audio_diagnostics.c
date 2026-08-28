@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "audio_level.h"
+#include "audio_mono.h"
 #include "voice_command_policy.h"
 #include "voice_model_manifest.h"
 #include "board_pins.h"
@@ -121,6 +122,7 @@ typedef struct {
     bool alert_stop_requested;
     audio_diagnostics_status_t status;
     audio_voice_status_t voice_status;
+    voice_reliability_summary_t voice_reliability;
     esp_pm_lock_handle_t voice_cpu_lock;
 } audio_diagnostics_context_t;
 
@@ -133,6 +135,60 @@ static const esp_partition_t *s_voice_model_partition;
 static void secure_wipe(void *buffer, size_t size);
 static void release_audio_workspace(void *workspace,
                                     size_t workspace_bytes);
+
+static uint32_t size_to_u32(size_t value)
+{
+    return value > UINT32_MAX ? UINT32_MAX : (uint32_t)value;
+}
+
+static voice_reliability_resources_t capture_voice_resources(void)
+{
+    const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    const uint32_t psram_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    const voice_reliability_resources_t resources = {
+        .internal_free_bytes = size_to_u32(
+            heap_caps_get_free_size(internal_caps)),
+        .internal_largest_block_bytes = size_to_u32(
+            heap_caps_get_largest_free_block(internal_caps)),
+        .psram_free_bytes = size_to_u32(
+            heap_caps_get_free_size(psram_caps)),
+        .psram_largest_block_bytes = size_to_u32(
+            heap_caps_get_largest_free_block(psram_caps)),
+        .worker_stack_hwm_bytes = size_to_u32(
+            uxTaskGetStackHighWaterMark2(NULL)),
+    };
+    return resources;
+}
+
+static voice_reliability_outcome_t voice_reliability_outcome(
+    audio_voice_result_t result)
+{
+    switch (result) {
+    case AUDIO_VOICE_RESULT_MATCHED:
+        return VOICE_RELIABILITY_OUTCOME_MATCHED;
+    case AUDIO_VOICE_RESULT_NO_VOICE:
+        return VOICE_RELIABILITY_OUTCOME_NO_VOICE;
+    case AUDIO_VOICE_RESULT_NOT_UNDERSTOOD:
+        return VOICE_RELIABILITY_OUTCOME_NOT_UNDERSTOOD;
+    case AUDIO_VOICE_RESULT_CANCELLED:
+        return VOICE_RELIABILITY_OUTCOME_CANCELLED;
+    case AUDIO_VOICE_RESULT_FAILED:
+    case AUDIO_VOICE_RESULT_NONE:
+    default:
+        return VOICE_RELIABILITY_OUTCOME_FAILED;
+    }
+}
+
+static uint16_t confidence_permille(float confidence)
+{
+    if (confidence <= 0.0F) {
+        return 0U;
+    }
+    if (confidence >= 1.0F) {
+        return 1000U;
+    }
+    return (uint16_t)(confidence * 1000.0F + 0.5F);
+}
 
 static esp_err_t codec_error(int error)
 {
@@ -1421,73 +1477,55 @@ static void run_audio_alert(void)
     finish_alert(error != ESP_OK ? error : close_error);
 }
 
-static void finish_voice_cancelled(void)
+static bool commit_voice_session(
+    const voice_reliability_sample_t *sample, bool cancelled,
+    esp_err_t error, audio_voice_result_t result,
+    bool speech_detected, int command_id, float confidence,
+    uint32_t elapsed_ms, audio_voice_snapshot_t *snapshot)
 {
     lock_context();
+    const bool accepted = voice_reliability_summary_record(
+        &s_audio.voice_reliability, sample);
     s_audio.voice_status.running = false;
-    s_audio.voice_status.speech_detected = false;
-    s_audio.voice_status.command_id = VOICE_COMMAND_ID_NONE;
-    s_audio.voice_status.confidence = 0.0F;
-    s_audio.voice_status.state = AUDIO_VOICE_STATE_CANCELLED;
-    s_audio.voice_status.result = AUDIO_VOICE_RESULT_CANCELLED;
-    s_audio.voice_status.last_error = ESP_OK;
-    s_audio.stop_requested = false;
-    s_audio.cancel_requested = false;
-    s_audio.alert_cancelled_session = false;
-    bump_voice_revision_locked();
-    unlock_context();
-    ESP_LOGI(TAG,
-             "voice session cancelled; temporary audio buffer cleared");
-}
-
-static void finish_voice_failed(esp_err_t error)
-{
-    lock_context();
-    s_audio.voice_status.running = false;
-    s_audio.voice_status.speech_detected = false;
-    s_audio.voice_status.command_id = VOICE_COMMAND_ID_NONE;
-    s_audio.voice_status.confidence = 0.0F;
-    s_audio.voice_status.state = AUDIO_VOICE_STATE_FAILED;
-    s_audio.voice_status.result = AUDIO_VOICE_RESULT_FAILED;
-    s_audio.voice_status.last_error = error != ESP_OK ? error : ESP_FAIL;
-    s_audio.stop_requested = false;
-    s_audio.cancel_requested = false;
-    s_audio.alert_cancelled_session = false;
-    bump_voice_revision_locked();
-    unlock_context();
-    ESP_LOGW(TAG, "voice session failed: %s",
-             esp_err_to_name(error != ESP_OK ? error : ESP_FAIL));
-}
-
-static void finish_voice_completed(audio_voice_result_t result,
-                                   bool speech_detected, int command_id,
-                                   float confidence, uint32_t elapsed_ms)
-{
-    lock_context();
-    s_audio.voice_status.running = false;
-    s_audio.voice_status.speech_detected = speech_detected;
-    s_audio.voice_status.command_id = command_id;
-    s_audio.voice_status.confidence = confidence;
     s_audio.voice_status.elapsed_ms = elapsed_ms;
-    s_audio.voice_status.state = AUDIO_VOICE_STATE_COMPLETED;
-    s_audio.voice_status.result = result;
-    s_audio.voice_status.last_error = ESP_OK;
+    if (cancelled) {
+        s_audio.voice_status.speech_detected = false;
+        s_audio.voice_status.command_id = VOICE_COMMAND_ID_NONE;
+        s_audio.voice_status.confidence = 0.0F;
+        s_audio.voice_status.state = AUDIO_VOICE_STATE_CANCELLED;
+        s_audio.voice_status.result = AUDIO_VOICE_RESULT_CANCELLED;
+        s_audio.voice_status.last_error = ESP_OK;
+    } else if (error != ESP_OK) {
+        s_audio.voice_status.speech_detected = false;
+        s_audio.voice_status.command_id = VOICE_COMMAND_ID_NONE;
+        s_audio.voice_status.confidence = 0.0F;
+        s_audio.voice_status.state = AUDIO_VOICE_STATE_FAILED;
+        s_audio.voice_status.result = AUDIO_VOICE_RESULT_FAILED;
+        s_audio.voice_status.last_error = error;
+    } else {
+        s_audio.voice_status.speech_detected = speech_detected;
+        s_audio.voice_status.command_id = command_id;
+        s_audio.voice_status.confidence = confidence;
+        s_audio.voice_status.state = AUDIO_VOICE_STATE_COMPLETED;
+        s_audio.voice_status.result = result;
+        s_audio.voice_status.last_error = ESP_OK;
+    }
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
     s_audio.alert_cancelled_session = false;
     bump_voice_revision_locked();
-    const uint32_t generation = s_audio.voice_status.generation;
+    if (snapshot != NULL) {
+        snapshot->status = s_audio.voice_status;
+        snapshot->reliability = s_audio.voice_reliability;
+    }
     unlock_context();
-
-    ESP_LOGI(TAG,
-             "voice session: generation=%u result=%s command=%d confidence=%.3f duration=%ums",
-             (unsigned)generation, audio_voice_result_name(result),
-             command_id, (double)confidence, (unsigned)elapsed_ms);
+    return accepted;
 }
 
 static void run_voice_session(void)
 {
     bool cpu_locked = false;
+    bool cpu_lock_released = false;
     bool microphone_open = false;
     bool cancelled = false;
     int16_t *workspace = NULL;
@@ -1500,6 +1538,16 @@ static void run_voice_session(void)
     audio_level_result_t levels = {0};
     audio_level_accumulator_t accumulator;
     audio_level_init(&accumulator);
+    uint32_t generation = 0U;
+    lock_context();
+    generation = s_audio.voice_status.generation;
+    unlock_context();
+    const TickType_t wall_started = xTaskGetTickCount();
+    voice_reliability_resources_t observed =
+        capture_voice_resources();
+    voice_reliability_sample_t reliability;
+    voice_reliability_sample_init(
+        &reliability, generation, &observed);
 
     if (s_audio.voice_cpu_lock == NULL) {
         error = ESP_ERR_INVALID_STATE;
@@ -1510,6 +1558,7 @@ static void run_voice_session(void)
         goto cleanup;
     }
     cpu_locked = true;
+    reliability.cpu_lock_acquired = true;
 
     const audio_control_t initial_control = take_control();
     if (initial_control == AUDIO_CONTROL_CANCEL) {
@@ -1560,6 +1609,8 @@ static void run_voice_session(void)
     }
     int16_t *capture_buffer = workspace;
     int16_t *mono_buffer = workspace + capture_samples;
+    observed = capture_voice_resources();
+    voice_reliability_sample_observe(&reliability, &observed);
 
     error = open_microphones_at_rate(AUDIO_VOICE_SAMPLE_RATE_HZ);
     if (error != ESP_OK) {
@@ -1617,11 +1668,12 @@ static void run_voice_session(void)
             error = ESP_ERR_INVALID_STATE;
             break;
         }
-        for (int frame = 0; frame < chunk_frames; ++frame) {
-            mono_buffer[frame] =
-                capture_buffer[
-                    (size_t)frame * AUDIO_CAPTURE_CHANNEL_COUNT +
-                    AUDIO_CAPTURE_MICROPHONE_1_SLOT];
+        if (!audio_tdm_extract_mono16(
+                capture_buffer, (size_t)chunk_frames,
+                AUDIO_CAPTURE_CHANNEL_COUNT,
+                AUDIO_CAPTURE_MICROPHONE_1_SLOT, mono_buffer)) {
+            error = ESP_ERR_INVALID_STATE;
+            break;
         }
 
         const esp_mn_state_t detection = s_voice_multinet->detect(
@@ -1631,6 +1683,9 @@ static void run_voice_session(void)
                      AUDIO_VOICE_SAMPLE_RATE_HZ;
         if (elapsed_ms >= next_status_ms) {
             update_voice_elapsed(elapsed_ms);
+            observed = capture_voice_resources();
+            voice_reliability_sample_observe(
+                &reliability, &observed);
             next_status_ms += 500U;
         }
         if (detection == ESP_MN_STATE_DETECTED) {
@@ -1676,21 +1731,56 @@ cleanup:
     if (cpu_locked) {
         const esp_err_t unlock_error =
             esp_pm_lock_release(s_audio.voice_cpu_lock);
+        cpu_lock_released = unlock_error == ESP_OK;
         if (error == ESP_OK && unlock_error != ESP_OK) {
             error = unlock_error;
         }
     }
 
+    observed = capture_voice_resources();
+    voice_reliability_sample_observe(&reliability, &observed);
+    reliability.end = observed;
+    reliability.capture_ms = elapsed_ms;
+    reliability.wall_ms = (uint32_t)(
+        (xTaskGetTickCount() - wall_started) * portTICK_PERIOD_MS);
+    reliability.command_id = command_id;
+    reliability.confidence_permille = confidence_permille(confidence);
+    reliability.cpu_lock_released = cpu_lock_released;
+    reliability.final_error = (int32_t)error;
+
     if (cancelled) {
-        finish_voice_cancelled();
+        reliability.outcome = VOICE_RELIABILITY_OUTCOME_CANCELLED;
+        reliability.command_id = VOICE_COMMAND_ID_NONE;
+        reliability.confidence_permille = 0U;
     } else if (error != ESP_OK) {
-        finish_voice_failed(error);
+        reliability.outcome = VOICE_RELIABILITY_OUTCOME_FAILED;
+        reliability.command_id = VOICE_COMMAND_ID_NONE;
+        reliability.confidence_permille = 0U;
     } else {
-        const bool speech_detected =
-            result == AUDIO_VOICE_RESULT_MATCHED ||
-            result == AUDIO_VOICE_RESULT_NOT_UNDERSTOOD;
-        finish_voice_completed(result, speech_detected, command_id,
-                               confidence, elapsed_ms);
+        reliability.outcome = voice_reliability_outcome(result);
+    }
+
+    const bool speech_detected =
+        result == AUDIO_VOICE_RESULT_MATCHED ||
+        result == AUDIO_VOICE_RESULT_NOT_UNDERSTOOD;
+    audio_voice_snapshot_t committed = {0};
+    if (!commit_voice_session(
+            &reliability, cancelled, error, result, speech_detected,
+            command_id, confidence, elapsed_ms, &committed)) {
+        ESP_LOGW(TAG, "voice reliability sample was rejected");
+    }
+    if (cancelled) {
+        ESP_LOGI(TAG,
+                 "voice session cancelled; temporary audio buffer cleared");
+    } else if (error != ESP_OK) {
+        ESP_LOGW(TAG, "voice session failed: %s",
+                 esp_err_to_name(error));
+    } else {
+        ESP_LOGI(TAG,
+                 "voice session: generation=%u result=%s command=%d confidence=%.3f duration=%ums",
+                 (unsigned)committed.status.generation,
+                 audio_voice_result_name(result), command_id,
+                 (double)confidence, (unsigned)elapsed_ms);
     }
 }
 
@@ -1863,6 +1953,7 @@ esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus)
     s_audio.voice_status.state = AUDIO_VOICE_STATE_IDLE;
     s_audio.voice_status.result = AUDIO_VOICE_RESULT_NONE;
     s_audio.voice_status.revision = 1U;
+    voice_reliability_summary_init(&s_audio.voice_reliability);
     s_voice_model_partition = find_voice_model_partition();
     s_audio.voice_status.model_ready =
         voice_model_header_is_valid(s_voice_model_partition);
@@ -2132,6 +2223,30 @@ void audio_voice_get_status(audio_voice_status_t *status)
     unlock_context();
 }
 
+void audio_voice_get_snapshot(audio_voice_snapshot_t *snapshot)
+{
+    if (snapshot == NULL) {
+        return;
+    }
+    lock_context();
+    snapshot->status = s_audio.voice_status;
+    snapshot->reliability = s_audio.voice_reliability;
+    unlock_context();
+}
+
+esp_err_t audio_voice_reset_reliability(void)
+{
+    lock_context();
+    if (s_audio.voice_requested || s_audio.voice_status.running) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    voice_reliability_summary_init(&s_audio.voice_reliability);
+    unlock_context();
+    ESP_LOGI(TAG, "volatile voice reliability counters reset");
+    return ESP_OK;
+}
+
 esp_err_t audio_voice_start(uint32_t generation)
 {
     if (generation == 0U) {
@@ -2219,6 +2334,25 @@ const char *audio_voice_result_name(audio_voice_result_t result)
     case AUDIO_VOICE_RESULT_NONE:
     default:
         return "none";
+    }
+}
+
+const char *audio_voice_state_name(audio_voice_state_t state)
+{
+    switch (state) {
+    case AUDIO_VOICE_STATE_PREPARING:
+        return "preparing";
+    case AUDIO_VOICE_STATE_LISTENING:
+        return "listening";
+    case AUDIO_VOICE_STATE_COMPLETED:
+        return "completed";
+    case AUDIO_VOICE_STATE_CANCELLED:
+        return "cancelled";
+    case AUDIO_VOICE_STATE_FAILED:
+        return "failed";
+    case AUDIO_VOICE_STATE_IDLE:
+    default:
+        return "idle";
     }
 }
 

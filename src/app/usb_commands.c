@@ -5,9 +5,11 @@
 #include <string.h>
 
 #include "audio_diagnostics.h"
+#include "audio_voice.h"
 #include "app_settings.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "network_time.h"
 #include "pcf85063.h"
@@ -89,7 +91,7 @@ static void log_datetime(const char *prefix, const pcf85063_datetime_t *datetime
 static void process_line(const char *line, bool rtc_available)
 {
     if (strcmp(line, "HELP") == 0) {
-        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | GET_AUDIO | GET_SETTINGS | RESET_WIFI | HELP");
+        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | GET_AUDIO | GET_VOICE | RESET_VOICE_DIAG | GET_SETTINGS | RESET_WIFI | HELP");
         return;
     }
 
@@ -141,6 +143,112 @@ static void process_line(const char *line, bool rtc_available)
                  status.playback_microphone,
                  audio_diagnostics_result_name(status.result),
                  esp_err_to_name(status.last_error));
+        return;
+    }
+
+    if (strcmp(line, "GET_VOICE") == 0) {
+        audio_voice_snapshot_t snapshot = {0};
+        audio_voice_get_snapshot(&snapshot);
+        const audio_voice_status_t status = snapshot.status;
+        const voice_reliability_summary_t summary =
+            snapshot.reliability;
+        const esp_app_desc_t *app = esp_app_get_description();
+        ESP_LOGI(TAG,
+                 "VOICE version=%s state=%s initialized=%s model=%s engine=%s microphone=%s running=%s generation=%u elapsed_ms=%u result=%s command=%d confidence=%.3f last_error=%s",
+                 app->version,
+                 audio_voice_state_name(status.state),
+                 status.initialized ? "yes" : "no",
+                 status.model_ready ? "ready" : "not_ready",
+                 status.engine_ready
+                     ? "ready"
+                     : (status.engine_preparing ? "preparing"
+                                                : "not_ready"),
+                 status.microphone_ready ? "ready" : "not_ready",
+                 status.running ? "yes" : "no",
+                 (unsigned)status.generation,
+                 (unsigned)status.elapsed_ms,
+                 audio_voice_result_name(status.result),
+                 status.command_id, (double)status.confidence,
+                 esp_err_to_name(status.last_error));
+        ESP_LOGI(TAG,
+                 "VOICE_DIAG sessions=%u matched=%u no_voice=%u not_understood=%u cancelled=%u failed=%u errors=%u capture_max_ms=%u wall_max_ms=%u last_seq=%u last_outcome=%s last_command=%d last_confidence_permille=%u last_capture_ms=%u last_wall_ms=%u",
+                 (unsigned)summary.sessions,
+                 (unsigned)summary.matched,
+                 (unsigned)summary.no_voice,
+                 (unsigned)summary.not_understood,
+                 (unsigned)summary.cancelled,
+                 (unsigned)summary.failed,
+                 (unsigned)summary.error_sessions,
+                 (unsigned)summary.capture_max_ms,
+                 (unsigned)summary.wall_max_ms,
+                 (unsigned)summary.last.sequence,
+                 voice_reliability_outcome_name(summary.last.outcome),
+                 (int)summary.last.command_id,
+                 (unsigned)summary.last.confidence_permille,
+                 (unsigned)summary.last.capture_ms,
+                 (unsigned)summary.last.wall_ms);
+        ESP_LOGI(TAG,
+                 "VOICE_DIAG_INTERNAL end_first=%u end_latest=%u trend=%lld min=%u largest_first=%u largest_latest=%u largest_min=%u last=%u/%u/%u last_largest=%u/%u/%u",
+                 (unsigned)summary.first_end.internal_free_bytes,
+                 (unsigned)summary.latest_end.internal_free_bytes,
+                 (long long)voice_reliability_trend_bytes(
+                     summary.first_end.internal_free_bytes,
+                     summary.latest_end.internal_free_bytes),
+                 (unsigned)summary.minimum.internal_free_bytes,
+                 (unsigned)summary.first_end.internal_largest_block_bytes,
+                 (unsigned)summary.latest_end.internal_largest_block_bytes,
+                 (unsigned)summary.minimum.internal_largest_block_bytes,
+                 (unsigned)summary.last.begin.internal_free_bytes,
+                 (unsigned)summary.last.minimum.internal_free_bytes,
+                 (unsigned)summary.last.end.internal_free_bytes,
+                 (unsigned)summary.last.begin.internal_largest_block_bytes,
+                 (unsigned)summary.last.minimum.internal_largest_block_bytes,
+                 (unsigned)summary.last.end.internal_largest_block_bytes);
+        ESP_LOGI(TAG,
+                 "VOICE_DIAG_PSRAM end_first=%u end_latest=%u trend=%lld min=%u largest_first=%u largest_latest=%u largest_min=%u last=%u/%u/%u last_largest=%u/%u/%u",
+                 (unsigned)summary.first_end.psram_free_bytes,
+                 (unsigned)summary.latest_end.psram_free_bytes,
+                 (long long)voice_reliability_trend_bytes(
+                     summary.first_end.psram_free_bytes,
+                     summary.latest_end.psram_free_bytes),
+                 (unsigned)summary.minimum.psram_free_bytes,
+                 (unsigned)summary.first_end.psram_largest_block_bytes,
+                 (unsigned)summary.latest_end.psram_largest_block_bytes,
+                 (unsigned)summary.minimum.psram_largest_block_bytes,
+                 (unsigned)summary.last.begin.psram_free_bytes,
+                 (unsigned)summary.last.minimum.psram_free_bytes,
+                 (unsigned)summary.last.end.psram_free_bytes,
+                 (unsigned)summary.last.begin.psram_largest_block_bytes,
+                 (unsigned)summary.last.minimum.psram_largest_block_bytes,
+                 (unsigned)summary.last.end.psram_largest_block_bytes);
+        ESP_LOGI(TAG,
+                 "VOICE_DIAG_RUNTIME stack_hwm_first=%u stack_hwm_latest=%u stack_hwm_min=%u last_stack=%u/%u/%u cpu_acquire_failures=%u cpu_release_failures=%u last_cpu_acquired=%s last_cpu_released=%s last_error=%d",
+                 (unsigned)summary.first_end.worker_stack_hwm_bytes,
+                 (unsigned)summary.latest_end.worker_stack_hwm_bytes,
+                 (unsigned)summary.minimum.worker_stack_hwm_bytes,
+                 (unsigned)summary.last.begin.worker_stack_hwm_bytes,
+                 (unsigned)summary.last.minimum.worker_stack_hwm_bytes,
+                 (unsigned)summary.last.end.worker_stack_hwm_bytes,
+                 (unsigned)summary.cpu_lock_acquire_failures,
+                 (unsigned)summary.cpu_lock_release_failures,
+                 summary.sessions > 0U && summary.last.cpu_lock_acquired
+                     ? "yes"
+                     : "no",
+                 summary.sessions > 0U && summary.last.cpu_lock_released
+                     ? "yes"
+                     : "no",
+                 (int)summary.last.final_error);
+        return;
+    }
+
+    if (strcmp(line, "RESET_VOICE_DIAG") == 0) {
+        const esp_err_t error = audio_voice_reset_reliability();
+        if (error == ESP_OK) {
+            ESP_LOGI(TAG, "VOICE_DIAG_RESET_OK volatile counters cleared");
+        } else {
+            ESP_LOGW(TAG, "VOICE_DIAG_RESET_ERROR %s",
+                     esp_err_to_name(error));
+        }
         return;
     }
 

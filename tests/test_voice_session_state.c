@@ -139,45 +139,103 @@ static void test_timeouts(void)
            VOICE_SESSION_ACTION_CANCEL_AND_CLEAR);
 }
 
-static void test_cancel_and_alarm_preemption(void)
+static uint32_t begin_waiting(voice_session_state_t *state)
+{
+    uint32_t generation = 0U;
+    assert(voice_session_state_begin(state, true, &generation));
+    assert(generation != 0U);
+    assert(voice_session_state_phase(state) ==
+           VOICE_SESSION_PHASE_WAITING_FOR_RELEASE);
+    return generation;
+}
+
+static uint32_t begin_recognizing(voice_session_state_t *state)
+{
+    const uint32_t generation = begin_listening(state);
+    voice_session_state_note_speech(state);
+    assert(voice_session_state_finish_listening(state) ==
+           VOICE_SESSION_ACTION_FINISH_LISTENING);
+    assert(voice_session_state_phase(state) ==
+           VOICE_SESSION_PHASE_RECOGNIZING);
+    return generation;
+}
+
+static void assert_old_result_rejected(voice_session_state_t *state,
+                                       uint32_t generation)
+{
+    assert(!voice_session_state_report_result(
+        state, generation, VOICE_SESSION_RESULT_MATCHED));
+}
+
+static void cancel_with_boot_and_finish_feedback(
+    voice_session_state_t *state, uint32_t generation)
+{
+    assert(voice_session_state_boot_short_press(state) ==
+           VOICE_SESSION_ACTION_CANCEL_AND_CLEAR);
+    assert(voice_session_state_phase(state) ==
+           VOICE_SESSION_PHASE_CANCELLED);
+    assert(voice_session_state_generation(state) != generation);
+    assert_old_result_rejected(state, generation);
+    assert(voice_session_state_boot_short_press(state) ==
+           VOICE_SESSION_ACTION_NONE);
+    wait_for_feedback(state, VOICE_SESSION_ACTION_RETURN_TO_READY);
+}
+
+static void test_boot_cancel_preemption(void)
 {
     voice_session_state_t state;
     voice_session_state_init(&state);
-    uint32_t generation = begin_listening(&state);
+    uint32_t generation = begin_waiting(&state);
+    cancel_with_boot_and_finish_feedback(&state, generation);
+
+    generation = begin_listening(&state);
+    cancel_with_boot_and_finish_feedback(&state, generation);
+
+    generation = begin_recognizing(&state);
     assert(voice_session_state_boot_short_press(&state) ==
            VOICE_SESSION_ACTION_CANCEL_AND_CLEAR);
     assert(voice_session_state_phase(&state) ==
            VOICE_SESSION_PHASE_CANCELLED);
-    assert(voice_session_state_generation(&state) != generation);
-    assert(voice_session_state_boot_short_press(&state) ==
-           VOICE_SESSION_ACTION_NONE);
+    assert_old_result_rejected(&state, generation);
     wait_for_feedback(&state,
                       VOICE_SESSION_ACTION_RETURN_TO_READY);
+}
 
-    generation = begin_listening(&state);
-    voice_session_state_note_speech(&state);
-    assert(voice_session_state_finish_listening(&state) ==
-           VOICE_SESSION_ACTION_FINISH_LISTENING);
-    assert(voice_session_state_cancel(&state) ==
+static void alarm_preempts_and_returns_ready(
+    voice_session_state_t *state, uint32_t generation)
+{
+    assert(voice_session_state_alarm_started(state) ==
            VOICE_SESSION_ACTION_CANCEL_AND_CLEAR);
-    assert(voice_session_state_phase(&state) ==
-           VOICE_SESSION_PHASE_CANCELLED);
-    assert(!voice_session_state_report_result(
-        &state, generation, VOICE_SESSION_RESULT_MATCHED));
-    wait_for_feedback(&state,
-                      VOICE_SESSION_ACTION_RETURN_TO_READY);
-
-    generation = begin_listening(&state);
-    voice_session_state_note_speech(&state);
-    assert(voice_session_state_finish_listening(&state) ==
-           VOICE_SESSION_ACTION_FINISH_LISTENING);
-    assert(voice_session_state_alarm_started(&state) ==
-           VOICE_SESSION_ACTION_CANCEL_AND_CLEAR);
-    assert(voice_session_state_phase(&state) ==
+    assert(voice_session_state_phase(state) ==
            VOICE_SESSION_PHASE_READY);
-    assert(!voice_session_state_report_result(
+    assert(voice_session_state_generation(state) != generation);
+    assert_old_result_rejected(state, generation);
+    assert(voice_session_state_alarm_started(state) ==
+           VOICE_SESSION_ACTION_NONE);
+}
+
+static void test_alarm_preemption_in_every_phase(void)
+{
+    voice_session_state_t state;
+    voice_session_state_init(&state);
+
+    uint32_t generation = begin_waiting(&state);
+    alarm_preempts_and_returns_ready(&state, generation);
+
+    generation = begin_listening(&state);
+    alarm_preempts_and_returns_ready(&state, generation);
+
+    generation = begin_recognizing(&state);
+    alarm_preempts_and_returns_ready(&state, generation);
+
+    generation = begin_recognizing(&state);
+    assert(voice_session_state_report_result(
         &state, generation, VOICE_SESSION_RESULT_MATCHED));
-    assert(voice_session_state_alarm_started(&state) ==
+    assert(voice_session_state_phase(&state) ==
+           VOICE_SESSION_PHASE_SUCCEEDED);
+    alarm_preempts_and_returns_ready(&state, generation);
+    assert(voice_session_state_tick(
+               &state, VOICE_SESSION_FEEDBACK_HOLD_MS) ==
            VOICE_SESSION_ACTION_NONE);
 }
 
@@ -284,7 +342,8 @@ int main(void)
     test_successful_session();
     test_no_voice_and_not_understood();
     test_timeouts();
-    test_cancel_and_alarm_preemption();
+    test_boot_cancel_preemption();
+    test_alarm_preemption_in_every_phase();
     test_engine_and_result_failures();
     test_generation_wrap_and_null_safety();
     test_state_names();

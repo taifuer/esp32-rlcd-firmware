@@ -201,6 +201,11 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/audio/include \
+  src/audio/audio_mono.c tests/test_audio_mono.c \
+  -o "${RLCD_TEST_TMP}/test_audio_mono"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/audio/include \
   src/audio/audio_session_state.c tests/test_audio_session_state.c \
   -o "${RLCD_TEST_TMP}/test_audio_session_state"
 
@@ -214,6 +219,12 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/audio/include \
   src/audio/voice_command_policy.c tests/test_voice_command_policy.c \
   -o "${RLCD_TEST_TMP}/test_voice_command_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/audio/include \
+  src/audio/voice_reliability_metrics.c \
+  tests/test_voice_reliability_metrics.c \
+  -o "${RLCD_TEST_TMP}/test_voice_reliability_metrics"
 
 "${RLCD_TEST_TMP}/test_chinese_lunar"
 "${RLCD_TEST_TMP}/test_calendar_month"
@@ -245,7 +256,9 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_rtc_backup_policy"
 "${RLCD_TEST_TMP}/test_clock_service_policy"
 "${RLCD_TEST_TMP}/test_audio_level"
+"${RLCD_TEST_TMP}/test_audio_mono"
 "${RLCD_TEST_TMP}/test_audio_session_state"
 "${RLCD_TEST_TMP}/test_voice_session_state"
 "${RLCD_TEST_TMP}/test_voice_command_policy"
+"${RLCD_TEST_TMP}/test_voice_reliability_metrics"
 python3 tests/test_rlcd_image_tool.py
