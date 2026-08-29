@@ -544,40 +544,68 @@ static display_environment_comfort_t dashboard_environment_comfort(
     }
 }
 
-static const char *device_network_state_name(
+static const char *device_wifi_state_name(
+    bool service_ready, const network_time_status_t *status)
+{
+    const bool connecting =
+        status != NULL &&
+        (status->state == NETWORK_TIME_STATE_STARTING ||
+         status->state == NETWORK_TIME_STATE_CONNECTING);
+    const bool retrying =
+        status != NULL &&
+        status->state == NETWORK_TIME_STATE_RETRY_WAIT &&
+        status->automatic_sync_enabled;
+    const app_wifi_display_t display = app_network_wifi_display(
+        service_ready, status != NULL && status->configured,
+        status != NULL && status->station_connected,
+        status != NULL && status->automatic_sync_enabled,
+        connecting, retrying);
+    switch (display) {
+    case APP_WIFI_DISPLAY_NOT_READY:
+        return "NOT READY";
+    case APP_WIFI_DISPLAY_NOT_CONFIGURED:
+        return "NOT CONFIGURED";
+    case APP_WIFI_DISPLAY_CONNECTED:
+        return "CONNECTED";
+    case APP_WIFI_DISPLAY_CONNECTING:
+        return "CONNECTING";
+    case APP_WIFI_DISPLAY_OFFLINE_RETRY:
+        return "OFFLINE | RETRY";
+    case APP_WIFI_DISPLAY_OFF_SAVING:
+        return "OFF | SAVING";
+    case APP_WIFI_DISPLAY_OFFLINE:
+    default:
+        return "OFFLINE";
+    }
+}
+
+static const char *device_time_sync_state_name(
+    bool service_ready, bool last_sync_valid,
     const network_time_status_t *status)
 {
-    switch (status->state) {
-    case NETWORK_TIME_STATE_UNINITIALIZED:
-        return "UNINITIALIZED";
-    case NETWORK_TIME_STATE_STARTING:
-        return "STARTING";
-    case NETWORK_TIME_STATE_PROVISIONING:
-        return "PROVISIONING";
-    case NETWORK_TIME_STATE_CONNECTING:
-        return "CONNECTING";
-    case NETWORK_TIME_STATE_SYNCHRONIZING:
-        return "SYNCHRONIZING";
-    case NETWORK_TIME_STATE_SYNCHRONIZED:
-        return "SYNCED";
-    case NETWORK_TIME_STATE_RETRY_WAIT:
-        if (!status->automatic_sync_enabled &&
-            status->last_failure == NETWORK_TIME_FAILURE_NONE) {
-            return "MANUAL ONLY";
-        }
-        if (status->last_failure == NETWORK_TIME_FAILURE_WIFI) {
-            return "WI-FI OFFLINE";
-        }
-        if (status->last_failure == NETWORK_TIME_FAILURE_NTP) {
-            return "NTP UNAVAILABLE";
-        }
-        if (status->last_failure == NETWORK_TIME_FAILURE_SERVICE) {
-            return "SERVICE ERROR";
-        }
-        return "OFFLINE";
-    case NETWORK_TIME_STATE_ERROR:
+    const app_time_sync_display_t display =
+        app_network_time_sync_display(
+            service_ready, last_sync_valid,
+            status != NULL &&
+                status->state == NETWORK_TIME_STATE_SYNCHRONIZING,
+            status != NULL &&
+                status->last_failure == NETWORK_TIME_FAILURE_NTP,
+            status != NULL &&
+                status->last_failure == NETWORK_TIME_FAILURE_SERVICE);
+    switch (display) {
+    case APP_TIME_SYNC_DISPLAY_NOT_READY:
+        return "NOT READY";
+    case APP_TIME_SYNC_DISPLAY_SYNCING:
+        return "SYNCING";
+    case APP_TIME_SYNC_DISPLAY_OK:
+        return "OK";
+    case APP_TIME_SYNC_DISPLAY_NTP_ERROR:
+        return "NTP ERROR";
+    case APP_TIME_SYNC_DISPLAY_SERVICE_ERROR:
+        return "SERVICE ERROR";
+    case APP_TIME_SYNC_DISPLAY_NOT_SYNCED:
     default:
-        return "ERROR";
+        return "NOT SYNCED";
     }
 }
 
@@ -2993,11 +3021,6 @@ void app_main(void)
                             ? rtc_backup_status_name(
                                   rtc_backup_monitor_status())
                             : "NOT READY",
-                    .year = dashboard.year,
-                    .month = dashboard.month,
-                    .day = dashboard.day,
-                    .hour = dashboard.hour,
-                    .minute = dashboard.minute,
                     .sensor_ready = sensor_driver_ready,
                     .environment_valid = dashboard.environment_valid,
                     .temperature_c = dashboard.temperature_c,
@@ -3010,10 +3033,11 @@ void app_main(void)
                     .battery_percent = dashboard.battery_percent,
                     .usb_data_host_connected =
                         dashboard.usb_data_host_connected,
-                    .network_ready = network_error == ESP_OK,
-                    .network_configured = network_status.configured,
-                    .network_state =
-                        device_network_state_name(&network_status),
+                    .time_sync_state = device_time_sync_state_name(
+                        network_error == ESP_OK, last_sync_valid,
+                        &network_status),
+                    .wifi_state = device_wifi_state_name(
+                        network_error == ESP_OK, &network_status),
                     .last_sync_valid = last_sync_valid,
                     .last_sync_month = last_sync_time.month,
                     .last_sync_day = last_sync_time.day,

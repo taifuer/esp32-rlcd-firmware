@@ -271,14 +271,10 @@ static void process_line(const char *line, bool rtc_available)
     }
 
     if (strcmp(line, "RESET_WIFI") == 0) {
-        esp_err_t error = network_time_clear_credentials();
+        const esp_err_t error =
+            network_time_forget_and_request_provisioning();
         if (error != ESP_OK) {
             ESP_LOGW(TAG, "WIFI_RESET_ERROR %s", esp_err_to_name(error));
-            return;
-        }
-        error = network_time_request_provisioning();
-        if (error != ESP_OK) {
-            ESP_LOGW(TAG, "WIFI_SETUP_ERROR %s", esp_err_to_name(error));
             return;
         }
         ESP_LOGI(TAG, "WIFI_RESET_OK entering setup mode without restart");

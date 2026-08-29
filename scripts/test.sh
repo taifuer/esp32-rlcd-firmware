@@ -71,6 +71,12 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_network_retry_policy"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/network/include \
+  src/network/network_connection_policy.c \
+  tests/test_network_connection_policy.c \
+  -o "${RLCD_TEST_TMP}/test_network_connection_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/network \
   src/network/network_session_policy.c tests/test_network_session_policy.c \
   -o "${RLCD_TEST_TMP}/test_network_session_policy"
@@ -235,6 +241,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_alarm_history_record"
 "${RLCD_TEST_TMP}/test_network_credentials"
 "${RLCD_TEST_TMP}/test_network_retry_policy"
+"${RLCD_TEST_TMP}/test_network_connection_policy"
 "${RLCD_TEST_TMP}/test_network_session_policy"
 "${RLCD_TEST_TMP}/test_network_station_link"
 "${RLCD_TEST_TMP}/test_network_qr"

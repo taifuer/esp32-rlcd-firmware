@@ -51,11 +51,6 @@ typedef struct {
     bool rtc_ready;
     bool time_valid;
     const char *rtc_backup_state;
-    uint16_t year;
-    uint8_t month;
-    uint8_t day;
-    uint8_t hour;
-    uint8_t minute;
     bool sensor_ready;
     bool environment_valid;
     float temperature_c;
@@ -67,9 +62,8 @@ typedef struct {
     uint8_t battery_percent;
     /* Confirmed enumerating data host; ordinary chargers remain unknown. */
     bool usb_data_host_connected;
-    bool network_ready;
-    bool network_configured;
-    const char *network_state;
+    const char *time_sync_state;
+    const char *wifi_state;
     bool last_sync_valid;
     uint8_t last_sync_month;
     uint8_t last_sync_day;

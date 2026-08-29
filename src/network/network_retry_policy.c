@@ -8,8 +8,5 @@ uint32_t network_retry_delay_ms(uint32_t consecutive_failures)
     if (consecutive_failures == 2U) {
         return 300000U;
     }
-    if (consecutive_failures == 3U) {
-        return 900000U;
-    }
-    return 3600000U;
+    return 900000U;
 }

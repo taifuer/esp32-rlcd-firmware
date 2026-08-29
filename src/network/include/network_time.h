@@ -70,6 +70,9 @@ esp_err_t network_time_validate_and_save_credentials(
     const network_credentials_t *credentials, uint32_t timeout_ms,
     bool *portal_available);
 esp_err_t network_time_clear_credentials(void);
+/* Atomically pause any persistent station, clear credentials, and hand the
+ * radio to the provisioning task. Intended for the USB maintenance command. */
+esp_err_t network_time_forget_and_request_provisioning(void);
 /* Wake an idle network task after credentials were cleared without maintenance. */
 esp_err_t network_time_request_provisioning(void);
 esp_err_t network_time_begin_maintenance(void);

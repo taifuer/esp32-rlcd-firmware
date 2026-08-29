@@ -857,24 +857,14 @@ void display_show_system_status(const display_system_status_t *status)
 
     if (!status->rtc_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");
-    } else if (!status->time_valid) {
-        snprintf(value, sizeof(value), "INVALID TIME");
     } else {
-        snprintf(value, sizeof(value), "OK | %04u-%02u-%02u %02u:%02u",
-                 status->year, status->month, status->day,
-                 status->hour, status->minute);
-    }
-    draw_system_row(72, "TIME", value);
-
-    if (!status->rtc_ready) {
-        snprintf(value, sizeof(value), "NOT AVAILABLE");
-    } else {
-        snprintf(value, sizeof(value), "%s",
+        snprintf(value, sizeof(value), "%s | BACKUP %s",
+                 status->time_valid ? "OK" : "INVALID",
                  status->rtc_backup_state != NULL
                      ? status->rtc_backup_state
                      : "NOT READY");
     }
-    draw_system_row(108, "RTC BACKUP", value);
+    draw_system_row(72, "RTC", value);
 
     if (!status->sensor_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");
@@ -890,7 +880,7 @@ void display_show_system_status(const display_system_status_t *status)
                  status->temperature_fahrenheit ? 'F' : 'C',
                  (double)status->humidity_percent);
     }
-    draw_system_row(144, "SENSOR", value);
+    draw_system_row(108, "SENSOR", value);
 
     if (!status->battery_ready) {
         snprintf(value, sizeof(value), "%sNOT READY",
@@ -905,24 +895,27 @@ void display_show_system_status(const display_system_status_t *status)
         snprintf(value, sizeof(value), "OK | %u %% | %u mV",
                  status->battery_percent, status->battery_voltage_mv);
     }
-    draw_system_row(180, "BATTERY", value);
+    draw_system_row(144, "BATTERY", value);
 
-    if (!status->network_ready) {
-        snprintf(value, sizeof(value), "NETWORK NOT READY");
-    } else if (!status->network_configured) {
-        snprintf(value, sizeof(value), "NOT CONFIGURED");
-    } else if (status->last_sync_valid) {
+    if (status->last_sync_valid) {
         snprintf(value, sizeof(value), "%02u-%02u %02u:%02u | %s",
                  status->last_sync_month, status->last_sync_day,
                  status->last_sync_hour, status->last_sync_minute,
-                 status->network_state != NULL ? status->network_state
-                                               : "SYNCED");
+                 status->time_sync_state != NULL
+                     ? status->time_sync_state
+                     : "OK");
     } else {
         snprintf(value, sizeof(value), "%s",
-                 status->network_state != NULL ? status->network_state
-                                               : "NOT SYNCED");
+                 status->time_sync_state != NULL
+                     ? status->time_sync_state
+                     : "NOT SYNCED");
     }
-    draw_system_row(216, "TIME SYNC", value);
+    draw_system_row(180, "TIME SYNC", value);
+
+    snprintf(value, sizeof(value), "%s",
+             status->wifi_state != NULL ? status->wifi_state
+                                        : "NOT READY");
+    draw_system_row(216, "WI-FI", value);
 
     draw_system_footer(
         "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: SYNC");

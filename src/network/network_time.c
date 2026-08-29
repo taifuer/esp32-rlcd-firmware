@@ -19,6 +19,7 @@
 #include "freertos/event_groups.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include "network_connection_policy.h"
 #include "network_credentials.h"
 #include "network_retry_policy.h"
 #include "network_session_policy.h"
@@ -34,9 +35,18 @@
 #define NETWORK_EVENT_CREDENTIALS_SAVED BIT2
 #define NETWORK_EVENT_SYNC_REQUEST BIT3
 #define NETWORK_EVENT_MAINTENANCE_CHANGED BIT4
+#define NETWORK_EVENT_POLICY_CHANGED BIT5
+#define NETWORK_EVENT_LINK_RECOVERY BIT6
+#define NETWORK_EVENT_FORCE_PROVISIONING BIT7
+
+#define NETWORK_EVENT_TASK_WAKE                                               \
+    (NETWORK_EVENT_SYNC_REQUEST | NETWORK_EVENT_MAINTENANCE_CHANGED |        \
+     NETWORK_EVENT_POLICY_CHANGED | NETWORK_EVENT_LINK_RECOVERY |            \
+     NETWORK_EVENT_FORCE_PROVISIONING)
 
 #define NETWORK_STATION_MAX_RETRIES 5U
 #define NETWORK_STATION_TIMEOUT_MS 40000U
+#define NETWORK_STATION_STOP_RETRY_MS 5000U
 #define NETWORK_SNTP_ATTEMPTS 5U
 #define NETWORK_SNTP_WAIT_MS 4000U
 #define NETWORK_SETUP_WINDOW_MS 300000U
@@ -90,6 +100,12 @@ static bool s_automatic_sync_enabled = true;
 /* Suppress the normal STA_START auto-connect while a settings-portal
  * candidate is being configured in APSTA mode. */
 static bool s_station_connect_deferred;
+/* Prevent a deliberate esp_wifi_stop() from being mistaken for a link
+ * failure that should immediately reconnect. Guarded by s_status_lock. */
+static bool s_station_stop_requested;
+/* A failed driver stop must be completed before a persistent STA may be
+ * reused. Guarded by s_status_lock. */
+static bool s_radio_normalization_required;
 static volatile uint32_t s_station_retries;
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static network_session_policy_t s_session_policy;
@@ -108,6 +124,9 @@ static esp_err_t stop_wifi(void);
 static esp_err_t start_station(const network_credentials_t *credentials,
                                uint32_t timeout_ms,
                                network_time_failure_t *failure);
+static esp_err_t ensure_station_connected(
+    const network_credentials_t *credentials, uint32_t timeout_ms,
+    network_time_failure_t *failure);
 
 static void set_starting_unconfigured_status_locked(void)
 {
@@ -128,6 +147,44 @@ static bool get_automatic_sync_enabled(void)
     enabled = s_automatic_sync_enabled;
     portEXIT_CRITICAL(&s_status_lock);
     return enabled;
+}
+
+static network_connection_mode_t current_connection_mode(void)
+{
+    return get_automatic_sync_enabled()
+               ? NETWORK_CONNECTION_MODE_NORMAL
+               : NETWORK_CONNECTION_MODE_SAVING;
+}
+
+static void get_station_link_state(bool *active, bool *connected)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    if (active != NULL) {
+        *active = network_station_link_is_active(&s_station_link);
+    }
+    if (connected != NULL) {
+        *connected = network_station_link_is_connected(&s_station_link);
+    }
+    portEXIT_CRITICAL(&s_status_lock);
+}
+
+static bool maintenance_session_owned(void)
+{
+    bool owned;
+    portENTER_CRITICAL(&s_status_lock);
+    owned = s_session_policy.owner == NETWORK_SESSION_OWNER_MAINTENANCE;
+    portEXIT_CRITICAL(&s_status_lock);
+    return owned;
+}
+
+static bool station_normalization_required(void)
+{
+    bool required;
+    portENTER_CRITICAL(&s_status_lock);
+    required = s_station_connect_deferred ||
+               s_radio_normalization_required;
+    portEXIT_CRITICAL(&s_status_lock);
+    return required;
 }
 
 static void set_status(network_time_state_t state, bool configured, esp_err_t error)
@@ -254,31 +311,51 @@ esp_err_t network_time_set_automatic_sync_enabled(bool enabled)
         return ESP_ERR_INVALID_STATE;
     }
 
-    bool wake_task = false;
     bool changed = false;
+    bool task_reserved = false;
+    network_connection_action_t action = NETWORK_CONNECTION_ACTION_NONE;
     portENTER_CRITICAL(&s_status_lock);
     changed = s_automatic_sync_enabled != enabled;
     s_automatic_sync_enabled = enabled;
     s_status.automatic_sync_enabled = enabled;
-    if (changed && enabled && !s_session_policy.task_active &&
-        s_status.configured &&
-        (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
-         s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
-        if (s_session_policy.owner == NETWORK_SESSION_OWNER_NONE) {
-            wake_task = network_session_policy_request_task(&s_session_policy);
-        } else {
-            /* The event remains queued until the exclusive owner releases. */
-            wake_task = true;
+    if (changed) {
+        network_connection_activity_t activity =
+            NETWORK_CONNECTION_ACTIVITY_IDLE;
+        if (s_session_policy.owner == NETWORK_SESSION_OWNER_ONLINE) {
+            activity = NETWORK_CONNECTION_ACTIVITY_ONLINE;
+        } else if (s_session_policy.owner ==
+                   NETWORK_SESSION_OWNER_MAINTENANCE) {
+            activity = NETWORK_CONNECTION_ACTIVITY_MAINTENANCE;
+        } else if (s_session_policy.task_active) {
+            activity = NETWORK_CONNECTION_ACTIVITY_SYNC;
+        }
+        action = network_connection_policy_on_mode_change(
+            enabled ? NETWORK_CONNECTION_MODE_NORMAL
+                    : NETWORK_CONNECTION_MODE_SAVING,
+            activity);
+        if ((action == NETWORK_CONNECTION_ACTION_CONNECT ||
+             action == NETWORK_CONNECTION_ACTION_STOP) &&
+            s_status.configured &&
+            s_session_policy.owner == NETWORK_SESSION_OWNER_NONE) {
+            task_reserved =
+                network_session_policy_request_task(&s_session_policy);
+            if (task_reserved && action == NETWORK_CONNECTION_ACTION_CONNECT) {
+                s_status.state = NETWORK_TIME_STATE_STARTING;
+                s_status.last_error = ESP_OK;
+                s_status.last_failure = NETWORK_TIME_FAILURE_NONE;
+            }
         }
     }
     portEXIT_CRITICAL(&s_status_lock);
 
-    if (wake_task) {
-        xEventGroupSetBits(s_events, NETWORK_EVENT_SYNC_REQUEST);
-    }
     if (changed) {
-        ESP_LOGI(TAG, "automatic time synchronization %s",
-                 enabled ? "enabled" : "disabled");
+        xEventGroupSetBits(s_events, NETWORK_EVENT_POLICY_CHANGED);
+        ESP_LOGI(TAG,
+                 "background network mode %s (%s%s)",
+                 enabled ? "normal" : "saving",
+                 action == NETWORK_CONNECTION_ACTION_DEFER ? "deferred"
+                                                            : "scheduled",
+                 task_reserved ? ", task reserved" : "");
     }
     return ESP_OK;
 }
@@ -291,8 +368,7 @@ esp_err_t network_time_begin_maintenance(void)
 
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (!network_station_link_is_active(&s_station_link) &&
-        s_http_server == NULL &&
+    if (s_http_server == NULL &&
         (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
          s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
         accepted = network_session_policy_try_acquire(
@@ -304,24 +380,69 @@ esp_err_t network_time_begin_maintenance(void)
     }
 
     xEventGroupSetBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
+    const esp_err_t stop_error = stop_wifi();
+    if (stop_error != ESP_OK) {
+        portENTER_CRITICAL(&s_status_lock);
+        (void)network_session_policy_release(
+            &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
+        portEXIT_CRITICAL(&s_status_lock);
+        xEventGroupSetBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED |
+                                        NETWORK_EVENT_POLICY_CHANGED);
+        ESP_LOGW(TAG, "could not pause station for maintenance: %s",
+                 esp_err_to_name(stop_error));
+        return stop_error;
+    }
     ESP_LOGI(TAG, "network maintenance window acquired");
     return ESP_OK;
 }
 
 void network_time_end_maintenance(void)
 {
-    if (!s_initialized || s_events == NULL) {
+    if (!s_initialized || s_events == NULL ||
+        !maintenance_session_owned()) {
         return;
     }
 
-    bool released;
+    /* Settings and update portals manipulate the shared ESP-IDF radio while
+     * maintenance owns it. Normalize the driver before returning ownership;
+     * a failed stop is handed to the network task for a bounded retry. */
+    const esp_err_t stop_error = stop_wifi();
+    const network_connection_action_t action =
+        network_connection_policy_on_operation_end(
+            current_connection_mode(),
+            NETWORK_CONNECTION_OPERATION_MAINTENANCE);
+    bool released = false;
+    bool reconnect_scheduled = false;
     portENTER_CRITICAL(&s_status_lock);
-    released = network_session_policy_release(
-        &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
+    if ((action == NETWORK_CONNECTION_ACTION_CONNECT ||
+         stop_error != ESP_OK) &&
+        s_status.configured) {
+        reconnect_scheduled = network_session_policy_release_to_task(
+            &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
+        released = reconnect_scheduled;
+        if (reconnect_scheduled) {
+            s_status.state = NETWORK_TIME_STATE_STARTING;
+            s_status.last_error = ESP_OK;
+            s_status.last_failure = NETWORK_TIME_FAILURE_NONE;
+        }
+    }
+    if (!released) {
+        released = network_session_policy_release(
+            &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
+    }
     portEXIT_CRITICAL(&s_status_lock);
     if (released) {
-        xEventGroupSetBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
-        ESP_LOGI(TAG, "network maintenance window released");
+        xEventGroupSetBits(
+            s_events, NETWORK_EVENT_MAINTENANCE_CHANGED |
+                          (reconnect_scheduled
+                               ? NETWORK_EVENT_POLICY_CHANGED
+                               : 0U));
+        ESP_LOGI(TAG, "network maintenance window released%s",
+                 reconnect_scheduled ? "; station restore scheduled" : "");
+    }
+    if (stop_error != ESP_OK) {
+        ESP_LOGW(TAG, "could not normalize Wi-Fi after maintenance: %s",
+                 esp_err_to_name(stop_error));
     }
 }
 
@@ -330,8 +451,15 @@ esp_err_t network_time_end_maintenance_and_request_provisioning(void)
     if (!s_initialized || !s_storage_ready || s_events == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
+    if (!maintenance_session_owned()) {
+        return ESP_ERR_INVALID_STATE;
+    }
     if (!credentials_are_missing()) {
         return ESP_ERR_INVALID_STATE;
+    }
+    const esp_err_t stop_error = stop_wifi();
+    if (stop_error != ESP_OK) {
+        return stop_error;
     }
 
     bool accepted = false;
@@ -349,7 +477,7 @@ esp_err_t network_time_end_maintenance_and_request_provisioning(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    xEventGroupSetBits(s_events, NETWORK_EVENT_SYNC_REQUEST |
+    xEventGroupSetBits(s_events, NETWORK_EVENT_FORCE_PROVISIONING |
                                     NETWORK_EVENT_MAINTENANCE_CHANGED);
     ESP_LOGI(TAG, "network maintenance handed off to provisioning");
     return ESP_OK;
@@ -358,6 +486,9 @@ esp_err_t network_time_end_maintenance_and_request_provisioning(void)
 esp_err_t network_time_end_maintenance_and_request_sync(void)
 {
     if (!s_initialized || !s_storage_ready || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!maintenance_session_owned()) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -370,19 +501,21 @@ esp_err_t network_time_end_maintenance_and_request_sync(void)
         return credentials_error == ESP_OK ? ESP_ERR_INVALID_STATE
                                            : credentials_error;
     }
+    const esp_err_t stop_error = stop_wifi();
+    if (stop_error != ESP_OK) {
+        return stop_error;
+    }
 
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    /* The caller has already stopped the settings HTTP server and Wi-Fi AP.
-     * Do not alter link state unless the ownership transfer succeeds. */
+    /* The shared radio has been stopped above. Do not alter status unless the
+     * ownership transfer succeeds. */
     if (s_http_server == NULL &&
         s_session_policy.owner == NETWORK_SESSION_OWNER_MAINTENANCE &&
         !s_session_policy.task_active) {
         accepted = network_session_policy_release_to_task(
             &s_session_policy, NETWORK_SESSION_OWNER_MAINTENANCE);
         if (accepted) {
-            network_station_link_stop(&s_station_link);
-            s_station_connect_deferred = false;
             s_status.state = NETWORK_TIME_STATE_STARTING;
             s_status.configured = true;
             s_status.automatic_sync_enabled = s_automatic_sync_enabled;
@@ -434,8 +567,7 @@ static bool online_session_acquire(void)
 {
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (!network_station_link_is_active(&s_station_link) &&
-        s_http_server == NULL && s_status.configured &&
+    if (s_http_server == NULL && s_status.configured &&
         (s_status.state == NETWORK_TIME_STATE_SYNCHRONIZED ||
          s_status.state == NETWORK_TIME_STATE_RETRY_WAIT)) {
         accepted = network_session_policy_try_acquire(
@@ -611,9 +743,33 @@ esp_err_t network_time_request_provisioning(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    xEventGroupSetBits(s_events, NETWORK_EVENT_SYNC_REQUEST);
+    xEventGroupSetBits(s_events, NETWORK_EVENT_FORCE_PROVISIONING);
     ESP_LOGI(TAG, "network provisioning requested");
     return ESP_OK;
+}
+
+esp_err_t network_time_forget_and_request_provisioning(void)
+{
+    esp_err_t error = network_time_begin_maintenance();
+    if (error != ESP_OK) {
+        return error;
+    }
+
+    error = network_time_clear_credentials();
+    if (error == ESP_OK) {
+        error = network_time_end_maintenance_and_request_provisioning();
+    }
+    if (error != ESP_OK) {
+        network_time_end_maintenance();
+        if (credentials_are_missing()) {
+            const esp_err_t request_error =
+                network_time_request_provisioning();
+            if (request_error == ESP_OK) {
+                error = ESP_OK;
+            }
+        }
+    }
+    return error;
 }
 
 static esp_err_t send_html(httpd_req_t *request, const char *status, const char *html)
@@ -756,14 +912,27 @@ static void configure_captive_portal_hint(void)
 static esp_err_t stop_wifi(void)
 {
     portENTER_CRITICAL(&s_status_lock);
-    network_station_link_stop(&s_station_link);
-    s_station_connect_deferred = false;
+    s_station_stop_requested = true;
     portEXIT_CRITICAL(&s_status_lock);
-    const esp_err_t error = esp_wifi_stop();
-    if (error == ESP_ERR_WIFI_NOT_STARTED) {
-        return ESP_OK;
+
+    esp_err_t error = esp_wifi_stop();
+    const bool stopped = error == ESP_OK || error == ESP_ERR_WIFI_NOT_STARTED;
+    portENTER_CRITICAL(&s_status_lock);
+    s_station_stop_requested = false;
+    if (stopped) {
+        network_station_link_stop(&s_station_link);
+        s_station_connect_deferred = false;
+        s_radio_normalization_required = false;
+    } else {
+        s_radio_normalization_required = true;
     }
-    return error;
+    portEXIT_CRITICAL(&s_status_lock);
+    if (stopped && s_events != NULL) {
+        xEventGroupClearBits(s_events, NETWORK_EVENT_CONNECTED |
+                                          NETWORK_EVENT_FAILED |
+                                          NETWORK_EVENT_LINK_RECOVERY);
+    }
+    return stopped ? ESP_OK : error;
 }
 
 static void generate_setup_password(char *password, size_t password_size)
@@ -895,24 +1064,30 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         bool station_active;
         bool connect_deferred;
+        bool stop_requested;
         portENTER_CRITICAL(&s_status_lock);
         station_active = network_station_link_is_active(&s_station_link);
         connect_deferred = s_station_connect_deferred;
+        stop_requested = s_station_stop_requested;
         portEXIT_CRITICAL(&s_status_lock);
-        if (!station_active || connect_deferred) {
+        if (!station_active || connect_deferred || stop_requested) {
             return;
         }
         const esp_err_t error = esp_wifi_connect();
         if (error != ESP_OK) {
-            xEventGroupSetBits(s_events, NETWORK_EVENT_FAILED);
+            xEventGroupSetBits(s_events, NETWORK_EVENT_FAILED |
+                                             NETWORK_EVENT_LINK_RECOVERY);
         }
     } else if (event_base == WIFI_EVENT &&
                event_id == WIFI_EVENT_STA_DISCONNECTED) {
         bool station_active;
+        bool stop_requested;
         portENTER_CRITICAL(&s_status_lock);
         station_active = network_station_link_lost_ipv4(&s_station_link);
+        stop_requested = s_station_stop_requested;
         portEXIT_CRITICAL(&s_status_lock);
-        if (!station_active) {
+        xEventGroupClearBits(s_events, NETWORK_EVENT_CONNECTED);
+        if (!station_active || stop_requested) {
             return;
         }
         const wifi_event_sta_disconnected_t *event = event_data;
@@ -922,15 +1097,18 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
                      event != NULL ? event->reason : 0U, (unsigned)s_station_retries,
                      NETWORK_STATION_MAX_RETRIES);
             if (esp_wifi_connect() != ESP_OK) {
-                xEventGroupSetBits(s_events, NETWORK_EVENT_FAILED);
+                xEventGroupSetBits(s_events, NETWORK_EVENT_FAILED |
+                                                 NETWORK_EVENT_LINK_RECOVERY);
             }
         } else {
-            xEventGroupSetBits(s_events, NETWORK_EVENT_FAILED);
+            xEventGroupSetBits(s_events, NETWORK_EVENT_FAILED |
+                                             NETWORK_EVENT_LINK_RECOVERY);
         }
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_STOP) {
         portENTER_CRITICAL(&s_status_lock);
         network_station_link_stop(&s_station_link);
         portEXIT_CRITICAL(&s_status_lock);
+        xEventGroupClearBits(s_events, NETWORK_EVENT_CONNECTED);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         bool accepted;
         portENTER_CRITICAL(&s_status_lock);
@@ -945,11 +1123,21 @@ static void wifi_event_handler(void *argument, esp_event_base_t event_base,
             ESP_LOGI(TAG, "Wi-Fi connected with address " IPSTR,
                      IP2STR(&event->ip_info.ip));
         }
+        xEventGroupClearBits(s_events, NETWORK_EVENT_FAILED |
+                                          NETWORK_EVENT_LINK_RECOVERY);
         xEventGroupSetBits(s_events, NETWORK_EVENT_CONNECTED);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_LOST_IP) {
+        bool station_active;
         portENTER_CRITICAL(&s_status_lock);
-        (void)network_station_link_lost_ipv4(&s_station_link);
+        station_active = network_station_link_lost_ipv4(&s_station_link);
         portEXIT_CRITICAL(&s_status_lock);
+        xEventGroupClearBits(s_events, NETWORK_EVENT_CONNECTED);
+        if (station_active) {
+            /* A lease can be renewed without a full STA disconnect. Wake the
+             * owner and allow its normal connection timeout to provide a
+             * short recovery window before declaring Wi-Fi failed. */
+            xEventGroupSetBits(s_events, NETWORK_EVENT_LINK_RECOVERY);
+        }
     }
 }
 
@@ -1022,7 +1210,9 @@ static esp_err_t start_station(const network_credentials_t *credentials,
     s_station_connect_deferred = false;
     network_station_link_begin(&s_station_link);
     portEXIT_CRITICAL(&s_status_lock);
-    xEventGroupClearBits(s_events, NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED);
+    xEventGroupClearBits(s_events, NETWORK_EVENT_CONNECTED |
+                                      NETWORK_EVENT_FAILED |
+                                      NETWORK_EVENT_LINK_RECOVERY);
 
     esp_err_t error = esp_wifi_set_mode(WIFI_MODE_STA);
     if (error == ESP_OK) {
@@ -1056,6 +1246,55 @@ static esp_err_t start_station(const network_credentials_t *credentials,
     return error;
 }
 
+static esp_err_t ensure_station_connected(
+    const network_credentials_t *credentials, uint32_t timeout_ms,
+    network_time_failure_t *failure)
+{
+    if (credentials == NULL || timeout_ms == 0U ||
+        !network_credentials_are_valid(credentials)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (failure != NULL) {
+        *failure = NETWORK_TIME_FAILURE_SERVICE;
+    }
+
+    bool active = false;
+    bool connected = false;
+    if (station_normalization_required()) {
+        const esp_err_t stop_error = stop_wifi();
+        if (stop_error != ESP_OK) {
+            return stop_error;
+        }
+    }
+    get_station_link_state(&active, &connected);
+    if (connected) {
+        if (failure != NULL) {
+            *failure = NETWORK_TIME_FAILURE_NONE;
+        }
+        return ESP_OK;
+    }
+    if (!active) {
+        return start_station(credentials, timeout_ms, failure);
+    }
+
+    const EventBits_t bits = xEventGroupWaitBits(
+        s_events, NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED,
+        pdTRUE, pdFALSE, pdMS_TO_TICKS(timeout_ms));
+    get_station_link_state(NULL, &connected);
+    if ((bits & NETWORK_EVENT_CONNECTED) != 0U && connected) {
+        if (failure != NULL) {
+            *failure = NETWORK_TIME_FAILURE_NONE;
+        }
+        return ESP_OK;
+    }
+
+    if (failure != NULL) {
+        *failure = NETWORK_TIME_FAILURE_WIFI;
+    }
+    (void)stop_wifi();
+    return ESP_ERR_TIMEOUT;
+}
+
 static esp_err_t restore_settings_access_point(void)
 {
     portENTER_CRITICAL(&s_status_lock);
@@ -1064,7 +1303,8 @@ static esp_err_t restore_settings_access_point(void)
     portEXIT_CRITICAL(&s_status_lock);
     const esp_err_t disconnect_error = esp_wifi_disconnect();
     xEventGroupClearBits(s_events,
-                         NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED);
+                         NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED |
+                             NETWORK_EVENT_LINK_RECOVERY);
     esp_err_t error = esp_wifi_set_mode(WIFI_MODE_AP);
     if (error == ESP_OK) {
         if (disconnect_error != ESP_OK &&
@@ -1140,7 +1380,8 @@ esp_err_t network_time_validate_and_save_credentials(
     wifi_config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
 
     xEventGroupClearBits(s_events,
-                         NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED);
+                         NETWORK_EVENT_CONNECTED | NETWORK_EVENT_FAILED |
+                             NETWORK_EVENT_LINK_RECOVERY);
     esp_err_t error = esp_wifi_set_mode(WIFI_MODE_APSTA);
     if (error == ESP_OK) {
         error = esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
@@ -1206,8 +1447,8 @@ static esp_err_t connect_and_synchronize(
     network_time_failure_t *failure)
 {
     set_status(NETWORK_TIME_STATE_CONNECTING, true, ESP_OK);
-    esp_err_t error = start_station(credentials, NETWORK_STATION_TIMEOUT_MS,
-                                    failure);
+    esp_err_t error = ensure_station_connected(
+        credentials, NETWORK_STATION_TIMEOUT_MS, failure);
     if (error == ESP_OK) {
         set_status(NETWORK_TIME_STATE_SYNCHRONIZING, true, ESP_OK);
         network_time_datetime_t datetime = {0};
@@ -1226,11 +1467,16 @@ static esp_err_t connect_and_synchronize(
         }
     }
 
-    const esp_err_t stop_error = stop_wifi();
-    if (error == ESP_OK && stop_error != ESP_OK) {
-        error = stop_error;
-        if (failure != NULL) {
-            *failure = NETWORK_TIME_FAILURE_SERVICE;
+    const network_connection_action_t action =
+        network_connection_policy_on_operation_end(
+            current_connection_mode(), NETWORK_CONNECTION_OPERATION_SYNC);
+    if (action == NETWORK_CONNECTION_ACTION_STOP) {
+        const esp_err_t stop_error = stop_wifi();
+        if (error == ESP_OK && stop_error != ESP_OK) {
+            error = stop_error;
+            if (failure != NULL) {
+                *failure = NETWORK_TIME_FAILURE_SERVICE;
+            }
         }
     }
     return error;
@@ -1242,13 +1488,18 @@ static esp_err_t connect_acquired_online_session(uint32_t timeout_ms)
     esp_err_t error = load_credentials(&credentials);
     if (error == ESP_OK) {
         network_time_failure_t failure = NETWORK_TIME_FAILURE_NONE;
-        error = start_station(&credentials, timeout_ms, &failure);
+        error = ensure_station_connected(&credentials, timeout_ms, &failure);
     }
     memset(&credentials, 0, sizeof(credentials));
 
     if (error != ESP_OK) {
-        (void)stop_wifi();
+        const esp_err_t stop_error = stop_wifi();
         (void)online_session_release();
+        if (get_automatic_sync_enabled()) {
+            xEventGroupSetBits(s_events, NETWORK_EVENT_LINK_RECOVERY);
+        } else if (stop_error != ESP_OK) {
+            xEventGroupSetBits(s_events, NETWORK_EVENT_POLICY_CHANGED);
+        }
         ESP_LOGW(TAG, "online network session could not start: %s",
                  esp_err_to_name(error));
         return error;
@@ -1281,6 +1532,13 @@ esp_err_t network_time_begin_online_session_from_maintenance(
     if (!s_initialized || !s_storage_ready || s_events == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
+    if (!maintenance_session_owned()) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    const esp_err_t stop_error = stop_wifi();
+    if (stop_error != ESP_OK) {
+        return stop_error;
+    }
     if (!maintenance_session_transfer_to_online()) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -1304,30 +1562,50 @@ esp_err_t network_time_end_online_session(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    const esp_err_t stop_error = stop_wifi();
-    (void)online_session_release();
+    const network_connection_action_t action =
+        network_connection_policy_on_operation_end(
+            current_connection_mode(), NETWORK_CONNECTION_OPERATION_ONLINE);
+    esp_err_t stop_error = ESP_OK;
+    if (action == NETWORK_CONNECTION_ACTION_STOP) {
+        stop_error = stop_wifi();
+    }
+    bool connected = false;
+    get_station_link_state(NULL, &connected);
+    const bool released = online_session_release();
+    if (!released) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (action == NETWORK_CONNECTION_ACTION_KEEP && !connected) {
+        xEventGroupSetBits(s_events, NETWORK_EVENT_LINK_RECOVERY);
+    }
     if (stop_error != ESP_OK) {
+        xEventGroupSetBits(s_events, NETWORK_EVENT_POLICY_CHANGED);
         ESP_LOGW(TAG, "online network session Wi-Fi shutdown failed: %s",
                  esp_err_to_name(stop_error));
         return stop_error;
     }
 
-    ESP_LOGI(TAG, "online network session released");
+    ESP_LOGI(TAG, "online network session released; station %s",
+             action == NETWORK_CONNECTION_ACTION_KEEP ? "kept" : "stopped");
     return ESP_OK;
 }
 
-static bool wait_for_sync_request(TickType_t timeout)
+static EventBits_t wait_for_network_task_event(TickType_t timeout)
 {
     while (true) {
         const EventBits_t bits = xEventGroupWaitBits(
-            s_events, NETWORK_EVENT_SYNC_REQUEST |
-                          NETWORK_EVENT_MAINTENANCE_CHANGED,
+            s_events, NETWORK_EVENT_TASK_WAKE,
             pdTRUE, pdFALSE, timeout);
-        if ((bits & NETWORK_EVENT_SYNC_REQUEST) != 0U) {
-            return true;
+        const EventBits_t actionable =
+            bits & (NETWORK_EVENT_SYNC_REQUEST |
+                    NETWORK_EVENT_POLICY_CHANGED |
+                    NETWORK_EVENT_LINK_RECOVERY |
+                    NETWORK_EVENT_FORCE_PROVISIONING);
+        if (actionable != 0U) {
+            return actionable;
         }
         if ((bits & NETWORK_EVENT_MAINTENANCE_CHANGED) == 0U) {
-            return false;
+            return 0U;
         }
         while (exclusive_session_active()) {
             vTaskDelay(pdMS_TO_TICKS(100U));
@@ -1347,22 +1625,28 @@ static void network_task(void *argument)
 {
     (void)argument;
     network_credentials_t credentials = {0};
-    bool user_requested_sync = false;
     bool setup_window_completed = false;
     uint32_t consecutive_failures = 0U;
+    EventBits_t wake_bits = 0U;
 
     while (true) {
         wait_for_maintenance_end();
         if (!network_task_activity_begin()) {
             continue;
         }
+        wake_bits |= wait_for_network_task_event(0U);
+        const bool force_provisioning =
+            (wake_bits & NETWORK_EVENT_FORCE_PROVISIONING) != 0U;
+        wake_bits &= ~NETWORK_EVENT_FORCE_PROVISIONING;
         esp_err_t error = load_credentials(&credentials);
         if (error != ESP_OK) {
-            if (setup_window_completed && error == ESP_ERR_NVS_NOT_FOUND) {
+            if (error == ESP_ERR_NVS_NOT_FOUND &&
+                !network_connection_policy_should_provision(
+                    setup_window_completed, force_provisioning)) {
                 set_status(NETWORK_TIME_STATE_RETRY_WAIT, false,
                            ESP_ERR_TIMEOUT);
                 network_task_activity_end();
-                (void)wait_for_sync_request(portMAX_DELAY);
+                wake_bits = wait_for_network_task_event(portMAX_DELAY);
                 continue;
             }
             if (error != ESP_ERR_NVS_NOT_FOUND) {
@@ -1370,6 +1654,7 @@ static void network_task(void *argument)
                          esp_err_to_name(error));
                 (void)network_time_clear_credentials();
             }
+            (void)stop_wifi();
             error = run_provisioning(
                 pdMS_TO_TICKS(NETWORK_SETUP_WINDOW_MS), false, ESP_OK);
             if (error == ESP_ERR_TIMEOUT) {
@@ -1378,7 +1663,7 @@ static void network_task(void *argument)
                 network_task_activity_end();
                 ESP_LOGI(TAG,
                          "setup window closed; local features remain available offline");
-                (void)wait_for_sync_request(portMAX_DELAY);
+                wake_bits = wait_for_network_task_event(portMAX_DELAY);
                 continue;
             }
             if (error != ESP_OK) {
@@ -1391,18 +1676,29 @@ static void network_task(void *argument)
             }
             setup_window_completed = false;
             consecutive_failures = 0U;
+            wake_bits = error == ESP_OK ? NETWORK_EVENT_SYNC_REQUEST : 0U;
             continue;
         }
 
         setup_window_completed = false;
-        if (wait_for_sync_request(0U)) {
-            user_requested_sync = true;
-        }
+        wake_bits |= wait_for_network_task_event(0U);
+        const bool user_requested_sync =
+            (wake_bits & NETWORK_EVENT_SYNC_REQUEST) != 0U;
+        wake_bits = 0U;
         const bool automatic_sync = get_automatic_sync_enabled();
         if (!automatic_sync && !user_requested_sync) {
+            const esp_err_t stop_error = stop_wifi();
             set_status(NETWORK_TIME_STATE_RETRY_WAIT, true, ESP_OK);
             network_task_activity_end();
-            user_requested_sync = wait_for_sync_request(portMAX_DELAY);
+            if (stop_error != ESP_OK) {
+                ESP_LOGW(TAG,
+                         "could not stop station after entering saving mode: %s",
+                         esp_err_to_name(stop_error));
+            }
+            wake_bits = wait_for_network_task_event(
+                stop_error == ESP_OK
+                    ? portMAX_DELAY
+                    : pdMS_TO_TICKS(NETWORK_STATION_STOP_RETRY_MS));
             continue;
         }
         network_time_failure_t failure = NETWORK_TIME_FAILURE_NONE;
@@ -1412,7 +1708,7 @@ static void network_task(void *argument)
             consecutive_failures = 0U;
             set_status(NETWORK_TIME_STATE_SYNCHRONIZED, true, ESP_OK);
             network_task_activity_end();
-            user_requested_sync = wait_for_sync_request(
+            wake_bits = wait_for_network_task_event(
                 get_automatic_sync_enabled()
                     ? pdMS_TO_TICKS(NETWORK_RESYNC_INTERVAL_MS)
                     : portMAX_DELAY);
@@ -1444,9 +1740,14 @@ static void network_task(void *argument)
             ESP_LOGW(TAG, "manual time synchronization did not complete");
         }
         network_task_activity_end();
-        user_requested_sync = wait_for_sync_request(
-            retry_automatically ? pdMS_TO_TICKS(retry_delay_ms)
-                                : portMAX_DELAY);
+        bool station_active = false;
+        get_station_link_state(&station_active, NULL);
+        wake_bits = wait_for_network_task_event(
+            retry_automatically
+                ? pdMS_TO_TICKS(retry_delay_ms)
+                : (station_active
+                       ? pdMS_TO_TICKS(NETWORK_STATION_STOP_RETRY_MS)
+                       : portMAX_DELAY));
     }
 }
 
@@ -1502,6 +1803,13 @@ esp_err_t network_time_init(bool automatic_sync_enabled)
         error = esp_wifi_set_storage(WIFI_STORAGE_RAM);
     }
     if (error == ESP_OK) {
+        /* NORMAL keeps the STA associated while the radio sleeps between
+         * DTIM beacons. Make the ESP-IDF default explicit so later SDK
+         * changes cannot silently turn a persistent link into full-power
+         * operation. */
+        error = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    }
+    if (error == ESP_OK) {
         error = esp_event_handler_instance_register(
             WIFI_EVENT, ESP_EVENT_ANY_ID, wifi_event_handler, NULL, NULL);
     }
@@ -1521,8 +1829,8 @@ esp_err_t network_time_init(bool automatic_sync_enabled)
         return ESP_ERR_NO_MEM;
     }
     ESP_LOGI(TAG,
-             "network time service ready; automatic sync %s; credentials are never written to logs",
-             get_automatic_sync_enabled() ? "enabled" : "disabled");
+             "network service ready; mode=%s; station power save=min-modem; credentials are never written to logs",
+             get_automatic_sync_enabled() ? "normal" : "saving");
     return ESP_OK;
 }
 
