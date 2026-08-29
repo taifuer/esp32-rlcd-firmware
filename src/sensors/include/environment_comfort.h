@@ -51,6 +51,13 @@ environment_comfort_level_t environment_comfort_update(
     float humidity_percent,
     uint32_t timestamp_ms);
 
+/* Return the median of valid samples collected during the current filter
+ * window. This is the stable value intended for display. */
+bool environment_comfort_filtered_measurement(
+    const environment_comfort_tracker_t *tracker,
+    float *temperature_c,
+    float *humidity_percent);
+
 #ifdef __cplusplus
 }
 #endif

@@ -160,10 +160,15 @@ static float median(float *values, uint8_t count)
     return (values[middle - 1U] + values[middle]) / 2.0f;
 }
 
-static void filtered_measurement(const environment_comfort_tracker_t *tracker,
-                                 float *temperature_c,
-                                 float *humidity_percent)
+bool environment_comfort_filtered_measurement(
+    const environment_comfort_tracker_t *tracker,
+    float *temperature_c,
+    float *humidity_percent)
 {
+    if (tracker == NULL || temperature_c == NULL ||
+        humidity_percent == NULL || tracker->sample_count == 0U) {
+        return false;
+    }
     float temperatures[ENVIRONMENT_COMFORT_SAMPLE_CAPACITY];
     float humidities[ENVIRONMENT_COMFORT_SAMPLE_CAPACITY];
     for (uint8_t index = 0U; index < tracker->sample_count; ++index) {
@@ -172,6 +177,7 @@ static void filtered_measurement(const environment_comfort_tracker_t *tracker,
     }
     *temperature_c = median(temperatures, tracker->sample_count);
     *humidity_percent = median(humidities, tracker->sample_count);
+    return true;
 }
 
 static environment_comfort_level_t classify_with_hysteresis(
@@ -272,7 +278,7 @@ environment_comfort_level_t environment_comfort_update(
     }
     if (!measurement_valid(temperature_c, humidity_percent)) {
         environment_comfort_mark_invalid(tracker);
-        return ENVIRONMENT_COMFORT_UNKNOWN;
+        return tracker->level;
     }
 
     uint32_t sample_elapsed_ms = 0U;
@@ -293,6 +299,14 @@ environment_comfort_level_t environment_comfort_update(
     tracker->last_sample_ms = timestamp_ms;
     add_sample(tracker, temperature_c, humidity_percent, timestamp_ms);
 
+    if (tracker->level == ENVIRONMENT_COMFORT_UNKNOWN) {
+        tracker->level = environment_comfort_classify(
+            temperature_c, humidity_percent);
+        tracker->candidate_level = ENVIRONMENT_COMFORT_UNKNOWN;
+        tracker->candidate_elapsed_ms = 0U;
+        return tracker->level;
+    }
+
     if (timestamp_ms - tracker->observation_started_ms <
         COMFORT_INITIAL_OBSERVATION_MS) {
         return tracker->level;
@@ -300,17 +314,12 @@ environment_comfort_level_t environment_comfort_update(
 
     float filtered_temperature_c = 0.0f;
     float filtered_humidity_percent = 0.0f;
-    filtered_measurement(tracker, &filtered_temperature_c,
-                         &filtered_humidity_percent);
+    (void)environment_comfort_filtered_measurement(
+        tracker, &filtered_temperature_c, &filtered_humidity_percent);
     const environment_comfort_level_t next = classify_with_hysteresis(
         tracker->level, filtered_temperature_c,
         filtered_humidity_percent);
 
-    if (tracker->level == ENVIRONMENT_COMFORT_UNKNOWN) {
-        tracker->level = next;
-        tracker->candidate_level = ENVIRONMENT_COMFORT_UNKNOWN;
-        return tracker->level;
-    }
     if (next == tracker->level) {
         tracker->candidate_level = ENVIRONMENT_COMFORT_UNKNOWN;
         tracker->candidate_elapsed_ms = 0U;

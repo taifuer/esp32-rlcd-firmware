@@ -22,6 +22,7 @@
 #include "display.h"
 #include "driver/usb_serial_jtag.h"
 #include "environment_comfort.h"
+#include "environment_observation.h"
 #include "esp_app_desc.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
@@ -544,6 +545,27 @@ static display_environment_comfort_t dashboard_environment_comfort(
     }
 }
 
+static bool environment_display_values_differ(
+    float previous_temperature_c, float previous_humidity_percent,
+    float next_temperature_c, float next_humidity_percent,
+    bool fahrenheit)
+{
+    char previous[48];
+    char next[48];
+    const double previous_temperature =
+        fahrenheit ? (double)previous_temperature_c * 9.0 / 5.0 + 32.0
+                   : (double)previous_temperature_c;
+    const double next_temperature =
+        fahrenheit ? (double)next_temperature_c * 9.0 / 5.0 + 32.0
+                   : (double)next_temperature_c;
+    (void)snprintf(previous, sizeof(previous), "%.1f|%.0f",
+                   previous_temperature,
+                   (double)previous_humidity_percent);
+    (void)snprintf(next, sizeof(next), "%.1f|%.0f", next_temperature,
+                   (double)next_humidity_percent);
+    return strcmp(previous, next) != 0;
+}
+
 static const char *device_wifi_state_name(
     bool service_ready, const network_time_status_t *status)
 {
@@ -1019,6 +1041,9 @@ void app_main(void)
     shtc3_measurement_t measurement = {0};
     environment_comfort_tracker_t comfort_tracker;
     environment_comfort_init(&comfort_tracker);
+    environment_observation_t environment_observation;
+    environment_observation_init(&environment_observation);
+    bool environment_stale = false;
     chinese_lunar_date_t lunar_date = {0};
     char lunar_text[64] = {0};
     network_time_status_t network_status = {0};
@@ -2490,53 +2515,120 @@ void app_main(void)
                 !firmware_update_ui_active &&
                 !gallery_download_ui_active) {
                 last_sensor_read = now;
+                const uint32_t sensor_timestamp_ms =
+                    (uint32_t)((uint64_t)now * portTICK_PERIOD_MS);
                 const esp_err_t error = shtc3_read(&measurement);
                 if (error == ESP_OK) {
+                    const bool had_measurement =
+                        environment_observation.has_success;
+                    const uint8_t recovered_failure_count =
+                        environment_observation.consecutive_failures;
+                    const bool was_stale = environment_stale;
+                    environment_observation_record_success(
+                        &environment_observation, sensor_timestamp_ms);
                     const environment_comfort_level_t comfort =
                         environment_comfort_update(
                             &comfort_tracker,
                             measurement.temperature_c,
                             measurement.humidity_percent,
-                            (uint32_t)((uint64_t)now *
-                                       portTICK_PERIOD_MS));
+                            sensor_timestamp_ms);
+                    float displayed_temperature_c =
+                        measurement.temperature_c;
+                    float filtered_humidity_percent =
+                        measurement.humidity_percent;
+                    (void)environment_comfort_filtered_measurement(
+                        &comfort_tracker, &displayed_temperature_c,
+                        &filtered_humidity_percent);
                     const display_environment_comfort_t display_comfort =
                         dashboard_environment_comfort(comfort);
                     const bool sensor_display_changed =
                         !dashboard.environment_valid ||
-                        dashboard.temperature_c != measurement.temperature_c ||
-                        dashboard.humidity_percent !=
-                            measurement.humidity_percent ||
+                        environment_display_values_differ(
+                            dashboard.temperature_c,
+                            dashboard.humidity_percent,
+                            displayed_temperature_c,
+                            filtered_humidity_percent,
+                            dashboard.temperature_fahrenheit) ||
                         dashboard.environment_comfort != display_comfort;
                     dashboard.environment_valid = true;
-                    dashboard.temperature_c = measurement.temperature_c;
-                    dashboard.humidity_percent = measurement.humidity_percent;
+                    dashboard.temperature_c = displayed_temperature_c;
+                    dashboard.humidity_percent =
+                        filtered_humidity_percent;
                     dashboard.environment_comfort = display_comfort;
-                    if (dashboard.time_valid) {
+                    environment_stale = false;
+                    if (!had_measurement || (cycle % 300U) == 0U) {
+                        if (dashboard.time_valid) {
+                            ESP_LOGI(
+                                TAG,
+                                "RTC %04u-%02u-%02u %02u:%02u:%02u, temp %.1f C, humidity %.1f %%",
+                                datetime.year, datetime.month,
+                                datetime.day, datetime.hour,
+                                datetime.minute, datetime.second,
+                                (double)displayed_temperature_c,
+                                (double)filtered_humidity_percent);
+                        } else {
+                            ESP_LOGI(
+                                TAG,
+                                "RTC time invalid, temp %.1f C, humidity %.1f %%",
+                                (double)displayed_temperature_c,
+                                (double)filtered_humidity_percent);
+                        }
+                    }
+                    if (recovered_failure_count > 0U) {
                         ESP_LOGI(
                             TAG,
-                            "RTC %04u-%02u-%02u %02u:%02u:%02u, temp %.1f C, humidity %.1f %%",
-                            datetime.year, datetime.month, datetime.day,
-                            datetime.hour, datetime.minute, datetime.second,
-                            (double)measurement.temperature_c,
-                            (double)measurement.humidity_percent);
-                    } else {
-                        ESP_LOGI(TAG,
-                                 "RTC time invalid, temp %.1f C, humidity %.1f %%",
-                                 (double)measurement.temperature_c,
-                                 (double)measurement.humidity_percent);
+                            "SHTC3 recovered after %u failed sample%s; temp %.1f C, humidity %.1f %%",
+                            recovered_failure_count,
+                            recovered_failure_count == 1U ? "" : "s",
+                            (double)displayed_temperature_c,
+                            (double)filtered_humidity_percent);
                     }
-                    system_status_data_changed |= sensor_display_changed;
+                    system_status_data_changed |=
+                        sensor_display_changed || was_stale;
                     dashboard_data_changed |= sensor_display_changed;
                 } else {
-                    dashboard_data_changed |= dashboard.environment_valid;
-                    system_status_data_changed |=
-                        dashboard.environment_valid;
+                    const bool was_valid = dashboard.environment_valid;
+                    const bool was_stale = environment_stale;
+                    environment_observation_record_failure(
+                        &environment_observation);
+                    const environment_observation_status_t observation =
+                        environment_observation_evaluate(
+                            &environment_observation,
+                            sensor_timestamp_ms);
                     environment_comfort_mark_invalid(&comfort_tracker);
-                    dashboard.environment_valid = false;
-                    dashboard.environment_comfort =
-                        DISPLAY_ENVIRONMENT_COMFORT_UNKNOWN;
-                    ESP_LOGW(TAG, "SHTC3 read failed: %s",
-                             esp_err_to_name(error));
+                    environment_stale = observation.stale;
+                    if (!observation.display_valid) {
+                        dashboard.environment_valid = false;
+                        dashboard.environment_comfort =
+                            DISPLAY_ENVIRONMENT_COMFORT_UNKNOWN;
+                        if (was_valid) {
+                            environment_comfort_reset(&comfort_tracker);
+                            dashboard_data_changed = true;
+                        }
+                    }
+                    if (was_stale != environment_stale ||
+                        was_valid != dashboard.environment_valid) {
+                        system_status_data_changed = true;
+                    }
+                    if (observation.consecutive_failures == 1U) {
+                        if (observation.display_valid) {
+                            ESP_LOGW(
+                                TAG,
+                                "SHTC3 read failed: %s; retaining last valid sample (%u ms old)",
+                                esp_err_to_name(error),
+                                (unsigned)observation.age_ms);
+                        } else {
+                            ESP_LOGW(TAG,
+                                     "SHTC3 read failed: %s; no current valid sample",
+                                     esp_err_to_name(error));
+                        }
+                    } else if (was_valid &&
+                               !dashboard.environment_valid) {
+                        ESP_LOGW(
+                            TAG,
+                            "SHTC3 last valid sample expired after %u ms",
+                            (unsigned)observation.age_ms);
+                    }
                 }
             }
 
@@ -3023,6 +3115,7 @@ void app_main(void)
                             : "NOT READY",
                     .sensor_ready = sensor_driver_ready,
                     .environment_valid = dashboard.environment_valid,
+                    .environment_stale = environment_stale,
                     .temperature_c = dashboard.temperature_c,
                     .temperature_fahrenheit =
                         dashboard.temperature_fahrenheit,

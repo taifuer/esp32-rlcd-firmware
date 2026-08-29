@@ -875,7 +875,8 @@ void display_show_system_status(const display_system_status_t *status)
                                        ? (double)status->temperature_c *
                                                  9.0 / 5.0 + 32.0
                                        : (double)status->temperature_c;
-        snprintf(value, sizeof(value), "OK | %.1f %c | %.0f %%",
+        snprintf(value, sizeof(value), "%s | %.1f %c | %.0f %%",
+                 status->environment_stale ? "STALE" : "OK",
                  temperature,
                  status->temperature_fahrenheit ? 'F' : 'C',
                  (double)status->humidity_percent);

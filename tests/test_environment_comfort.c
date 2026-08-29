@@ -56,10 +56,32 @@ static void test_initial_observation_and_filter(void)
     uint32_t time_ms = 0U;
 
     assert(feed(&tracker, &time_ms, 24.0f, 50.0f,
-                55000U, 5000U) == ENVIRONMENT_COMFORT_UNKNOWN);
+                55000U, 5000U) == ENVIRONMENT_COMFORT_COMFORTABLE);
     assert(environment_comfort_update(&tracker, 40.0f, 95.0f,
                                       60000U) ==
            ENVIRONMENT_COMFORT_COMFORTABLE);
+
+    float temperature_c = 0.0f;
+    float humidity_percent = 0.0f;
+    assert(environment_comfort_filtered_measurement(
+        &tracker, &temperature_c, &humidity_percent));
+    assert(temperature_c == 24.0f);
+    assert(humidity_percent == 50.0f);
+}
+
+static void test_filtered_measurement_requires_samples(void)
+{
+    environment_comfort_tracker_t tracker;
+    environment_comfort_init(&tracker);
+    float temperature_c = 0.0f;
+    float humidity_percent = 0.0f;
+
+    assert(!environment_comfort_filtered_measurement(
+        &tracker, &temperature_c, &humidity_percent));
+    assert(!environment_comfort_filtered_measurement(
+        NULL, &temperature_c, &humidity_percent));
+    assert(!environment_comfort_filtered_measurement(
+        &tracker, NULL, &humidity_percent));
 }
 
 static void test_hysteresis_and_transition_delays(void)
@@ -112,12 +134,12 @@ static void test_saving_interval_and_invalid_sample(void)
     environment_comfort_init(&tracker);
 
     assert(environment_comfort_update(&tracker, 24.0f, 50.0f, 0U) ==
-           ENVIRONMENT_COMFORT_UNKNOWN);
+           ENVIRONMENT_COMFORT_COMFORTABLE);
     assert(environment_comfort_update(&tracker, 24.0f, 50.0f, 60000U) ==
            ENVIRONMENT_COMFORT_COMFORTABLE);
 
     assert(environment_comfort_update(&tracker, 24.0f, -1.0f, 65000U) ==
-           ENVIRONMENT_COMFORT_UNKNOWN);
+           ENVIRONMENT_COMFORT_COMFORTABLE);
     assert(environment_comfort_update(&tracker, 31.2f, 73.0f, 70000U) ==
            ENVIRONMENT_COMFORT_COMFORTABLE);
     assert(environment_comfort_update(&tracker, 31.2f, 73.0f, 130000U) ==
@@ -129,7 +151,7 @@ static void test_saving_interval_and_invalid_sample(void)
            ENVIRONMENT_COMFORT_NEEDS_ADJUSTMENT);
     environment_comfort_reset(&tracker);
     assert(environment_comfort_update(&tracker, 24.0f, 50.0f, 510000U) ==
-           ENVIRONMENT_COMFORT_UNKNOWN);
+           ENVIRONMENT_COMFORT_COMFORTABLE);
 }
 
 static void test_saving_transition_bounds(void)
@@ -138,7 +160,7 @@ static void test_saving_transition_bounds(void)
     environment_comfort_init(&tracker);
 
     assert(environment_comfort_update(&tracker, 24.0f, 50.0f, 0U) ==
-           ENVIRONMENT_COMFORT_UNKNOWN);
+           ENVIRONMENT_COMFORT_COMFORTABLE);
     assert(environment_comfort_update(&tracker, 24.0f, 50.0f, 60000U) ==
            ENVIRONMENT_COMFORT_COMFORTABLE);
 
@@ -167,7 +189,7 @@ static void test_timestamp_wrap(void)
 
     assert(environment_comfort_update(&tracker, 24.0f, 50.0f,
                                       start_ms) ==
-           ENVIRONMENT_COMFORT_UNKNOWN);
+           ENVIRONMENT_COMFORT_COMFORTABLE);
     assert(environment_comfort_update(&tracker, 24.0f, 50.0f,
                                       UINT32_MAX) ==
            ENVIRONMENT_COMFORT_COMFORTABLE);
@@ -181,7 +203,7 @@ static void test_outer_hysteresis(void)
     environment_comfort_tracker_t fair_tracker;
     environment_comfort_init(&fair_tracker);
     assert(environment_comfort_update(&fair_tracker, 18.0f, 50.0f, 0U) ==
-           ENVIRONMENT_COMFORT_UNKNOWN);
+           ENVIRONMENT_COMFORT_FAIR);
     assert(environment_comfort_update(&fair_tracker, 18.0f, 50.0f,
                                       60000U) ==
            ENVIRONMENT_COMFORT_FAIR);
@@ -196,7 +218,7 @@ static void test_outer_hysteresis(void)
     environment_comfort_init(&adjustment_tracker);
     assert(environment_comfort_update(&adjustment_tracker, 31.2f, 73.0f,
                                       0U) ==
-           ENVIRONMENT_COMFORT_UNKNOWN);
+           ENVIRONMENT_COMFORT_NEEDS_ADJUSTMENT);
     assert(environment_comfort_update(&adjustment_tracker, 31.2f, 73.0f,
                                       60000U) ==
            ENVIRONMENT_COMFORT_NEEDS_ADJUSTMENT);
@@ -212,6 +234,7 @@ int main(void)
 {
     test_direct_classification();
     test_initial_observation_and_filter();
+    test_filtered_measurement_requires_samples();
     test_hysteresis_and_transition_delays();
     test_saving_interval_and_invalid_sample();
     test_saving_transition_bounds();

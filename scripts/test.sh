@@ -44,6 +44,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/sensors/include \
+  src/sensors/environment_observation.c \
+  tests/test_environment_observation.c \
+  -o "${RLCD_TEST_TMP}/test_environment_observation"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/alarm/include \
   src/alarm/alarm_scheduler.c tests/test_alarm_scheduler.c \
   -o "${RLCD_TEST_TMP}/test_alarm_scheduler"
@@ -236,6 +243,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_calendar_month"
 "${RLCD_TEST_TMP}/test_battery_level"
 "${RLCD_TEST_TMP}/test_environment_comfort"
+"${RLCD_TEST_TMP}/test_environment_observation"
 "${RLCD_TEST_TMP}/test_alarm_scheduler"
 "${RLCD_TEST_TMP}/test_alarm_input_gate"
 "${RLCD_TEST_TMP}/test_alarm_history_record"

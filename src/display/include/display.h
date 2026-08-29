@@ -53,6 +53,7 @@ typedef struct {
     const char *rtc_backup_state;
     bool sensor_ready;
     bool environment_valid;
+    bool environment_stale;
     float temperature_c;
     bool temperature_fahrenheit;
     float humidity_percent;
