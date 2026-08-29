@@ -5,14 +5,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.18.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.19.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
-以下界面反映 v0.18.0 正式版。
+以下界面反映 v0.19.0 正式版。
 
 | 首屏 | 月历 |
 | :---: | :---: |
@@ -73,18 +73,19 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.18.0 语音功能时还需同时写入 `-model.bin`。离线更新位于“设置”门户。
+更早版本迁移到 v0.19.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+`-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
 
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.18.0
+cd dist/v0.19.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.18.0/esp32-rlcd-firmware-v0.18.0-factory.bin \
+  --firmware dist/v0.19.0/esp32-rlcd-firmware-v0.19.0-factory.bin \
   --confirm
 ```
 

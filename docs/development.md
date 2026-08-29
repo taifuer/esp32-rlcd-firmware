@@ -107,7 +107,8 @@ ESP-SR 从标签为 `model` 的数据区域加载 `srmodels.bin`。v0.18.0 分�
 旧分区表，因此保留 Wi-Fi 和设备偏好。默认模型为 `build/srmodels/srmodels.bin`，必要时
 可用 `--model` 指定同一校验目录中的模型。
 
-从 v0.7.0 或更新版本迁移到 v0.18.0 的 USB 验收流程为：
+从 v0.7.0 或更新版本迁移到当前 v0.19.0 的 USB 验收流程如下；离线语音模型仍是
+v0.18.0 首次引入的同一发布边界：
 
 1. 先执行 `./scripts/build.sh`，再确认 `build/SHA256SUMS` 同时校验应用和
    `srmodels/srmodels.bin`；
@@ -122,12 +123,12 @@ ESP-SR 从标签为 `model` 的数据区域加载 `srmodels.bin`。v0.18.0 分�
 ```bash
 ./scripts/update-app.sh \
   --port COM5 \
-  --firmware build/release/v0.18.0/esp32-rlcd-firmware-v0.18.0-ota.bin \
-  --model build/release/v0.18.0/esp32-rlcd-firmware-v0.18.0-model.bin \
+  --firmware build/release/v0.19.0/esp32-rlcd-firmware-v0.19.0-ota.bin \
+  --model build/release/v0.19.0/esp32-rlcd-firmware-v0.19.0-model.bin \
   --confirm
 ```
 
-首次安装、完整恢复和需要改写为新分区表时仍使用包含模型的 v0.18.0 Factory 镜像；
+首次安装、完整恢复和需要改写为新分区表时，使用包含模型的 v0.19.0 Factory 镜像；
 `build.sh` 必须逐字节确认 Factory 在 `0x610000` 包含同一 `srmodels.bin`。已通过
 `update-app.sh` 或 Factory 安装兼容模型的设备，后续纯应用 OTA 可以继续复用它；改变
 模型内容、区域大小或不兼容 ABI 时，必须再次提供 app+model USB 更新或独立、断电安全且
@@ -163,20 +164,20 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 
 ### 构建版本与更新通道
 
-仓库默认构建版本为 `0.18.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
+仓库默认构建版本为 `0.19.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
 候选构建修改 `CMakeLists.txt`：
 
 ```bash
-RLCD_PROJECT_VERSION=0.19.0-dev.1 ./scripts/build.sh
-RLCD_PROJECT_VERSION=0.18.0 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.20.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.19.0 ./scripts/build.sh
 ```
 
 版本必须是固件可比较的 SemVer，且不带文件名使用的前导 `v`：
 
 - 设备默认读取 `https://mcu.taifua.com/esp32-rlcd/firmware/stable.json`；只有设备偏好中
   显式启用开发者测试通道后才读取 `testing.json`；
-- SemVer 不自动选择通道。稳定清单只允许 `0.18.0` 这类正式目标，测试清单用于
-  `0.19.0-dev.1`、`0.19.0-rc.1` 等候选，也可在转正式期间指向正式目标。
+- SemVer 不自动选择通道。稳定清单只允许 `0.19.0` 这类正式目标，测试清单用于
+  `0.20.0-dev.1`、`0.20.0-rc.1` 等候选，也可在转正式期间指向正式目标。
 
 预发布验证先上传版本化 `-ota.bin`，核对大小和 SHA-256，再更新 `testing.json`。正式
 发布必须从同一份已实机验收的源码构建正式版本，重新核对产物差异、大小与 SHA-256 后

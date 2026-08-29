@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware offline voice page</title>
+  <desc id="description">A clean white-on-black voice page showing local offline recognition, the hold-and-release interaction and supported navigation commands.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="200" y="32" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">VOICE</text>
+    <text x="388" y="32" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">2/4</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+    <text x="200" y="92" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">OFFLINE VOICE</text>
+    <text x="200" y="145" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="700">Hold KEY 2s, then release</text>
+    <g stroke="none" text-anchor="middle" font-family="Noto Sans CJK SC, WenQuanYi Zen Hei, Arial, sans-serif" font-size="16">
+      <text x="200" y="190">回到主页　打开日历　查看状态</text>
+      <text x="200" y="218">打开图片　打开设置　取消</text>
+    </g>
+    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: HOME | KEY: NEXT</text>
+  </g>
+</svg>
