@@ -16,6 +16,10 @@
 - 音频驱动、维护诊断与离线语音位于 `src/audio/`，使用板载 ES8311、ES7210、
   ESP-IDF I2S 和 Espressif ESP-SR MultiNet；16 kHz 单声道音频直接送入 MultiNet，
   不使用 AFE，也不创建第二套直接操作 codec 的采集链路。
+- 可选云端语音 Beta 位于 `src/conversation/`，负责启用状态、API Key、受控模型与官方
+  API Host 配置、双槽持久化、Realtime 事件和 WebSocket 客户端；scheme、路径与模型参数
+  由固件按白名单组成，不接受完整用户 URL。采集和播放仍由 `src/audio/` 的同一个串行化
+  worker 独占 codec 与 I2S。
 - microSD 图片源使用 ESP-IDF 原生 1-bit SDMMC 和 FatFs；`src/sd_image/` 负责启动
   扫描、PSRAM 缓存和只在用户确认时开放的有界导入事务，PBM/BMP 单色图片校验
   与解码位于 `src/image/`。
@@ -107,7 +111,7 @@ ESP-SR 从标签为 `model` 的数据区域加载 `srmodels.bin`。v0.18.0 分�
 旧分区表，因此保留 Wi-Fi 和设备偏好。默认模型为 `build/srmodels/srmodels.bin`，必要时
 可用 `--model` 指定同一校验目录中的模型。
 
-从 v0.7.0 或更新版本迁移到当前 v0.19.0 的 USB 验收流程如下；离线语音模型仍是
+从 v0.7.0 或更新版本迁移到当前 v0.20.0 的 USB 验收流程如下；离线语音模型仍是
 v0.18.0 首次引入的同一发布边界：
 
 1. 先执行 `./scripts/build.sh`，再确认 `build/SHA256SUMS` 同时校验应用和
@@ -123,12 +127,12 @@ v0.18.0 首次引入的同一发布边界：
 ```bash
 ./scripts/update-app.sh \
   --port COM5 \
-  --firmware build/release/v0.19.0/esp32-rlcd-firmware-v0.19.0-ota.bin \
-  --model build/release/v0.19.0/esp32-rlcd-firmware-v0.19.0-model.bin \
+  --firmware build/release/v0.20.0/esp32-rlcd-firmware-v0.20.0-ota.bin \
+  --model build/release/v0.20.0/esp32-rlcd-firmware-v0.20.0-model.bin \
   --confirm
 ```
 
-首次安装、完整恢复和需要改写为新分区表时，使用包含模型的 v0.19.0 Factory 镜像；
+首次安装、完整恢复和需要改写为新分区表时，使用包含模型的 v0.20.0 Factory 镜像；
 `build.sh` 必须逐字节确认 Factory 在 `0x610000` 包含同一 `srmodels.bin`。已通过
 `update-app.sh` 或 Factory 安装兼容模型的设备，后续纯应用 OTA 可以继续复用它；改变
 模型内容、区域大小或不兼容 ABI 时，必须再次提供 app+model USB 更新或独立、断电安全且
@@ -164,20 +168,20 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 
 ### 构建版本与更新通道
 
-仓库默认构建版本为 `0.19.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
+仓库默认构建版本为 `0.20.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
 候选构建修改 `CMakeLists.txt`：
 
 ```bash
-RLCD_PROJECT_VERSION=0.20.0-dev.1 ./scripts/build.sh
-RLCD_PROJECT_VERSION=0.19.0 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.21.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.20.0 ./scripts/build.sh
 ```
 
 版本必须是固件可比较的 SemVer，且不带文件名使用的前导 `v`：
 
 - 设备默认读取 `https://mcu.taifua.com/esp32-rlcd/firmware/stable.json`；只有设备偏好中
   显式启用开发者测试通道后才读取 `testing.json`；
-- SemVer 不自动选择通道。稳定清单只允许 `0.19.0` 这类正式目标，测试清单用于
-  `0.20.0-dev.1`、`0.20.0-rc.1` 等候选，也可在转正式期间指向正式目标。
+- SemVer 不自动选择通道。稳定清单只允许 `0.20.0` 这类正式目标，测试清单用于
+  `0.21.0-dev.1`、`0.21.0-rc.1` 等候选，也可在转正式期间指向正式目标。
 
 预发布验证先上传版本化 `-ota.bin`，核对大小和 SHA-256，再更新 `testing.json`。正式
 发布必须从同一份已实机验收的源码构建正式版本，重新核对产物差异、大小与 SHA-256 后
@@ -206,10 +210,18 @@ RLCD_PROJECT_VERSION=0.19.0 ./scripts/build.sh
     重连、`NORMAL` 常连、`SAVING` 临时联网收尾、`GET_NETWORK`、USB `RESET_WIFI`、
     系统中心页面和上下文长按操作，并确认日志不包含家庭 SSID 或密码。含 microSD 改动的
     版本还必须分别验收无卡、只读启动、
-    用户确认导入、中断恢复、数量上限和关机插拔。
-11. 只有实机通过后，才把 Factory、OTA 与同一次构建生成的版本化 `-model.bin` 复制到
-    `dist/vX.Y.Z/`，用三条 `SHA256SUMS` 保存大小、摘要、构建依赖和验收记录。模型与
-    固件一样是受版本控制的正式发布产物；`build/` 中间文件仍不提交。
+    用户确认导入、中断恢复、数量上限和关机插拔。首次发布云端语音 Beta 时，至少必须在
+    目标板验证设置门户粘贴与保存专用 Key、北京共享 Host 加默认模型的端到端连接、转写、
+    文字显示和 24 kHz 播放，并确认既有日常页面仍可使用。状态接口与日志不得包含完整 Key、
+    请求头、PCM 或对话正文。停用与离线回退、错误 Key、第二模型、其他受控 Host、长输入、
+    取消、中途断网、连续资源回收和闹钟抢占等完整矩阵记录在[开发计划](roadmap.md)，完成前
+    功能保持 Beta，且每次发布必须在 Changelog 和版本说明中列出尚未实机覆盖的边界。
+    Host、URL、模型和表单的拒绝路径还必须由主机测试覆盖。涉及对应路径的后续改动应补做
+    针对性实机回归；移除 Beta 标记或更改默认模型前必须完成全部矩阵。
+11. 只有与本次发布范围对应的必需实机检查通过后，才把 Factory、OTA 与同一次构建生成的
+    版本化 `-model.bin` 复制到 `dist/vX.Y.Z/`，用三条 `SHA256SUMS` 保存大小、摘要、
+    构建依赖和验收记录。模型与固件一样是受版本控制的正式发布产物；`build/` 中间文件
+    仍不提交。
 12. 按[发布固件安装指南](user-install.md)重新执行发布路径，确认普通用户命令和文件名一致。
 13. 执行 `./scripts/package-release.sh vX.Y.Z`，检查 `build/release/vX.Y.Z/` 中的全部附件
     和 `RELEASE_SHA256SUMS`。
@@ -256,15 +268,34 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
   删除或覆盖它。
 - 任何配网或网络日志都不得输出家庭 SSID、密码或 HTTP 请求正文；调试状态只报告是否
   已配置、状态名、错误码和非敏感长度。
+- `sdkconfig.defaults` 将默认和编译期最高日志级别都锁定为 `INFO`，仓库检查不得允许
+  `DEBUG` 或 `VERBOSE` 覆盖。提高日志级别不能作为排障捷径；需要额外诊断时只增加经过
+  审核的非敏感标量状态，不能记录凭据、Authorization 头、请求正文、PCM、转写或回复。
 - 二维码原文包含临时热点密码；外部组件的输入日志必须在编译时关闭，`build.sh` 会检查
   最终组件归档，发现相关日志字符串时拒绝生成可用构建结果。
 - 在线更新必须通过 ESP-IDF CA 证书包验证 HTTPS；清单的项目、硬件、通道、版本、下载
   主机、大小和 SHA-256 任一不匹配都不得写入或切换启动槽。安装前必须重新读取清单，
   自动流程只能检查，不能下载或安装。
 - 不改写或提交仓库外的上游参考源码。
-- 原始麦克风 PCM 不得写入日志、Flash、NVS、microSD 或网络。离线语音日志只允许记录
-  会话状态、不可还原的指令编号、耗时、置信结果和错误码；任何调试采样都不得进入正式
-  构建或发布产物。
+- 原始麦克风 PCM 不得写入日志、Flash、NVS 或 microSD。离线模式不得发送 PCM；云端
+  Beta 只在用户主动开始的本轮通过已验证证书的 TLS WebSocket 发送，不得让“不持久化”
+  掩盖上传事实。语音日志只允许记录会话状态、不可还原的指令编号、耗时和错误码；任何
+  调试采样、转写或回复都不得进入正式构建或发布产物。
+- 云端 API Key 不得由状态接口返回、网页预填或日志记录；空白保存只保留既有 Key，关闭
+  云端也保留 Key，清除使用独立确认并同时停用云端、恢复默认模型与北京共享 Host。API
+  Host 只接受北京/新加坡的百炼共享域名或单标签 Workspace 专属域名；设置门户不得接受
+  scheme、路径、端口、IP、代理或任意域名。模型只能来自经过实现与验证的枚举，不能把
+  任意模型名拼入请求。当前 Flash 与 NVS 未加密，文档必须明确物理读取风险，并建议专用、
+  可轮换的 Key、消费保护和设备转让前吊销。完整边界见[云端语音 Beta](cloud-voice.md)。
+
+百炼直连的鉴权与共享端点以[Realtime API 鉴权文档](https://help.aliyun.com/en/model-studio/realtime-token-authentication)
+为依据；共享与业务空间专属域名的选择以
+[Base URL 总览](https://help.aliyun.com/zh/model-studio/base-url)为依据；Qwen-Omni 的事件和
+音频配置以[客户端事件文档](https://help.aliyun.com/zh/model-studio/client-events)
+为依据；Qwen-Audio 的 16 kHz 输入、24 kHz 输出和手动 PTT 以
+[Qwen-Audio Realtime 使用指南](https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides)
+为依据。首版只实现共同的单轮手动 PTT 子集，不得因为上游模型支持多轮、`smart_turn` 或
+Function Calling 就在产品文档中宣称已经提供这些能力。
 
 ## 网络功能验收
 

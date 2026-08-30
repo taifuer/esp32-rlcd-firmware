@@ -7,6 +7,7 @@
 
 #include "app_settings.h"
 #include "clock_service.h"
+#include "conversation_config.h"
 #include "esp_app_format.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
@@ -52,11 +53,21 @@
 #define SETTINGS_PORTAL_FORM_CAPACITY (APP_SETTINGS_FORM_MAX_LENGTH + 1U)
 #define SETTINGS_PORTAL_SMALL_FORM_CAPACITY 64U
 #define SETTINGS_WIFI_FORM_CAPACITY 385U
+#define SETTINGS_CONVERSATION_FORM_CAPACITY \
+    (CONVERSATION_CONFIG_FORM_MAX_LENGTH + 1U)
 #define SETTINGS_WIFI_VALIDATION_TIMEOUT_MS 15000U
 #define SETTINGS_IMAGE_FORM_CAPACITY 96U
 #define SETTINGS_IMAGE_LIST_JSON_CAPACITY                                  \
     (128U + SD_IMAGE_MAX_IMAGES * (SD_IMAGE_FILENAME_CAPACITY + 3U))
 #define SETTINGS_PORTAL_TOKEN_HEADER "X-RLCD-Token"
+#define SETTINGS_JSON_ESCAPE_CAPACITY(maximum_length) \
+    ((maximum_length) * 6U + 1U)
+#define SETTINGS_STATE_JSON_CAPACITY 4096U
+#define SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "aliyun_realtime"
+#define SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI                              \
+    "qwen3-omni-flash-realtime"
+#define SETTINGS_CONVERSATION_MODEL_QWEN_AUDIO_3                           \
+    "qwen-audio-3.0-realtime-flash"
 
 static const char *TAG = "firmware_update";
 static const char SETTINGS_AP_BASE_NAME[] = "ESP32-RLCD-SETTINGS";
@@ -144,6 +155,35 @@ static const char SETTINGS_PAGE[] =
     "<p id=\"maintenanceMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details>"
     "<button type=\"submit\">保存设置</button></form>"
     "<p id=\"settingsMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
+    "<section><h2>云端语音 Beta</h2><div class=\"wifi-summary\"><span>配置状态</span>"
+    "<strong id=\"conversationStatus\">未保存</strong></div>"
+    "<form id=\"conversationForm\" autocomplete=\"off\">"
+    "<input type=\"hidden\" name=\"service\" value=\""
+    SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "\">"
+    "<label for=\"conversationEnabled\">云端语音</label><select id=\"conversationEnabled\" name=\"enabled\">"
+    "<option value=\"off\">关闭（默认）</option><option value=\"on\">开启</option></select>"
+    "<label for=\"conversationKey\">API Key</label><input id=\"conversationKey\" name=\"api_key\" type=\"text\" "
+    "maxlength=\"256\" autocomplete=\"off\" autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\">"
+    "<p class=\"note\">请直接粘贴；内容仅在本次编辑时可见，保存后立即清空且不会再次显示或预填。已有配置时留空将保留当前 API Key。</p>"
+    "<p class=\"note\">关闭云端语音不会删除 API Key，无网络时仍使用本地语音。</p>"
+    "<details class=\"advanced\"><summary>高级设置</summary>"
+    "<label for=\"conversationModel\">对话模型</label><select id=\"conversationModel\" name=\"model\">"
+    "<option value=\"" SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI
+    "\">Qwen3 Omni Flash Realtime（默认）</option>"
+    "<option value=\"" SETTINGS_CONVERSATION_MODEL_QWEN_AUDIO_3
+    "\">Qwen Audio 3.0 Realtime Flash</option></select>"
+    "<p class=\"note\">仅可选择固件已验证的阿里云百炼 Realtime 模型。</p>"
+    "<label for=\"conversationApiHost\">API Host（可选）</label>"
+    "<input id=\"conversationApiHost\" name=\"api_host\" maxlength=\"127\" "
+    "placeholder=\"llm-xxx.cn-beijing.maas.aliyuncs.com\" autocomplete=\"off\">"
+    "<p class=\"note\">留空使用北京共享服务；也可填写受支持的新加坡共享或 Workspace 专属 API Host。不要包含 wss://、路径或端口。</p></details>"
+    "<p class=\"note\">使用云端语音时，麦克风音频会发送至阿里云百炼，识别文本与回复由服务端生成，并可能产生费用。</p>"
+    "<p class=\"note\">当前固件未启用 Flash/NVS 加密；具备设备物理访问能力的人可能读取已保存的 API Key。建议使用本设备专用、最小权限且可随时撤销的 Key。</p>"
+    "<button id=\"conversationSave\" type=\"submit\">保存云端语音配置</button></form>"
+    "<p id=\"conversationMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
+    "<details class=\"advanced\"><summary>清除云端语音配置</summary>"
+    "<p class=\"note\">清除已保存的 API Key，关闭云端语音并恢复默认模型与共享 API Host；其他设备设置不会改变，也无需重启。</p>"
+    "<button id=\"conversationClear\" type=\"button\" class=\"danger\">确认清除云端语音配置</button></details></section>"
     "<section><h2>日期与时间</h2><p>无需互联网，使用当前手机时间校准设备 RTC。</p>"
     "<button id=\"setTime\" type=\"button\" class=\"secondary\">使用手机时间校准</button>"
     "<p id=\"timeMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
@@ -179,7 +219,7 @@ static const char SETTINGS_PAGE[] =
     "<progress id=\"progress\" max=\"100\" value=\"0\"></progress>"
     "<p id=\"updateMessage\" class=\"message\">等待选择固件</p>"
     "<small>写入期间请保持设备供电。校验成功后设备会自动重启。</small></section>"
-    "<script>let token='',initialUpdates='stable',wifiConfigured=false,savedWifi='',wifiBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
+    "<script>let token='',initialUpdates='stable',wifiConfigured=false,savedWifi='',wifiBusy=false,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
     "storedImages=[],storedIndex=0,storedSelected='',storedBusy=false,storedRequest=0;"
     "const $=id=>document.getElementById(id);const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
     "const SOURCE_MAX_BYTES=32*1024*1024,SOURCE_MAX_PIXELS=40000000;"
@@ -195,6 +235,14 @@ static const char SETTINGS_PAGE[] =
     "$('wifiEdit').textContent=wifiConfigured?'更换 Wi-Fi':'配置 Wi-Fi';if($('wifiForm').hidden)$('wifiSsid').value=savedWifi;wifiControls()}"
     "function wifiEditing(value){$('wifiForm').hidden=!value;if(value){$('wifiSsid').value=savedWifi;$('wifiPassword').value='';"
     "$('openWifi').checked=false;$('showWifiPassword').checked=false;$('wifiPassword').type='password';$('wifiSsid').focus()}wifiControls()}"
+    "function conversationControls(){const blocked=conversationBusy||!conversationAvailable;$('conversationForm').setAttribute('aria-busy',conversationBusy?'true':'false');"
+    "$('conversationEnabled').disabled=blocked;$('conversationModel').disabled=blocked;$('conversationApiHost').disabled=blocked;$('conversationKey').disabled=blocked;"
+    "$('conversationSave').disabled=blocked;$('conversationClear').disabled=blocked}"
+    "function setConversationState(state){const cloud=state&&typeof state==='object'?state:null;conversationAvailable=cloud!==null&&cloud.available===true&&cloud.service==='" SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "'&&typeof cloud.configured==='boolean'&&typeof cloud.enabled==='boolean'&&typeof cloud.model==='string'&&typeof cloud.api_host==='string'&&typeof cloud.shared_endpoint==='boolean';"
+    "conversationConfigured=conversationAvailable&&cloud.configured===true;conversationEnabled=conversationConfigured&&cloud.enabled===true;$('conversationStatus').textContent=!conversationAvailable?'暂不可用':!conversationConfigured?'未配置':conversationEnabled?'已开启':'已关闭';"
+    "$('conversationEnabled').value=conversationEnabled?'on':'off';"
+    "const modelSelect=$('conversationModel');modelSelect.value=conversationAvailable?cloud.model:'';if(modelSelect.selectedIndex<0)modelSelect.value='" SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI "';$('conversationApiHost').value=conversationAvailable&&!(cloud.shared_endpoint&&cloud.api_host==='" CONVERSATION_DEFAULT_API_HOST "')?cloud.api_host:'';$('conversationKey').value='';"
+    "show('conversationMessage',conversationAvailable?'':'云端语音设置暂不可用；其他设备设置仍可正常使用。');conversationControls()}"
     "function storedControls(){const available=storedImages.length>0&&!imageBusy&&!storedBusy;"
     "$('storedPrevious').disabled=!available||storedImages.length<2;$('storedNext').disabled=!available||storedImages.length<2;"
     "$('storedSelect').disabled=!available||storedImages[storedIndex]===storedSelected;$('storedDelete').disabled=!available}"
@@ -275,7 +323,7 @@ static const char SETTINGS_PAGE[] =
     "$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume;$('updates').value=state.updates;"
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
     "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});initialUpdates=state.updates;"
-    "setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}"
+    "setConversationState(state.conversation);setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}"
     "$('volume').oninput=()=>{$('volumeValue').value=$('volume').value};"
     "$('settings').onsubmit=async event=>{event.preventDefault();const match=/^(\\d{2}):(\\d{2})$/.exec($('alarmTime').value);"
     "const days=Array.from(alarmDays()).reduce((mask,input)=>input.checked?mask|Number(input.dataset.bit):mask,0);"
@@ -294,6 +342,14 @@ static const char SETTINGS_PAGE[] =
     "if(!open&&!/^[\\x20-\\x7e]{8,63}$/.test(password)){show('wifiMessage','请输入 8—63 位英文字符、数字或符号，开放网络请勾选对应选项。');return}"
     "wifiBusy=true;wifiControls();show('wifiMessage','正在验证新网络，设置热点可能短暂重新连接…');try{const body='ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(open?'':password);"
     "show('wifiMessage',await post('/api/wifi/change',body))}catch(error){show('wifiMessage',error.name==='TypeError'?'设置热点刚刚断开。请查看设备是否已连接新网络；若热点仍在，可刷新页面确认原配置仍保留。':error.message);wifiBusy=false;wifiControls()}};"
+    "$('conversationForm').onsubmit=async event=>{event.preventDefault();if(conversationBusy||!conversationAvailable)return;"
+    "const body=new URLSearchParams(new FormData(event.target)).toString();conversationBusy=true;conversationControls();"
+    "show('conversationMessage','正在保存…');try{const message=await post('/api/conversation/config',body);await load();show('conversationMessage',message)}"
+    "catch(error){show('conversationMessage',error.message)}finally{$('conversationKey').value='';conversationBusy=false;conversationControls()}};"
+    "$('conversationClear').onclick=async()=>{if(conversationBusy||!conversationAvailable)return;"
+    "if(!confirm('确认清除已保存的 API Key，关闭云端语音并恢复默认模型与 API Host？此操作无法撤销。'))return;conversationBusy=true;conversationControls();"
+    "show('conversationMessage','正在清除…');try{const message=await post('/api/conversation/clear','confirm=CLEAR_CONVERSATION');"
+    "await load();show('conversationMessage',message)}catch(error){show('conversationMessage',error.message)}finally{conversationBusy=false;conversationControls()}};"
     "$('defaults').onclick=async()=>{if(!confirm('恢复偏好默认值？Wi-Fi 配置不会被删除。'))return;"
     "show('maintenanceMessage','正在恢复…');try{const message=await post('/api/settings/defaults','confirm=DEFAULTS');await load();show('maintenanceMessage',message)}"
     "catch(error){show('maintenanceMessage',error.message)}};"
@@ -954,6 +1010,17 @@ static const char *settings_sd_state(const sd_image_status_t *status)
     return "ready";
 }
 
+static const char *conversation_service_form_value(
+    conversation_service_t service)
+{
+    switch (service) {
+    case CONVERSATION_SERVICE_ALIYUN_REALTIME:
+        return SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME;
+    default:
+        return NULL;
+    }
+}
+
 static esp_err_t settings_state_get_handler(httpd_req_t *request)
 {
     if (!portal_is_ready()) {
@@ -969,36 +1036,86 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
                          "设备设置暂不可用。\n");
     }
 
-    char token[SETTINGS_PORTAL_TOKEN_CAPACITY] = {0};
+    typedef struct {
+        char token[SETTINGS_PORTAL_TOKEN_CAPACITY];
+        char escaped_ssid[
+            SETTINGS_JSON_ESCAPE_CAPACITY(NETWORK_SSID_MAX_LENGTH)];
+        char escaped_api_host[
+            SETTINGS_JSON_ESCAPE_CAPACITY(
+                CONVERSATION_API_HOST_MAX_LENGTH)];
+        char json[SETTINGS_STATE_JSON_CAPACITY];
+    } settings_state_response_t;
+    settings_state_response_t *const response = heap_caps_calloc(
+        1U, sizeof(*response), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (response == NULL) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8",
+                         "设备内存不足，暂时无法读取设置。\n");
+    }
+
     portENTER_CRITICAL(&s_status_lock);
-    memcpy(token, s_session_token, sizeof(token));
+    memcpy(response->token, s_session_token, sizeof(response->token));
     portEXIT_CRITICAL(&s_status_lock);
     sd_image_status_t sd_status = {0};
     sd_image_store_get_status(&sd_status);
     network_time_saved_network_t saved_network = {0};
     const esp_err_t network_error =
         network_time_get_saved_network(&saved_network);
-    char escaped_ssid[NETWORK_SSID_MAX_LENGTH * 6U + 1U] = {0};
+    conversation_config_status_t conversation_status = {0};
+    const esp_err_t conversation_error =
+        conversation_config_get_status(&conversation_status);
+    const bool conversation_available = conversation_error == ESP_OK;
+    if (!conversation_available) {
+        conversation_config_make_status(NULL, &conversation_status);
+        ESP_LOGW(TAG, "cloud conversation settings status unavailable: %s",
+                 esp_err_to_name(conversation_error));
+    }
+    const char *conversation_service =
+        conversation_service_form_value(conversation_status.service);
+    if (conversation_service == NULL) {
+        conversation_service =
+            SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME;
+    }
+    const char *conversation_model =
+        conversation_model_name(conversation_status.model);
+    if (conversation_model == NULL) {
+        conversation_model = SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI;
+    }
+    const bool conversation_configured =
+        conversation_available && conversation_status.configured;
+    const bool conversation_enabled =
+        conversation_configured && conversation_status.enabled;
     if (network_error != ESP_OK ||
-        !settings_portal_json_escape(saved_network.ssid, escaped_ssid,
-                                     sizeof(escaped_ssid))) {
+        !settings_portal_json_escape(
+            saved_network.ssid, response->escaped_ssid,
+            sizeof(response->escaped_ssid)) ||
+        !settings_portal_json_escape(
+            conversation_status.api_host,
+            response->escaped_api_host,
+            sizeof(response->escaped_api_host))) {
+        conversation_config_clear_sensitive(response, sizeof(*response));
+        heap_caps_free(response);
+        memset(&conversation_status, 0, sizeof(conversation_status));
         memset(&saved_network, 0, sizeof(saved_network));
         return send_page(request, "503 Service Unavailable",
                          "text/plain; charset=utf-8",
-                         "已保存的 Wi-Fi 状态暂不可用。\n");
+                         "设备设置状态暂不可用。\n");
     }
-    char json[768];
     const int written = snprintf(
-        json, sizeof(json),
+        response->json, sizeof(response->json),
         "{\"wifi_configured\":%s,\"wifi_ssid\":\"%s\","
         "\"timezone\":%d,\"unit\":\"%s\","
         "\"volume\":%u,\"updates\":\"%s\","
         "\"alarm\":\"%s\","
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
         "\"sd_state\":\"%s\",\"image_count\":%u,"
+        "\"conversation\":{\"available\":%s,\"configured\":%s,"
+        "\"enabled\":%s,"
+        "\"model\":\"%s\",\"service\":\"%s\","
+        "\"api_host\":\"%s\",\"shared_endpoint\":%s},"
         "\"token\":\"%s\"}",
         saved_network.configured ? "true" : "false",
-        escaped_ssid, settings.utc_offset_minutes,
+        response->escaped_ssid, settings.utc_offset_minutes,
         settings.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT ? "f"
                                                                      : "c",
         settings.audio_playback_volume,
@@ -1010,17 +1127,28 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         (unsigned int)settings.alarm_weekdays,
         settings_sd_state(&sd_status),
         (unsigned int)sd_status.image_count,
-        token);
-    memset(token, 0, sizeof(token));
-    memset(escaped_ssid, 0, sizeof(escaped_ssid));
+        conversation_available ? "true" : "false",
+        conversation_configured ? "true" : "false",
+        conversation_enabled ? "true" : "false",
+        conversation_model, conversation_service,
+        response->escaped_api_host,
+        conversation_status.shared_endpoint ? "true" : "false",
+        response->token);
+    memset(&conversation_status, 0, sizeof(conversation_status));
     memset(&saved_network, 0, sizeof(saved_network));
-    if (written <= 0 || (size_t)written >= sizeof(json)) {
+    if (written <= 0 || (size_t)written >= sizeof(response->json)) {
+        conversation_config_clear_sensitive(response, sizeof(*response));
+        heap_caps_free(response);
         return send_page(request, "500 Internal Server Error",
                          "text/plain; charset=utf-8",
                          "无法生成设置状态。\n");
     }
-    return send_page(request, "200 OK", "application/json; charset=utf-8",
-                     json);
+    const esp_err_t send_error = send_page(
+        request, "200 OK", "application/json; charset=utf-8",
+        response->json);
+    conversation_config_clear_sensitive(response, sizeof(*response));
+    heap_caps_free(response);
+    return send_error;
 }
 
 static esp_err_t restore_previous_settings(
@@ -1215,6 +1343,150 @@ static esp_err_t settings_post_handler(httpd_req_t *request)
     }
     return finish_regular_request(
         request, "200 OK", "设置已保存并立即生效。\n");
+}
+
+static const char *conversation_form_error_message(
+    conversation_config_result_t result)
+{
+    switch (result) {
+    case CONVERSATION_CONFIG_RESULT_UNSUPPORTED_SERVICE:
+        return "当前仅支持阿里云百炼 Realtime。\n";
+    case CONVERSATION_CONFIG_RESULT_INVALID_MODEL:
+        return "请选择固件支持的阿里云百炼 Realtime 模型。\n";
+    case CONVERSATION_CONFIG_RESULT_INVALID_API_HOST:
+        return "API Host 无效；请留空使用北京共享服务，或填写受支持的百炼共享或 Workspace 专属 Host。\n";
+    case CONVERSATION_CONFIG_RESULT_API_KEY_REQUIRED:
+        return "开启云端语音前需要填写 API Key。\n";
+    case CONVERSATION_CONFIG_RESULT_INVALID_API_KEY:
+        return "API Key 格式无效，请输入可见的英文字符、数字或符号。\n";
+    case CONVERSATION_CONFIG_RESULT_MISSING_FIELD:
+        return "云端语音配置不完整，请填写所有必填项。\n";
+    default:
+        return "云端语音配置格式无效，请检查后重试。\n";
+    }
+}
+
+static esp_err_t conversation_config_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    char *const body = heap_caps_calloc(
+        1U, SETTINGS_CONVERSATION_FORM_CAPACITY, MALLOC_CAP_8BIT);
+    if (body == NULL) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8",
+                         "设备内存不足，暂时无法保存云端语音配置。\n");
+    }
+    size_t length = 0U;
+    conversation_config_update_t update = {0};
+    const esp_err_t receive_error = receive_form(
+        request, body, SETTINGS_CONVERSATION_FORM_CAPACITY, &length);
+    const conversation_config_result_t parse_result =
+        receive_error == ESP_OK
+            ? conversation_config_parse_form(body, length, &update)
+            : CONVERSATION_CONFIG_RESULT_INVALID_FORM;
+    conversation_config_clear_sensitive(
+        body, SETTINGS_CONVERSATION_FORM_CAPACITY);
+    heap_caps_free(body);
+    if (receive_error == ESP_ERR_TIMEOUT) {
+        conversation_config_clear_sensitive(&update, sizeof(update));
+        return send_deadline_response(request);
+    }
+    if (receive_error != ESP_OK ||
+        parse_result != CONVERSATION_CONFIG_RESULT_OK) {
+        ESP_LOGW(TAG, "rejected cloud conversation form: %s",
+                 conversation_config_result_name(parse_result));
+        conversation_config_clear_sensitive(&update, sizeof(update));
+        return send_page(
+            request, "400 Bad Request", "text/plain; charset=utf-8",
+            conversation_form_error_message(parse_result));
+    }
+
+    if (update.api_key[0] == '\0') {
+        conversation_config_status_t status = {0};
+        const esp_err_t status_error =
+            conversation_config_get_status(&status);
+        const bool has_saved_key =
+            status_error == ESP_OK && status.configured;
+        memset(&status, 0, sizeof(status));
+        if (status_error != ESP_OK) {
+            conversation_config_clear_sensitive(&update, sizeof(update));
+            return send_page(request, "503 Service Unavailable",
+                             "text/plain; charset=utf-8",
+                             "云端语音设置暂不可用，请稍后重试。\n");
+        }
+        if (update.enabled && !has_saved_key) {
+            conversation_config_clear_sensitive(&update, sizeof(update));
+            return send_page(request, "400 Bad Request",
+                             "text/plain; charset=utf-8",
+                             "开启云端语音前需要填写 API Key。\n");
+        }
+        if (!update.enabled && !has_saved_key) {
+            conversation_config_clear_sensitive(&update, sizeof(update));
+            return send_page(request, "200 OK",
+                             "text/plain; charset=utf-8",
+                             "云端语音保持关闭，无需保存 API Key。\n");
+        }
+    }
+    if (!begin_regular_mutation()) {
+        conversation_config_clear_sensitive(&update, sizeof(update));
+        return send_mutation_unavailable(request);
+    }
+
+    const esp_err_t error = conversation_config_save(&update);
+    conversation_config_clear_sensitive(&update, sizeof(update));
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "cloud conversation config save failed: %s",
+                 esp_err_to_name(error));
+        return finish_regular_request(
+            request,
+            error == ESP_ERR_INVALID_ARG ? "400 Bad Request"
+                                         : "500 Internal Server Error",
+            error == ESP_ERR_INVALID_ARG
+                ? "云端语音配置未通过校验，原配置未更改。\n"
+                : "云端语音配置未能保存，原配置未更改。\n");
+    }
+    return finish_regular_request(
+        request, "200 OK", "云端语音配置已保存，无需重启。\n");
+}
+
+static esp_err_t conversation_clear_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    char body[SETTINGS_PORTAL_SMALL_FORM_CAPACITY] = {0};
+    size_t length = 0U;
+    const esp_err_t receive_error = receive_form(
+        request, body, sizeof(body), &length);
+    const bool confirmed = receive_error == ESP_OK &&
+                           settings_portal_confirmation_matches(
+                               body, length, "CLEAR_CONVERSATION");
+    conversation_config_clear_sensitive(body, sizeof(body));
+    if (receive_error == ESP_ERR_TIMEOUT) {
+        return send_deadline_response(request);
+    }
+    if (!confirmed) {
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         "清除云端语音配置需要重新确认。\n");
+    }
+    if (!begin_regular_mutation()) {
+        return send_mutation_unavailable(request);
+    }
+
+    const esp_err_t error = conversation_config_clear();
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "cloud conversation config clear failed: %s",
+                 esp_err_to_name(error));
+        return finish_regular_request(
+            request, "500 Internal Server Error",
+            "云端语音配置未能清除，请稍后重试。\n");
+    }
+    return finish_regular_request(
+        request, "200 OK",
+        "云端语音配置已清除，已关闭云端语音并恢复默认模型与共享 API Host，无需重启。\n");
 }
 
 static esp_err_t time_post_handler(httpd_req_t *request)
@@ -1831,7 +2103,7 @@ static esp_err_t start_web_server(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192U;
-    config.max_uri_handlers = 16U;
+    config.max_uri_handlers = 18U;
     config.max_open_sockets = 2U;
     config.recv_wait_timeout = 15U;
     config.lru_purge_enable = true;
@@ -1854,6 +2126,16 @@ static esp_err_t start_web_server(void)
         .uri = "/api/settings",
         .method = HTTP_POST,
         .handler = settings_post_handler,
+    };
+    const httpd_uri_t conversation_config_uri = {
+        .uri = "/api/conversation/config",
+        .method = HTTP_POST,
+        .handler = conversation_config_post_handler,
+    };
+    const httpd_uri_t conversation_clear_uri = {
+        .uri = "/api/conversation/clear",
+        .method = HTTP_POST,
+        .handler = conversation_clear_post_handler,
     };
     const httpd_uri_t time_uri = {
         .uri = "/api/time",
@@ -1916,6 +2198,14 @@ static esp_err_t start_web_server(void)
     }
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &settings_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &conversation_config_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &conversation_clear_uri);
     }
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &time_uri);
@@ -2254,6 +2544,11 @@ esp_err_t firmware_update_init(void)
 {
     if (s_initialized) {
         return ESP_OK;
+    }
+    const esp_err_t conversation_error = conversation_config_init();
+    if (conversation_error != ESP_OK) {
+        ESP_LOGW(TAG, "cloud conversation settings unavailable: %s",
+                 esp_err_to_name(conversation_error));
     }
     const esp_partition_t *running = esp_ota_get_running_partition();
     const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);

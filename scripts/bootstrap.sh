@@ -108,6 +108,9 @@ if [[ "${check_only}" == true ]]; then
         "${DL_FFT_ARCHIVE_SHA256}" "dl_fft v${DL_FFT_VERSION} archive"
     verify_file_sha256 "${RLCD_CJSON_ARCHIVE}" \
         "${CJSON_ARCHIVE_SHA256}" "cJSON v${CJSON_VERSION} archive"
+    verify_checkout "${RLCD_ESP_PROTOCOLS_DIR}" \
+        "${ESP_WEBSOCKET_CLIENT_COMMIT}" \
+        "ESP WebSocket Client v${ESP_WEBSOCKET_CLIENT_VERSION}"
     if [[ ! -f "${RLCD_ESP_SR_DIR}/include/esp32s3/esp_mn_iface.h" ||
           ! -f "${RLCD_ESP_SR_DIR}/model/movemodel.py" ]]; then
         echo "ESP-SR 源码不完整: ${RLCD_ESP_SR_DIR}" >&2
@@ -117,6 +120,10 @@ if [[ "${check_only}" == true ]]; then
           ! -f "${RLCD_DL_FFT_DIR}/dl_fft.h" ||
           ! -f "${RLCD_CJSON_DIR}/cJSON/cJSON.h" ]]; then
         echo "ESP-SR 传递依赖不完整" >&2
+        exit 1
+    fi
+    if [[ ! -f "${RLCD_ESP_WEBSOCKET_CLIENT_DIR}/include/esp_websocket_client.h" ]]; then
+        echo "ESP WebSocket Client 源码不完整: ${RLCD_ESP_WEBSOCKET_CLIENT_DIR}" >&2
         exit 1
     fi
     if [[ ! -f "${RLCD_QRCODE_COMPONENT_DIR}/include/qrcode.h" ]]; then
@@ -197,6 +204,18 @@ install_component_archive "${RLCD_DL_FFT_ARCHIVE}" \
 install_component_archive "${RLCD_CJSON_ARCHIVE}" \
     "${CJSON_ARCHIVE_URL}" "${CJSON_ARCHIVE_SHA256}" \
     "${RLCD_CJSON_DIR}" "cJSON v${CJSON_VERSION}"
+if [[ ! -d "${RLCD_ESP_PROTOCOLS_DIR}/.git" ]]; then
+    git clone --filter=blob:none --no-checkout \
+        "${ESP_PROTOCOLS_REPOSITORY_URL}" "${RLCD_ESP_PROTOCOLS_DIR}"
+    git -C "${RLCD_ESP_PROTOCOLS_DIR}" sparse-checkout init --cone
+    git -C "${RLCD_ESP_PROTOCOLS_DIR}" sparse-checkout set \
+        "${ESP_WEBSOCKET_CLIENT_RELATIVE_PATH}"
+    git -C "${RLCD_ESP_PROTOCOLS_DIR}" checkout --detach \
+        "${ESP_WEBSOCKET_CLIENT_COMMIT}"
+fi
+verify_checkout "${RLCD_ESP_PROTOCOLS_DIR}" \
+    "${ESP_WEBSOCKET_CLIENT_COMMIT}" \
+    "ESP WebSocket Client v${ESP_WEBSOCKET_CLIENT_VERSION}"
 if [[ ! -f "${RLCD_ESP_SR_DIR}/include/esp32s3/esp_mn_iface.h" ||
       ! -f "${RLCD_ESP_SR_DIR}/model/movemodel.py" ]]; then
     echo "ESP-SR 源码不完整: ${RLCD_ESP_SR_DIR}" >&2

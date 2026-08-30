@@ -11,6 +11,7 @@
 #include "alarm_input_gate.h"
 #include "alarm_scheduler.h"
 #include "audio_alert.h"
+#include "audio_conversation.h"
 #include "audio_diagnostics.h"
 #include "audio_voice.h"
 #include "battery.h"
@@ -19,6 +20,7 @@
 #include "board_pins.h"
 #include "button_state.h"
 #include "chinese_lunar.h"
+#include "conversation_config.h"
 #include "display.h"
 #include "driver/usb_serial_jtag.h"
 #include "environment_comfort.h"
@@ -46,6 +48,7 @@
 #include "settings_power_policy.h"
 #include "usb_commands.h"
 #include "voice_command_policy.h"
+#include "voice_backend_policy.h"
 #include "voice_session_state.h"
 
 static const char *TAG = "rlcd_firmware";
@@ -101,6 +104,7 @@ enum {
     APP_FIRMWARE_UPDATE_RESULT_MS = 2500,
     APP_GALLERY_RESULT_MS = 3000,
     APP_OTA_CONFIRM_DELAY_MS = 5000,
+    APP_CLOUD_VOICE_UI_UPDATE_MS = 300,
 };
 
 static esp_err_t set_cpu_saving_policy(bool saving)
@@ -334,10 +338,49 @@ static alarm_clock_observation_t alarm_clock_from_rtc(
     return observation;
 }
 
+static bool voice_engine_available(
+    const audio_voice_status_t *status);
+
 static display_voice_state_t display_voice_state(
     const voice_session_state_t *session,
-    const audio_voice_status_t *engine)
+    const audio_voice_status_t *engine, bool cloud_session_selected,
+    bool cloud_mode, bool backend_available,
+    const audio_conversation_status_t *conversation)
 {
+    if (cloud_session_selected && conversation != NULL) {
+        switch (conversation->state) {
+        case AUDIO_CONVERSATION_STATE_CONNECTING:
+            return DISPLAY_VOICE_STATE_CLOUD_CONNECTING;
+        case AUDIO_CONVERSATION_STATE_WAITING_FOR_RELEASE:
+            return DISPLAY_VOICE_STATE_WAITING_FOR_RELEASE;
+        case AUDIO_CONVERSATION_STATE_LISTENING:
+            return DISPLAY_VOICE_STATE_LISTENING;
+        case AUDIO_CONVERSATION_STATE_THINKING:
+            return DISPLAY_VOICE_STATE_CLOUD_THINKING;
+        case AUDIO_CONVERSATION_STATE_SPEAKING:
+            return DISPLAY_VOICE_STATE_CLOUD_SPEAKING;
+        case AUDIO_CONVERSATION_STATE_COMPLETED:
+            return DISPLAY_VOICE_STATE_CLOUD_COMPLETED;
+        case AUDIO_CONVERSATION_STATE_CANCELLED:
+            return DISPLAY_VOICE_STATE_CANCELLED;
+        case AUDIO_CONVERSATION_STATE_FAILED:
+            return DISPLAY_VOICE_STATE_FAILED;
+        case AUDIO_CONVERSATION_STATE_IDLE:
+        default:
+            break;
+        }
+    }
+
+    /* An idle cloud page is independent of the offline MultiNet model. The
+     * microphone/speaker readiness is reported separately by
+     * engine_available, so READY here means that cloud is the selected mode
+     * and no cloud turn is currently active. */
+    if (cloud_mode &&
+        voice_session_state_phase(session) == VOICE_SESSION_PHASE_READY) {
+        return backend_available ? DISPLAY_VOICE_STATE_READY
+                                 : DISPLAY_VOICE_STATE_UNAVAILABLE;
+    }
+
     const voice_session_phase_t phase =
         voice_session_state_phase(session);
     switch (phase) {
@@ -366,15 +409,127 @@ static display_voice_state_t display_voice_state(
         return DISPLAY_VOICE_STATE_FAILED;
     case VOICE_SESSION_PHASE_READY:
     default:
+        if (!backend_available && conversation != NULL &&
+            conversation->running) {
+            return DISPLAY_VOICE_STATE_UNAVAILABLE;
+        }
         if (engine != NULL && engine->engine_preparing) {
             return DISPLAY_VOICE_STATE_PREPARING;
         }
-        return engine != NULL && engine->initialized &&
-                       engine->model_ready && engine->engine_ready &&
-                       engine->microphone_ready
-                   ? DISPLAY_VOICE_STATE_READY
-                   : DISPLAY_VOICE_STATE_UNAVAILABLE;
+        return backend_available ? DISPLAY_VOICE_STATE_READY
+                                 : DISPLAY_VOICE_STATE_UNAVAILABLE;
     }
+}
+
+static bool cloud_audio_ready(
+    const audio_conversation_status_t *status)
+{
+    return status != NULL && status->initialized &&
+           status->microphone_ready && status->speaker_ready;
+}
+
+static app_voice_backend_t select_voice_backend(
+    const conversation_config_status_t *config,
+    const audio_conversation_status_t *conversation,
+    const audio_voice_status_t *offline,
+    const network_time_status_t *network,
+    bool normal_power)
+{
+    return app_voice_backend_choose(
+        config != NULL && config->configured && config->enabled,
+        normal_power,
+        network != NULL && network->station_connected,
+        cloud_audio_ready(conversation),
+        conversation != NULL && conversation->running,
+        voice_engine_available(offline));
+}
+
+static bool conversation_config_status_equal(
+    const conversation_config_status_t *left,
+    const conversation_config_status_t *right)
+{
+    return left != NULL && right != NULL &&
+           left->service == right->service &&
+           left->model == right->model &&
+           left->enabled == right->enabled &&
+           left->configured == right->configured &&
+           left->shared_endpoint == right->shared_endpoint &&
+           strcmp(left->api_host, right->api_host) == 0;
+}
+
+static bool conversation_state_is_terminal(
+    audio_conversation_state_t state)
+{
+    return state == AUDIO_CONVERSATION_STATE_COMPLETED ||
+           state == AUDIO_CONVERSATION_STATE_CANCELLED ||
+           state == AUDIO_CONVERSATION_STATE_FAILED;
+}
+
+static esp_err_t cancel_voice_backend(bool cloud_session_selected)
+{
+    return cloud_session_selected ? audio_conversation_cancel()
+                                  : audio_voice_cancel();
+}
+
+static esp_err_t stop_voice_backend(bool cloud_session_selected)
+{
+    return cloud_session_selected
+               ? audio_conversation_request_stop()
+               : audio_voice_request_stop();
+}
+
+static bool accept_cloud_conversation_status(
+    voice_session_state_t *session,
+    const audio_conversation_status_t *status,
+    esp_err_t *session_error)
+{
+    if (session == NULL || status == NULL || session_error == NULL ||
+        status->generation == 0U ||
+        status->generation != voice_session_state_generation(session)) {
+        return false;
+    }
+
+    const voice_session_phase_t phase =
+        voice_session_state_phase(session);
+    if ((status->state == AUDIO_CONVERSATION_STATE_THINKING ||
+         status->state == AUDIO_CONVERSATION_STATE_SPEAKING ||
+         status->state == AUDIO_CONVERSATION_STATE_COMPLETED) &&
+        phase == VOICE_SESSION_PHASE_LISTENING) {
+        voice_session_state_note_speech(session);
+        (void)voice_session_state_finish_listening(session);
+    }
+
+    if (status->state == AUDIO_CONVERSATION_STATE_CANCELLED) {
+        *session_error = ESP_OK;
+        return voice_session_state_cancel(session) !=
+               VOICE_SESSION_ACTION_NONE;
+    }
+    if (status->state == AUDIO_CONVERSATION_STATE_FAILED) {
+        *session_error = status->last_error != ESP_OK
+                             ? status->last_error
+                             : ESP_FAIL;
+        return voice_session_state_report_failure(
+            session, status->generation);
+    }
+    if (status->state == AUDIO_CONVERSATION_STATE_COMPLETED) {
+        *session_error = ESP_OK;
+        return voice_session_state_report_result(
+            session, status->generation,
+            VOICE_SESSION_RESULT_MATCHED);
+    }
+    return false;
+}
+
+static const char *cloud_voice_error_detail(
+    const audio_conversation_status_t *status)
+{
+    if (status != NULL && status->service_error_name[0] != '\0') {
+        return status->service_error_name;
+    }
+    if (status != NULL && status->last_error != ESP_OK) {
+        return esp_err_to_name(status->last_error);
+    }
+    return "Cloud conversation stopped";
 }
 
 static bool voice_engine_available(
@@ -786,6 +941,14 @@ void app_main(void)
                  esp_err_to_name(storage_error));
     }
 
+    const esp_err_t conversation_config_error =
+        storage_error == ESP_OK ? conversation_config_init()
+                                : storage_error;
+    if (conversation_config_error != ESP_OK) {
+        ESP_LOGW(TAG, "cloud voice configuration unavailable: %s",
+                 esp_err_to_name(conversation_config_error));
+    }
+
     app_settings_t settings;
     app_settings_defaults(&settings);
     uint32_t settings_generation = 0U;
@@ -1072,6 +1235,17 @@ void app_main(void)
     audio_voice_status_t voice_status = {0};
     audio_voice_get_status(&voice_status);
     uint32_t previous_voice_revision = voice_status.revision;
+    conversation_config_status_t cloud_config_status = {0};
+    if (conversation_config_error == ESP_OK) {
+        (void)conversation_config_get_status(&cloud_config_status);
+    }
+    audio_conversation_status_t cloud_voice_status = {0};
+    audio_conversation_get_status(&cloud_voice_status);
+    uint32_t previous_cloud_voice_revision =
+        cloud_voice_status.revision;
+    audio_conversation_state_t previous_cloud_voice_state =
+        cloud_voice_status.state;
+    bool cloud_session_selected = false;
     voice_command_action_t pending_voice_action =
         VOICE_COMMAND_ACTION_NONE;
     esp_err_t voice_session_error = ESP_OK;
@@ -1126,6 +1300,7 @@ void app_main(void)
         }
     }
     const TickType_t initial_tick = xTaskGetTickCount();
+    TickType_t last_cloud_voice_ui_update = initial_tick;
     TickType_t last_button_update = initial_tick;
     TickType_t last_periodic_update = initial_tick;
     TickType_t last_rtc_read = initial_tick;
@@ -1231,18 +1406,31 @@ void app_main(void)
                 render_requested = true;
             }
         }
+        bool voice_data_changed = false;
+        conversation_config_status_t latest_cloud_config = {0};
+        if (conversation_config_error == ESP_OK &&
+            conversation_config_get_status(&latest_cloud_config) ==
+                ESP_OK &&
+            !conversation_config_status_equal(
+                &latest_cloud_config, &cloud_config_status)) {
+            cloud_config_status = latest_cloud_config;
+            voice_data_changed = true;
+            render_requested = true;
+        }
+
         audio_voice_status_t latest_voice_status = {0};
         audio_voice_get_status(&latest_voice_status);
-        const bool voice_data_changed =
+        const bool offline_voice_data_changed =
             latest_voice_status.revision != previous_voice_revision;
         voice_status = latest_voice_status;
-        if (voice_data_changed) {
+        if (offline_voice_data_changed) {
             previous_voice_revision = voice_status.revision;
             const bool image_available =
                 latest_sd_image_status.state ==
                     SD_IMAGE_STATE_READY &&
                 latest_sd_image_status.image_count > 0U;
-            if (accept_voice_engine_result(
+            if (!cloud_session_selected &&
+                accept_voice_engine_result(
                     &voice_session, &voice_status,
                     image_available, &pending_voice_action,
                     &voice_session_error)) {
@@ -1252,6 +1440,54 @@ void app_main(void)
                              voice_session_state_phase(
                                  &voice_session)));
             }
+            if (!cloud_session_selected) {
+                voice_data_changed = true;
+            }
+            render_requested = true;
+        }
+
+        audio_conversation_get_status(&cloud_voice_status);
+        if (cloud_voice_status.revision !=
+            previous_cloud_voice_revision) {
+            const bool phase_changed =
+                cloud_voice_status.state !=
+                previous_cloud_voice_state;
+            previous_cloud_voice_revision =
+                cloud_voice_status.revision;
+            previous_cloud_voice_state =
+                cloud_voice_status.state;
+
+            bool session_transitioned = false;
+            if (cloud_session_selected) {
+                session_transitioned =
+                    accept_cloud_conversation_status(
+                        &voice_session, &cloud_voice_status,
+                        &voice_session_error);
+            }
+
+            const bool ui_update_due =
+                phase_changed || session_transitioned ||
+                conversation_state_is_terminal(
+                    cloud_voice_status.state) ||
+                now - last_cloud_voice_ui_update >=
+                    pdMS_TO_TICKS(APP_CLOUD_VOICE_UI_UPDATE_MS);
+            if (cloud_session_selected && ui_update_due) {
+                last_cloud_voice_ui_update = now;
+                voice_data_changed = true;
+                render_requested = true;
+            }
+        }
+        if (!cloud_session_selected &&
+            conversation_state_is_terminal(cloud_voice_status.state) &&
+            audio_conversation_dismiss() == ESP_OK) {
+            /* This also covers an alarm invalidating the UI generation after
+             * the terminal revision was already consumed. Refresh the local
+             * copy immediately so response text does not linger on app_main's
+             * stack until a later status change. */
+            audio_conversation_get_status(&cloud_voice_status);
+            previous_cloud_voice_revision = cloud_voice_status.revision;
+            previous_cloud_voice_state = cloud_voice_status.state;
+            voice_data_changed = true;
             render_requested = true;
         }
         const bool voice_session_active =
@@ -1680,13 +1916,15 @@ void app_main(void)
                 }
             }
             if (voice_session_state_is_active(&voice_session)) {
-                (void)audio_voice_cancel();
+                (void)cancel_voice_backend(
+                    cloud_session_selected);
                 (void)voice_session_state_alarm_started(
                     &voice_session);
+                cloud_session_selected = false;
                 pending_voice_action = VOICE_COMMAND_ACTION_NONE;
                 voice_session_error = ESP_OK;
                 ESP_LOGI(TAG,
-                         "alarm preempted offline voice session");
+                         "alarm preempted voice session");
             }
             const esp_err_t alert_error = audio_alert_start();
             if (alert_error != ESP_OK) {
@@ -1777,7 +2015,8 @@ void app_main(void)
             const voice_session_phase_t voice_phase =
                 voice_session_state_phase(&voice_session);
             if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
-                (void)audio_voice_cancel();
+                (void)cancel_voice_backend(
+                    cloud_session_selected);
                 if (voice_session_state_boot_short_press(
                         &voice_session) !=
                     VOICE_SESSION_ACTION_NONE) {
@@ -1785,7 +2024,7 @@ void app_main(void)
                         VOICE_COMMAND_ACTION_NONE;
                     voice_session_error = ESP_OK;
                     ESP_LOGI(TAG,
-                             "BOOT short press: offline voice cancelled");
+                             "BOOT short press: voice session cancelled");
                 }
                 render_requested = true;
             } else if (voice_phase ==
@@ -1800,23 +2039,44 @@ void app_main(void)
                         voice_session_state_generation(
                             &voice_session);
                     const esp_err_t start_error =
-                        audio_voice_start(generation);
+                        cloud_session_selected
+                            ? audio_conversation_release_key()
+                            : audio_voice_start(generation);
                     if (start_error == ESP_OK) {
-                        audio_voice_get_status(&voice_status);
-                        previous_voice_revision =
-                            voice_status.revision;
-                        ESP_LOGI(TAG,
-                                 "KEY released: offline voice listening started");
+                        if (cloud_session_selected) {
+                            audio_conversation_get_status(
+                                &cloud_voice_status);
+                            previous_cloud_voice_revision =
+                                cloud_voice_status.revision;
+                            ESP_LOGI(
+                                TAG,
+                                "KEY released: cloud voice capture requested");
+                        } else {
+                            audio_voice_get_status(&voice_status);
+                            previous_voice_revision =
+                                voice_status.revision;
+                            ESP_LOGI(
+                                TAG,
+                                "KEY released: offline voice listening started");
+                        }
                     } else {
                         voice_session_error = start_error;
-                        (void)voice_session_state_alarm_started(
-                            &voice_session);
-                        uint32_t unused_generation = 0U;
-                        (void)voice_session_state_begin(
-                            &voice_session, false,
-                            &unused_generation);
+                        if (cloud_session_selected) {
+                            (void)voice_session_state_report_failure(
+                                &voice_session, generation);
+                            (void)audio_conversation_cancel();
+                        } else {
+                            (void)voice_session_state_alarm_started(
+                                &voice_session);
+                            uint32_t unused_generation = 0U;
+                            (void)voice_session_state_begin(
+                                &voice_session, false,
+                                &unused_generation);
+                        }
                         ESP_LOGW(TAG,
-                                 "offline voice could not start: %s",
+                                 "%s voice could not start: %s",
+                                 cloud_session_selected ? "cloud"
+                                                        : "offline",
                                  esp_err_to_name(start_error));
                     }
                     render_requested = true;
@@ -1827,10 +2087,10 @@ void app_main(void)
                         voice_phase ==
                             VOICE_SESSION_PHASE_RECOGNIZING)) {
                 const esp_err_t stop_error =
-                    audio_voice_request_stop();
+                    stop_voice_backend(cloud_session_selected);
                 if (stop_error == ESP_OK) {
                     ESP_LOGI(TAG,
-                             "KEY short press: finishing offline voice input");
+                             "KEY short press: finishing voice input");
                 }
                 render_requested = true;
             }
@@ -2041,20 +2301,66 @@ void app_main(void)
             } else if (key_action == APP_PAGE_ACTION_START_VOICE &&
                        manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                        !firmware_update_ui_active &&
-                       !online_update_busy) {
+                       !gallery_download_ui_active &&
+                       !online_update_busy &&
+                       !online_update_confirmation_active &&
+                       !app_image_delete_ui_is_active(
+                           &image_delete_ui)) {
                 audio_voice_get_status(&voice_status);
+                audio_conversation_get_status(
+                    &cloud_voice_status);
+                const app_voice_backend_t backend =
+                    select_voice_backend(
+                        &cloud_config_status,
+                        &cloud_voice_status, &voice_status,
+                        &network_status,
+                        power_runtime.effective_state ==
+                            APP_POWER_STATE_NORMAL);
                 const bool engine_available =
-                    voice_engine_available(&voice_status);
+                    backend != APP_VOICE_BACKEND_UNAVAILABLE;
                 uint32_t generation = 0U;
                 if (voice_session_state_begin(
                         &voice_session, engine_available,
                         &generation)) {
+                    cloud_session_selected =
+                        backend == APP_VOICE_BACKEND_CLOUD;
                     pending_voice_action =
                         VOICE_COMMAND_ACTION_NONE;
                     voice_session_error =
                         engine_available ? ESP_OK
                                          : voice_status.last_error;
-                    if (engine_available) {
+                    if (cloud_session_selected) {
+                        const esp_err_t start_error =
+                            audio_conversation_start(generation);
+                        if (start_error == ESP_OK) {
+                            audio_conversation_get_status(
+                                &cloud_voice_status);
+                            previous_cloud_voice_revision =
+                                cloud_voice_status.revision;
+                            previous_cloud_voice_state =
+                                cloud_voice_status.state;
+                            last_cloud_voice_ui_update = now;
+                            ESP_LOGI(
+                                TAG,
+                                "KEY long press: preparing cloud voice generation=%u",
+                                (unsigned)generation);
+                        } else if (voice_engine_available(
+                                       &voice_status)) {
+                            cloud_session_selected = false;
+                            ESP_LOGW(
+                                TAG,
+                                "cloud voice start unavailable; using offline voice: %s",
+                                esp_err_to_name(start_error));
+                        } else {
+                            voice_session_error = start_error;
+                            (void)voice_session_state_report_failure(
+                                &voice_session, generation);
+                            ESP_LOGW(
+                                TAG,
+                                "cloud voice could not start: %s",
+                                esp_err_to_name(start_error));
+                        }
+                    } else if (engine_available) {
                         ESP_LOGI(TAG,
                                  "KEY long press: release to start offline voice generation=%u",
                                  (unsigned)generation);
@@ -2350,27 +2656,50 @@ void app_main(void)
                                          button_elapsed_ms);
             if (voice_tick_action ==
                 VOICE_SESSION_ACTION_CANCEL_AND_CLEAR) {
-                (void)audio_voice_cancel();
+                (void)cancel_voice_backend(
+                    cloud_session_selected);
                 pending_voice_action = VOICE_COMMAND_ACTION_NONE;
                 render_requested = true;
             } else if (voice_tick_action ==
-                       VOICE_SESSION_ACTION_COMPLETE_COMMAND) {
-                const app_page_t target_page =
-                    voice_command_page(pending_voice_action);
-                if (app_page_state_open_page(&page_state,
-                                             target_page)) {
-                    if (target_page == APP_PAGE_STATUS) {
-                        status_refresh_pending = true;
+                VOICE_SESSION_ACTION_COMPLETE_COMMAND) {
+                if (cloud_session_selected) {
+                    const esp_err_t dismiss_error =
+                        audio_conversation_dismiss();
+                    cloud_session_selected = false;
+                    if (dismiss_error == ESP_OK) {
+                        ESP_LOGI(TAG,
+                                 "cloud conversation feedback dismissed");
+                    } else {
+                        ESP_LOGI(TAG,
+                                 "cloud conversation cleanup still in progress");
                     }
-                    ESP_LOGI(TAG,
-                             "offline voice opened %s page",
-                             page_name(target_page));
+                } else {
+                    const app_page_t target_page =
+                        voice_command_page(pending_voice_action);
+                    if (app_page_state_open_page(&page_state,
+                                                 target_page)) {
+                        if (target_page == APP_PAGE_STATUS) {
+                            status_refresh_pending = true;
+                        }
+                        ESP_LOGI(TAG,
+                                 "offline voice opened %s page",
+                                 page_name(target_page));
+                    }
                 }
                 pending_voice_action = VOICE_COMMAND_ACTION_NONE;
                 voice_session_error = ESP_OK;
                 render_requested = true;
             } else if (voice_tick_action ==
                        VOICE_SESSION_ACTION_RETURN_TO_READY) {
+                if (cloud_session_selected) {
+                    const esp_err_t dismiss_error =
+                        audio_conversation_dismiss();
+                    cloud_session_selected = false;
+                    if (dismiss_error != ESP_OK) {
+                        ESP_LOGI(TAG,
+                                 "cloud conversation cleanup still in progress");
+                    }
+                }
                 pending_voice_action = VOICE_COMMAND_ACTION_NONE;
                 voice_session_error = ESP_OK;
                 render_requested = true;
@@ -3141,10 +3470,36 @@ void app_main(void)
                     display_show_system_status(&system_status);
                 } else if (active_page == APP_PAGE_VOICE) {
                     audio_voice_get_status(&voice_status);
+                    audio_conversation_get_status(
+                        &cloud_voice_status);
                     const voice_session_phase_t voice_phase =
                         voice_session_state_phase(&voice_session);
+                    const app_voice_backend_t idle_backend =
+                        select_voice_backend(
+                            &cloud_config_status,
+                            &cloud_voice_status, &voice_status,
+                            &network_status,
+                            power_runtime.effective_state ==
+                                APP_POWER_STATE_NORMAL);
+                    const bool display_cloud_mode =
+                        cloud_session_selected ||
+                        (!voice_session_state_is_active(
+                             &voice_session) &&
+                         idle_backend == APP_VOICE_BACKEND_CLOUD);
+                    const bool display_backend_available =
+                        cloud_session_selected
+                            ? cloud_audio_ready(&cloud_voice_status)
+                            : idle_backend !=
+                                  APP_VOICE_BACKEND_UNAVAILABLE;
                     const char *voice_detail = NULL;
-                    if (voice_phase ==
+                    if (!cloud_session_selected &&
+                        cloud_voice_status.running) {
+                        voice_detail = "Finishing cloud session";
+                    } else if (cloud_session_selected &&
+                        voice_phase == VOICE_SESSION_PHASE_FAILED) {
+                        voice_detail = cloud_voice_error_detail(
+                            &cloud_voice_status);
+                    } else if (voice_phase ==
                         VOICE_SESSION_PHASE_SUCCEEDED) {
                         voice_detail = voice_command_detail(
                             pending_voice_action);
@@ -3165,19 +3520,30 @@ void app_main(void)
                     }
                     const display_voice_status_t display_voice_status = {
                         .engine_available =
-                            voice_engine_available(&voice_status),
+                            display_backend_available,
+                        .cloud_mode = display_cloud_mode,
                         .elapsed_ms =
-                            voice_phase ==
+                            cloud_session_selected
+                                ? cloud_voice_status.elapsed_ms
+                                : (voice_phase ==
                                         VOICE_SESSION_PHASE_LISTENING ||
                                     voice_phase ==
                                         VOICE_SESSION_PHASE_RECOGNIZING
-                                ? voice_status.elapsed_ms
-                                : voice_session.elapsed_ms,
+                                       ? voice_status.elapsed_ms
+                                       : voice_session.elapsed_ms),
                         .max_listening_ms =
-                            AUDIO_VOICE_MAX_LISTENING_MS,
+                            display_cloud_mode
+                                ? AUDIO_CONVERSATION_MAX_LISTENING_MS
+                                : AUDIO_VOICE_MAX_LISTENING_MS,
                         .state = display_voice_state(
-                            &voice_session, &voice_status),
+                            &voice_session, &voice_status,
+                            cloud_session_selected, display_cloud_mode,
+                            display_backend_available,
+                            &cloud_voice_status),
                         .detail = voice_detail,
+                        .transcript =
+                            cloud_voice_status.transcript,
+                        .response = cloud_voice_status.response,
                     };
                     display_show_voice(&display_voice_status);
                 } else if (active_page == APP_PAGE_SETTINGS) {

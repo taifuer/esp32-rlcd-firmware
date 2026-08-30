@@ -207,6 +207,18 @@ bool voice_session_state_report_result(voice_session_state_t *state,
     return true;
 }
 
+bool voice_session_state_report_failure(voice_session_state_t *state,
+                                        uint32_t generation)
+{
+    if (!voice_session_state_is_processing(state) || generation == 0U ||
+        generation != state->generation) {
+        return false;
+    }
+    state->speech_detected = false;
+    set_phase(state, VOICE_SESSION_PHASE_FAILED);
+    return true;
+}
+
 voice_session_action_t voice_session_state_tick(
     voice_session_state_t *state, uint32_t elapsed_ms)
 {

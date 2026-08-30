@@ -1,10 +1,12 @@
 #include "audio_diagnostics.h"
 #include "audio_alert.h"
+#include "audio_conversation.h"
 #include "audio_voice.h"
 
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "audio_level.h"
@@ -12,6 +14,8 @@
 #include "voice_command_policy.h"
 #include "voice_model_manifest.h"
 #include "board_pins.h"
+#include "conversation_client.h"
+#include "conversation_config.h"
 #include "driver/i2s_std.h"
 #include "driver/i2s_tdm.h"
 #include "es7210_adc.h"
@@ -29,6 +33,7 @@
 #include "freertos/task.h"
 #include "model_path.h"
 #include "mbedtls/sha256.h"
+#include "network_time.h"
 #include "spi_flash_mmap.h"
 
 enum {
@@ -63,7 +68,7 @@ enum {
     AUDIO_PLAYBACK_MAX_GAIN = AUDIO_PLAYBACK_GAIN_ONE * 4,
     /* Espressif's MultiNet task examples reserve 8 KiB. The same worker also
      * owns codec arbitration, so do not reuse the smaller loopback stack. */
-    AUDIO_WORKER_STACK_SIZE = 8192,
+    AUDIO_WORKER_STACK_SIZE = 12288,
     AUDIO_WORKER_PRIORITY = 4,
     AUDIO_VOICE_PREPARE_STACK_SIZE = 8192,
     AUDIO_VOICE_PREPARE_PRIORITY = 1,
@@ -79,6 +84,18 @@ enum {
     AUDIO_VOICE_MAX_MODEL_COUNT = 8,
     AUDIO_VOICE_CAPTURE_SETTLE_CHUNKS = 4,
     AUDIO_VOICE_DETECTION_THRESHOLD_PERCENT = 65,
+    AUDIO_CONVERSATION_CAPTURE_CHUNK_FRAMES = 1600,
+    AUDIO_CONVERSATION_PLAYBACK_CHUNK_FRAMES = 2400,
+    AUDIO_CONVERSATION_CAPTURE_SETTLE_CHUNKS = 2,
+    /* Cloud is selected only from an already-connected station snapshot. Keep
+     * this confirmation short so a link-loss race cannot delay an alarm on the
+     * shared audio worker for the generic network timeout. */
+    AUDIO_CONVERSATION_NETWORK_TIMEOUT_MS = 1000,
+    AUDIO_CONVERSATION_PROTOCOL_TIMEOUT_MS = 15000,
+    AUDIO_CONVERSATION_RELEASE_TIMEOUT_MS = 5000,
+    AUDIO_CONVERSATION_RESPONSE_TIMEOUT_MS = 45000,
+    AUDIO_CONVERSATION_STOP_TIMEOUT_MS = 2000,
+    AUDIO_CONVERSATION_POLL_MS = 50,
 };
 
 static const char *TAG = "audio_diagnostics";
@@ -95,6 +112,7 @@ typedef enum {
     AUDIO_WORK_NONE = 0,
     AUDIO_WORK_DIAGNOSTIC,
     AUDIO_WORK_VOICE,
+    AUDIO_WORK_CONVERSATION,
     AUDIO_WORK_ALERT,
 } audio_work_t;
 
@@ -117,11 +135,14 @@ typedef struct {
     bool alert_cancelled_session;
     bool diagnostic_requested;
     bool voice_requested;
+    bool conversation_requested;
+    bool conversation_release_requested;
     bool alert_requested;
     bool alert_running;
     bool alert_stop_requested;
     audio_diagnostics_status_t status;
     audio_voice_status_t voice_status;
+    audio_conversation_status_t conversation_status;
     voice_reliability_summary_t voice_reliability;
     esp_pm_lock_handle_t voice_cpu_lock;
 } audio_diagnostics_context_t;
@@ -223,6 +244,85 @@ static void bump_voice_revision_locked(void)
     if (s_audio.voice_status.revision == 0U) {
         s_audio.voice_status.revision = 1U;
     }
+}
+
+static void bump_conversation_revision_locked(void)
+{
+    ++s_audio.conversation_status.revision;
+    if (s_audio.conversation_status.revision == 0U) {
+        s_audio.conversation_status.revision = 1U;
+    }
+}
+
+static void set_conversation_state(audio_conversation_state_t state)
+{
+    lock_context();
+    s_audio.conversation_status.state = state;
+    s_audio.conversation_status.running =
+        state == AUDIO_CONVERSATION_STATE_CONNECTING ||
+        state == AUDIO_CONVERSATION_STATE_WAITING_FOR_RELEASE ||
+        state == AUDIO_CONVERSATION_STATE_LISTENING ||
+        state == AUDIO_CONVERSATION_STATE_THINKING ||
+        state == AUDIO_CONVERSATION_STATE_SPEAKING;
+    bump_conversation_revision_locked();
+    unlock_context();
+}
+
+static void update_conversation_elapsed(uint32_t elapsed_ms)
+{
+    lock_context();
+    s_audio.conversation_status.elapsed_ms = elapsed_ms;
+    bump_conversation_revision_locked();
+    unlock_context();
+}
+
+static void update_conversation_remote_status(
+    const conversation_client_status_t *status)
+{
+    if (status == NULL) {
+        return;
+    }
+    lock_context();
+    secure_wipe(s_audio.conversation_status.transcript,
+                sizeof(s_audio.conversation_status.transcript));
+    snprintf(s_audio.conversation_status.transcript,
+             sizeof(s_audio.conversation_status.transcript), "%s",
+             status->transcript);
+    secure_wipe(s_audio.conversation_status.response,
+                sizeof(s_audio.conversation_status.response));
+    snprintf(s_audio.conversation_status.response,
+             sizeof(s_audio.conversation_status.response), "%s",
+             status->response);
+    s_audio.conversation_status.service_error_code =
+        status->service_error_code;
+    secure_wipe(s_audio.conversation_status.service_error_name,
+                sizeof(s_audio.conversation_status.service_error_name));
+    snprintf(s_audio.conversation_status.service_error_name,
+             sizeof(s_audio.conversation_status.service_error_name), "%s",
+             status->service_error_name);
+    bump_conversation_revision_locked();
+    unlock_context();
+}
+
+static bool conversation_release_requested(void)
+{
+    lock_context();
+    const bool requested = s_audio.conversation_release_requested;
+    unlock_context();
+    return requested;
+}
+
+static bool take_conversation_cancel(void)
+{
+    lock_context();
+    const bool cancelled = s_audio.cancel_requested;
+    if (cancelled) {
+        s_audio.cancel_requested = false;
+        s_audio.stop_requested = false;
+        s_audio.alert_cancelled_session = false;
+    }
+    unlock_context();
+    return cancelled;
 }
 
 static void set_voice_state(audio_voice_state_t state)
@@ -979,16 +1079,17 @@ static esp_err_t alert_write_note(int16_t *playback_buffer,
     return ESP_OK;
 }
 
-static esp_err_t open_speaker(int volume)
+static esp_err_t open_speaker_at_rate(uint32_t sample_rate_hz, int volume)
 {
-    if (s_audio.speaker_device == NULL) {
+    if (s_audio.speaker_device == NULL || sample_rate_hz == 0U ||
+        sample_rate_hz > INT_MAX) {
         return ESP_ERR_NOT_FOUND;
     }
     esp_codec_dev_sample_info_t format = {
         .bits_per_sample = AUDIO_DIAGNOSTICS_BITS_PER_SAMPLE,
         .channel = 1,
         .channel_mask = 0,
-        .sample_rate = AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ,
+        .sample_rate = (int)sample_rate_hz,
         .mclk_multiple = 0,
     };
     esp_err_t error = codec_error(
@@ -1006,6 +1107,12 @@ static esp_err_t open_speaker(int volume)
         (void)esp_codec_dev_close(s_audio.speaker_device);
     }
     return error;
+}
+
+static esp_err_t open_speaker(int volume)
+{
+    return open_speaker_at_rate(AUDIO_DIAGNOSTICS_SAMPLE_RATE_HZ,
+                                volume);
 }
 
 static esp_err_t close_speaker(void)
@@ -1784,6 +1891,513 @@ cleanup:
     }
 }
 
+static void finish_conversation(bool cancelled, esp_err_t error,
+                                const conversation_client_status_t *remote)
+{
+    lock_context();
+    s_audio.conversation_status.running = false;
+    s_audio.conversation_status.state =
+        cancelled ? AUDIO_CONVERSATION_STATE_CANCELLED
+                  : (error == ESP_OK
+                         ? AUDIO_CONVERSATION_STATE_COMPLETED
+                         : AUDIO_CONVERSATION_STATE_FAILED);
+    s_audio.conversation_status.last_error =
+        cancelled ? ESP_OK : error;
+    if (cancelled) {
+        s_audio.conversation_status.service_error_code = 0;
+        secure_wipe(s_audio.conversation_status.service_error_name,
+                    sizeof(s_audio.conversation_status.service_error_name));
+        secure_wipe(s_audio.conversation_status.transcript,
+                    sizeof(s_audio.conversation_status.transcript));
+        secure_wipe(s_audio.conversation_status.response,
+                    sizeof(s_audio.conversation_status.response));
+    } else if (remote != NULL) {
+        s_audio.conversation_status.service_error_code =
+            remote->service_error_code;
+        secure_wipe(s_audio.conversation_status.service_error_name,
+                    sizeof(s_audio.conversation_status.service_error_name));
+        snprintf(s_audio.conversation_status.service_error_name,
+                 sizeof(s_audio.conversation_status.service_error_name),
+                 "%s", remote->service_error_name);
+        secure_wipe(s_audio.conversation_status.transcript,
+                    sizeof(s_audio.conversation_status.transcript));
+        snprintf(s_audio.conversation_status.transcript,
+                 sizeof(s_audio.conversation_status.transcript), "%s",
+                 remote->transcript);
+        secure_wipe(s_audio.conversation_status.response,
+                    sizeof(s_audio.conversation_status.response));
+        snprintf(s_audio.conversation_status.response,
+                 sizeof(s_audio.conversation_status.response), "%s",
+                 remote->response);
+    }
+    s_audio.stop_requested = false;
+    s_audio.cancel_requested = false;
+    s_audio.conversation_release_requested = false;
+    s_audio.alert_cancelled_session = false;
+    bump_conversation_revision_locked();
+    unlock_context();
+
+    if (cancelled) {
+        ESP_LOGI(TAG,
+                 "cloud conversation cancelled; transient audio and text cleared");
+    } else if (error != ESP_OK) {
+        ESP_LOGW(TAG, "cloud conversation failed: %s",
+                 esp_err_to_name(error));
+    } else {
+        ESP_LOGI(TAG, "cloud conversation completed");
+    }
+}
+
+static esp_err_t wait_for_conversation_ready(
+    conversation_client_t *client, bool *cancelled,
+    conversation_client_status_t *remote)
+{
+    const TickType_t started = xTaskGetTickCount();
+    bool start_sent = false;
+    uint32_t previous_revision = UINT32_MAX;
+    while (true) {
+        if (take_conversation_cancel()) {
+            *cancelled = true;
+            return ESP_OK;
+        }
+        conversation_client_get_status(client, remote);
+        if (remote->revision != previous_revision) {
+            update_conversation_remote_status(remote);
+            previous_revision = remote->revision;
+        }
+        if (remote->phase == CONVERSATION_CLIENT_PHASE_FAILED) {
+            return remote->last_error != ESP_OK ? remote->last_error
+                                                : ESP_FAIL;
+        }
+        if (remote->connected && !start_sent) {
+            const esp_err_t error =
+                conversation_client_send_start(client);
+            if (error != ESP_OK) {
+                return error;
+            }
+            start_sent = true;
+        }
+        if (remote->phase == CONVERSATION_CLIENT_PHASE_LISTENING) {
+            return ESP_OK;
+        }
+        const uint32_t elapsed_ms = (uint32_t)(
+            xTaskGetTickCount() - started) * portTICK_PERIOD_MS;
+        if (elapsed_ms >= AUDIO_CONVERSATION_PROTOCOL_TIMEOUT_MS) {
+            return ESP_ERR_TIMEOUT;
+        }
+        vTaskDelay(pdMS_TO_TICKS(AUDIO_CONVERSATION_POLL_MS));
+    }
+}
+
+static esp_err_t wait_for_conversation_release(
+    conversation_client_t *client, bool *cancelled,
+    conversation_client_status_t *remote)
+{
+    set_conversation_state(AUDIO_CONVERSATION_STATE_WAITING_FOR_RELEASE);
+    const TickType_t started = xTaskGetTickCount();
+    while (!conversation_release_requested()) {
+        if (take_conversation_cancel()) {
+            *cancelled = true;
+            return ESP_OK;
+        }
+        conversation_client_get_status(client, remote);
+        if (remote->phase == CONVERSATION_CLIENT_PHASE_FAILED) {
+            update_conversation_remote_status(remote);
+            return remote->last_error != ESP_OK ? remote->last_error
+                                                : ESP_FAIL;
+        }
+        const uint32_t elapsed_ms = (uint32_t)(
+            xTaskGetTickCount() - started) * portTICK_PERIOD_MS;
+        if (elapsed_ms >= AUDIO_CONVERSATION_RELEASE_TIMEOUT_MS) {
+            return ESP_ERR_TIMEOUT;
+        }
+        vTaskDelay(pdMS_TO_TICKS(AUDIO_CONVERSATION_POLL_MS));
+    }
+    return ESP_OK;
+}
+
+static esp_err_t capture_conversation_audio(
+    conversation_client_t *client, int16_t *capture_buffer,
+    int16_t *mono_buffer, bool *cancelled, uint32_t *elapsed_ms,
+    conversation_client_status_t *remote)
+{
+    esp_err_t error = open_microphones_at_rate(
+        AUDIO_CONVERSATION_CAPTURE_SAMPLE_RATE_HZ);
+    if (error != ESP_OK) {
+        return error;
+    }
+    bool microphone_open = true;
+    bool speech_command_sent = false;
+    for (uint32_t settle = 0U;
+         settle < AUDIO_CONVERSATION_CAPTURE_SETTLE_CHUNKS; ++settle) {
+        if (take_conversation_cancel()) {
+            *cancelled = true;
+            goto cleanup;
+        }
+        error = codec_error(esp_codec_dev_read(
+            s_audio.microphone_device, capture_buffer,
+            (int)(AUDIO_CONVERSATION_CAPTURE_CHUNK_FRAMES *
+                  AUDIO_CAPTURE_CHANNEL_COUNT * sizeof(capture_buffer[0]))));
+        if (error != ESP_OK) {
+            goto cleanup;
+        }
+    }
+
+    error = conversation_client_send_speech(client);
+    if (error != ESP_OK) {
+        goto cleanup;
+    }
+    speech_command_sent = true;
+    set_conversation_state(AUDIO_CONVERSATION_STATE_LISTENING);
+    uint32_t processed_frames = 0U;
+    uint32_t next_status_ms = 500U;
+    uint32_t previous_remote_revision = UINT32_MAX;
+    const TickType_t capture_started = xTaskGetTickCount();
+    while (processed_frames <
+           AUDIO_CONVERSATION_CAPTURE_SAMPLE_RATE_HZ *
+               AUDIO_CONVERSATION_MAX_LISTENING_MS / 1000U &&
+           (uint32_t)(xTaskGetTickCount() - capture_started) *
+                   portTICK_PERIOD_MS <
+               AUDIO_CONVERSATION_MAX_LISTENING_MS) {
+        const audio_control_t control = take_control();
+        if (control == AUDIO_CONTROL_CANCEL) {
+            *cancelled = true;
+            break;
+        }
+        const bool stop_after_chunk =
+            control == AUDIO_CONTROL_STOP && processed_frames == 0U;
+        if (control == AUDIO_CONTROL_STOP && !stop_after_chunk) {
+            break;
+        }
+        conversation_client_get_status(client, remote);
+        if (remote->revision != previous_remote_revision) {
+            update_conversation_remote_status(remote);
+            previous_remote_revision = remote->revision;
+        }
+        if (remote->phase == CONVERSATION_CLIENT_PHASE_FAILED) {
+            error = remote->last_error != ESP_OK ? remote->last_error
+                                                 : ESP_FAIL;
+            break;
+        }
+        if (remote->speech_ended) {
+            break;
+        }
+        error = codec_error(esp_codec_dev_read(
+            s_audio.microphone_device, capture_buffer,
+            (int)(AUDIO_CONVERSATION_CAPTURE_CHUNK_FRAMES *
+                  AUDIO_CAPTURE_CHANNEL_COUNT * sizeof(capture_buffer[0]))));
+        if (error != ESP_OK ||
+            !audio_tdm_extract_mono16(
+                capture_buffer,
+                AUDIO_CONVERSATION_CAPTURE_CHUNK_FRAMES,
+                AUDIO_CAPTURE_CHANNEL_COUNT,
+                AUDIO_CAPTURE_MICROPHONE_1_SLOT, mono_buffer)) {
+            if (error == ESP_OK) {
+                error = ESP_ERR_INVALID_STATE;
+            }
+            break;
+        }
+        conversation_client_get_status(client, remote);
+        if (remote->revision != previous_remote_revision) {
+            update_conversation_remote_status(remote);
+            previous_remote_revision = remote->revision;
+        }
+        if (remote->phase == CONVERSATION_CLIENT_PHASE_FAILED) {
+            error = remote->last_error != ESP_OK ? remote->last_error
+                                                 : ESP_FAIL;
+            break;
+        }
+        if (remote->speech_ended) {
+            break;
+        }
+        error = conversation_client_send_pcm(
+            client, mono_buffer,
+            AUDIO_CONVERSATION_CAPTURE_CHUNK_FRAMES);
+        if (error != ESP_OK) {
+            break;
+        }
+        processed_frames += AUDIO_CONVERSATION_CAPTURE_CHUNK_FRAMES;
+        const uint32_t wall_elapsed_ms =
+            (uint32_t)(xTaskGetTickCount() - capture_started) *
+            portTICK_PERIOD_MS;
+        *elapsed_ms = wall_elapsed_ms <
+                              AUDIO_CONVERSATION_MAX_LISTENING_MS
+                          ? wall_elapsed_ms
+                          : AUDIO_CONVERSATION_MAX_LISTENING_MS;
+        if (*elapsed_ms >= next_status_ms) {
+            update_conversation_elapsed(*elapsed_ms);
+            next_status_ms += 500U;
+        }
+        if (stop_after_chunk ||
+            wall_elapsed_ms >=
+                AUDIO_CONVERSATION_MAX_LISTENING_MS) {
+            break;
+        }
+    }
+
+cleanup:
+    if (microphone_open) {
+        const esp_err_t close_error =
+            codec_error(esp_codec_dev_close(s_audio.microphone_device));
+        if (error == ESP_OK && close_error != ESP_OK) {
+            error = close_error;
+        }
+    }
+    if (speech_command_sent) {
+        if (*cancelled || error != ESP_OK) {
+            (void)conversation_client_cancel_speech(client);
+        } else {
+            error = conversation_client_stop_speech(client);
+        }
+    }
+    return error;
+}
+
+static esp_err_t play_conversation_response(
+    conversation_client_t *client, int16_t *playback_buffer,
+    bool *cancelled, conversation_client_status_t *remote)
+{
+    uint8_t volume = 0U;
+    lock_context();
+    volume = s_playback_volume;
+    unlock_context();
+
+    set_conversation_state(AUDIO_CONVERSATION_STATE_THINKING);
+    const TickType_t started = xTaskGetTickCount();
+    uint32_t previous_revision = UINT32_MAX;
+    bool speaker_open = false;
+    bool local_started = false;
+    esp_err_t error = ESP_OK;
+    while (true) {
+        const audio_control_t control = take_control();
+        if (control == AUDIO_CONTROL_CANCEL) {
+            *cancelled = true;
+            break;
+        }
+        conversation_client_get_status(client, remote);
+        if (remote->revision != previous_revision) {
+            update_conversation_remote_status(remote);
+            previous_revision = remote->revision;
+        }
+        if (remote->phase == CONVERSATION_CLIENT_PHASE_FAILED) {
+            error = remote->last_error != ESP_OK ? remote->last_error
+                                                 : ESP_FAIL;
+            break;
+        }
+
+        const size_t samples = conversation_client_receive_pcm(
+            client, playback_buffer,
+            AUDIO_CONVERSATION_PLAYBACK_CHUNK_FRAMES,
+            AUDIO_CONVERSATION_POLL_MS);
+        if (samples > 0U) {
+            if (!local_started) {
+                if (volume > 0U) {
+                    error = open_speaker_at_rate(
+                        AUDIO_CONVERSATION_PLAYBACK_SAMPLE_RATE_HZ,
+                        volume);
+                    if (error != ESP_OK) {
+                        break;
+                    }
+                    speaker_open = true;
+                }
+                error = conversation_client_local_response_started(client);
+                if (error != ESP_OK) {
+                    break;
+                }
+                local_started = true;
+                set_conversation_state(AUDIO_CONVERSATION_STATE_SPEAKING);
+            }
+            if (speaker_open) {
+                error = codec_error(esp_codec_dev_write(
+                    s_audio.speaker_device, playback_buffer,
+                    (int)(samples * sizeof(playback_buffer[0]))));
+                if (error != ESP_OK) {
+                    break;
+                }
+            }
+        }
+
+        if (remote->response_ended &&
+            conversation_client_buffered_pcm_bytes(client) == 0U) {
+            break;
+        }
+        const uint32_t elapsed_ms = (uint32_t)(
+            xTaskGetTickCount() - started) * portTICK_PERIOD_MS;
+        if (elapsed_ms >= AUDIO_CONVERSATION_RESPONSE_TIMEOUT_MS) {
+            error = ESP_ERR_TIMEOUT;
+            break;
+        }
+    }
+
+    if (speaker_open) {
+        const esp_err_t close_error = close_speaker();
+        if (error == ESP_OK && close_error != ESP_OK) {
+            error = close_error;
+        }
+    }
+    if (*cancelled) {
+        /* Capture cancellation clears an uncommitted input buffer; once a
+         * response is in progress the matching Realtime operation is
+         * response.cancel. Closing the socket remains the bounded fallback. */
+        (void)conversation_client_cancel_speech(client);
+    }
+    if (!*cancelled && error == ESP_OK && local_started) {
+        error = conversation_client_local_response_ended(client);
+    }
+    return error;
+}
+
+static void run_conversation_session(void)
+{
+    conversation_config_snapshot_t config = {0};
+    conversation_client_t *client = NULL;
+    conversation_client_status_t remote = {0};
+    bool cpu_locked = false;
+    bool network_acquired = false;
+    bool cancelled = false;
+    int16_t *workspace = NULL;
+    const size_t capture_samples =
+        (size_t)AUDIO_CONVERSATION_CAPTURE_CHUNK_FRAMES *
+        AUDIO_CAPTURE_CHANNEL_COUNT;
+    const size_t mono_samples =
+        AUDIO_CONVERSATION_CAPTURE_CHUNK_FRAMES;
+    const size_t playback_samples =
+        AUDIO_CONVERSATION_PLAYBACK_CHUNK_FRAMES;
+    const size_t workspace_samples =
+        capture_samples + mono_samples + playback_samples;
+    const size_t workspace_bytes =
+        workspace_samples * sizeof(int16_t);
+    esp_err_t error = ESP_OK;
+    uint32_t elapsed_ms = 0U;
+
+    set_conversation_state(AUDIO_CONVERSATION_STATE_CONNECTING);
+    error = conversation_config_get_snapshot(&config);
+    if (error != ESP_OK ||
+        !config.config.enabled ||
+        conversation_config_validate(&config.config) !=
+            CONVERSATION_CONFIG_RESULT_OK) {
+        if (error == ESP_OK) {
+            error = ESP_ERR_INVALID_STATE;
+        }
+        goto cleanup;
+    }
+    if (s_audio.voice_cpu_lock == NULL) {
+        error = ESP_ERR_INVALID_STATE;
+        goto cleanup;
+    }
+    error = esp_pm_lock_acquire(s_audio.voice_cpu_lock);
+    if (error != ESP_OK) {
+        goto cleanup;
+    }
+    cpu_locked = true;
+
+    if (take_conversation_cancel()) {
+        cancelled = true;
+        goto cleanup;
+    }
+    error = network_time_begin_online_session(
+        AUDIO_CONVERSATION_NETWORK_TIMEOUT_MS);
+    if (error != ESP_OK) {
+        goto cleanup;
+    }
+    network_acquired = true;
+    if (take_conversation_cancel()) {
+        cancelled = true;
+        goto cleanup;
+    }
+
+    error = conversation_client_create(&config, &client);
+    conversation_config_clear_sensitive(&config, sizeof(config));
+    if (error != ESP_OK) {
+        goto cleanup;
+    }
+    error = conversation_client_start_transport(client);
+    if (error == ESP_OK) {
+        error = wait_for_conversation_ready(client, &cancelled, &remote);
+    }
+    if (error == ESP_OK && !cancelled) {
+        error = wait_for_conversation_release(client, &cancelled, &remote);
+    }
+    if (error != ESP_OK || cancelled) {
+        goto cleanup;
+    }
+
+    workspace = heap_caps_malloc(
+        workspace_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (workspace == NULL) {
+        workspace = heap_caps_malloc(workspace_bytes, MALLOC_CAP_8BIT);
+    }
+    if (workspace == NULL) {
+        error = ESP_ERR_NO_MEM;
+        goto cleanup;
+    }
+    int16_t *capture_buffer = workspace;
+    int16_t *mono_buffer = workspace + capture_samples;
+    int16_t *playback_buffer = mono_buffer + mono_samples;
+
+    error = capture_conversation_audio(
+        client, capture_buffer, mono_buffer, &cancelled, &elapsed_ms,
+        &remote);
+    if (error == ESP_OK && !cancelled) {
+        error = play_conversation_response(
+            client, playback_buffer, &cancelled, &remote);
+    }
+    if (error == ESP_OK && !cancelled) {
+        error = conversation_client_finish(client);
+        if (error == ESP_OK) {
+            const TickType_t stop_started = xTaskGetTickCount();
+            while (true) {
+                conversation_client_get_status(client, &remote);
+                if (remote.phase == CONVERSATION_CLIENT_PHASE_STOPPED ||
+                    remote.phase == CONVERSATION_CLIENT_PHASE_FAILED ||
+                    (uint32_t)(xTaskGetTickCount() - stop_started) *
+                            portTICK_PERIOD_MS >=
+                        AUDIO_CONVERSATION_STOP_TIMEOUT_MS) {
+                    break;
+                }
+                vTaskDelay(pdMS_TO_TICKS(AUDIO_CONVERSATION_POLL_MS));
+            }
+        }
+    }
+
+cleanup:
+    if (client != NULL) {
+        /* A pending alarm owns the next use of the shared codec and must not
+         * wait for a response.cancel send plus a WebSocket close handshake.
+         * Other exits retain the bounded graceful close. */
+        if (audio_alert_is_active()) {
+            (void)conversation_client_abort(client);
+        } else {
+            (void)conversation_client_finish(client);
+        }
+        conversation_client_get_status(client, &remote);
+        if (!cancelled) {
+            update_conversation_remote_status(&remote);
+        }
+        conversation_client_destroy(client);
+    }
+    if (workspace != NULL) {
+        release_audio_workspace(workspace, workspace_bytes);
+    }
+    if (network_acquired) {
+        const esp_err_t network_error =
+            network_time_end_online_session();
+        if (error == ESP_OK && !cancelled && network_error != ESP_OK) {
+            error = network_error;
+        }
+    }
+    if (cpu_locked) {
+        const esp_err_t unlock_error =
+            esp_pm_lock_release(s_audio.voice_cpu_lock);
+        if (error == ESP_OK && !cancelled && unlock_error != ESP_OK) {
+            error = unlock_error;
+        }
+    }
+    conversation_config_clear_sensitive(&config, sizeof(config));
+    finish_conversation(cancelled, error, &remote);
+    secure_wipe(&remote, sizeof(remote));
+}
+
 static void run_audio_session(void)
 {
     const size_t recording_samples =
@@ -1908,6 +2522,9 @@ static void audio_worker_task(void *argument)
             } else if (s_audio.voice_requested) {
                 s_audio.voice_requested = false;
                 work = AUDIO_WORK_VOICE;
+            } else if (s_audio.conversation_requested) {
+                s_audio.conversation_requested = false;
+                work = AUDIO_WORK_CONVERSATION;
             } else if (s_audio.alert_requested) {
                 s_audio.alert_requested = false;
                 s_audio.alert_running = true;
@@ -1919,6 +2536,8 @@ static void audio_worker_task(void *argument)
                 run_audio_session();
             } else if (work == AUDIO_WORK_VOICE) {
                 run_voice_session();
+            } else if (work == AUDIO_WORK_CONVERSATION) {
+                run_conversation_session();
             } else if (work == AUDIO_WORK_ALERT) {
                 run_audio_alert();
             } else {
@@ -1953,6 +2572,9 @@ esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus)
     s_audio.voice_status.state = AUDIO_VOICE_STATE_IDLE;
     s_audio.voice_status.result = AUDIO_VOICE_RESULT_NONE;
     s_audio.voice_status.revision = 1U;
+    s_audio.conversation_status.initialized = true;
+    s_audio.conversation_status.state = AUDIO_CONVERSATION_STATE_IDLE;
+    s_audio.conversation_status.revision = 1U;
     voice_reliability_summary_init(&s_audio.voice_reliability);
     s_voice_model_partition = find_voice_model_partition();
     s_audio.voice_status.model_ready =
@@ -1962,6 +2584,8 @@ esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus)
     if (voice_lock_error != ESP_OK) {
         s_audio.voice_status.initialized = false;
         s_audio.voice_status.last_error = voice_lock_error;
+        s_audio.conversation_status.initialized = false;
+        s_audio.conversation_status.last_error = voice_lock_error;
         ESP_LOGW(TAG, "voice CPU lock unavailable: %s",
                  esp_err_to_name(voice_lock_error));
     }
@@ -2007,6 +2631,10 @@ esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus)
 
     s_audio.voice_status.microphone_ready =
         s_audio.status.microphones_ready;
+    s_audio.conversation_status.microphone_ready =
+        s_audio.status.microphones_ready;
+    s_audio.conversation_status.speaker_ready =
+        s_audio.status.speaker_ready;
     if (!s_audio.voice_status.model_ready) {
         ESP_LOGW(TAG,
                  "offline voice model is missing or invalid; clock remains available");
@@ -2021,7 +2649,10 @@ esp_err_t audio_diagnostics_init(i2c_master_bus_handle_t i2c_bus)
             s_audio.status.last_error = ESP_ERR_NO_MEM;
             s_audio.voice_status.initialized = false;
             s_audio.voice_status.last_error = ESP_ERR_NO_MEM;
+            s_audio.conversation_status.initialized = false;
+            s_audio.conversation_status.last_error = ESP_ERR_NO_MEM;
             bump_voice_revision_locked();
+            bump_conversation_revision_locked();
             return ESP_ERR_NO_MEM;
         }
     }
@@ -2080,6 +2711,8 @@ esp_err_t audio_diagnostics_set_playback_volume(uint8_t volume_percent)
     lock_context();
     if (audio_session_state_is_active(s_audio.status.state) ||
         s_audio.voice_requested || s_audio.voice_status.running ||
+        s_audio.conversation_requested ||
+        s_audio.conversation_status.running ||
         s_audio.alert_requested || s_audio.alert_running) {
         unlock_context();
         return ESP_ERR_INVALID_STATE;
@@ -2096,6 +2729,8 @@ esp_err_t audio_diagnostics_start(void)
         !s_audio.status.microphones_ready || s_audio.worker_task == NULL ||
         audio_session_state_is_active(s_audio.status.state) ||
         s_audio.voice_requested || s_audio.voice_status.running ||
+        s_audio.conversation_requested ||
+        s_audio.conversation_status.running ||
         s_audio.alert_requested || s_audio.alert_running) {
         unlock_context();
         return ESP_ERR_INVALID_STATE;
@@ -2143,7 +2778,9 @@ esp_err_t audio_alert_start(void)
 
     s_audio.alert_cancelled_session = false;
     if (audio_session_state_is_active(s_audio.status.state) ||
-        s_audio.voice_requested || s_audio.voice_status.running) {
+        s_audio.voice_requested || s_audio.voice_status.running ||
+        s_audio.conversation_requested ||
+        s_audio.conversation_status.running) {
         s_audio.alert_cancelled_session =
             !s_audio.cancel_requested;
         s_audio.cancel_requested = true;
@@ -2261,7 +2898,8 @@ esp_err_t audio_voice_start(uint32_t generation)
         s_audio.worker_task == NULL || s_audio.voice_requested ||
         s_audio.voice_status.running ||
         audio_session_state_is_active(s_audio.status.state) ||
-        s_audio.diagnostic_requested || s_audio.alert_requested ||
+        s_audio.diagnostic_requested || s_audio.conversation_requested ||
+        s_audio.conversation_status.running || s_audio.alert_requested ||
         s_audio.alert_running) {
         const esp_err_t error =
             !s_audio.voice_status.model_ready ? ESP_ERR_NOT_FOUND
@@ -2316,6 +2954,168 @@ esp_err_t audio_voice_cancel(void)
     s_audio.stop_requested = false;
     unlock_context();
     return ESP_OK;
+}
+
+void audio_conversation_get_status(audio_conversation_status_t *status)
+{
+    if (status == NULL) {
+        return;
+    }
+    lock_context();
+    *status = s_audio.conversation_status;
+    unlock_context();
+}
+
+esp_err_t audio_conversation_start(uint32_t generation)
+{
+    if (generation == 0U) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    lock_context();
+    if (!s_audio.conversation_status.initialized ||
+        !s_audio.conversation_status.microphone_ready ||
+        !s_audio.conversation_status.speaker_ready ||
+        s_audio.worker_task == NULL || s_audio.conversation_requested ||
+        s_audio.conversation_status.running ||
+        audio_session_state_is_active(s_audio.status.state) ||
+        s_audio.diagnostic_requested || s_audio.voice_requested ||
+        s_audio.voice_status.running || s_audio.alert_requested ||
+        s_audio.alert_running) {
+        const esp_err_t error =
+            !s_audio.conversation_status.microphone_ready ||
+                    !s_audio.conversation_status.speaker_ready
+                ? ESP_ERR_NOT_FOUND
+                : ESP_ERR_INVALID_STATE;
+        unlock_context();
+        return error;
+    }
+
+    s_audio.stop_requested = false;
+    s_audio.cancel_requested = false;
+    s_audio.alert_cancelled_session = false;
+    s_audio.conversation_release_requested = false;
+    s_audio.conversation_requested = true;
+    s_audio.conversation_status.running = true;
+    s_audio.conversation_status.generation = generation;
+    s_audio.conversation_status.elapsed_ms = 0U;
+    s_audio.conversation_status.state =
+        AUDIO_CONVERSATION_STATE_CONNECTING;
+    s_audio.conversation_status.last_error = ESP_OK;
+    s_audio.conversation_status.service_error_code = 0;
+    secure_wipe(s_audio.conversation_status.service_error_name,
+                sizeof(s_audio.conversation_status.service_error_name));
+    secure_wipe(s_audio.conversation_status.transcript,
+                sizeof(s_audio.conversation_status.transcript));
+    secure_wipe(s_audio.conversation_status.response,
+                sizeof(s_audio.conversation_status.response));
+    bump_conversation_revision_locked();
+    unlock_context();
+
+    xTaskNotifyGive(s_audio.worker_task);
+    return ESP_OK;
+}
+
+esp_err_t audio_conversation_release_key(void)
+{
+    lock_context();
+    if (!s_audio.conversation_requested &&
+        !s_audio.conversation_status.running) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (s_audio.conversation_status.state !=
+            AUDIO_CONVERSATION_STATE_CONNECTING &&
+        s_audio.conversation_status.state !=
+            AUDIO_CONVERSATION_STATE_WAITING_FOR_RELEASE) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_audio.conversation_release_requested = true;
+    unlock_context();
+    return ESP_OK;
+}
+
+esp_err_t audio_conversation_request_stop(void)
+{
+    lock_context();
+    if (s_audio.conversation_status.state !=
+        AUDIO_CONVERSATION_STATE_LISTENING) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_audio.stop_requested = true;
+    unlock_context();
+    return ESP_OK;
+}
+
+esp_err_t audio_conversation_cancel(void)
+{
+    lock_context();
+    if (!s_audio.conversation_requested &&
+        !s_audio.conversation_status.running) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_audio.cancel_requested = true;
+    s_audio.alert_cancelled_session = false;
+    s_audio.stop_requested = false;
+    unlock_context();
+    return ESP_OK;
+}
+
+esp_err_t audio_conversation_dismiss(void)
+{
+    lock_context();
+    const audio_conversation_state_t state =
+        s_audio.conversation_status.state;
+    if (s_audio.conversation_requested ||
+        s_audio.conversation_status.running ||
+        (state != AUDIO_CONVERSATION_STATE_COMPLETED &&
+         state != AUDIO_CONVERSATION_STATE_CANCELLED &&
+         state != AUDIO_CONVERSATION_STATE_FAILED)) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_audio.conversation_status.state = AUDIO_CONVERSATION_STATE_IDLE;
+    s_audio.conversation_status.elapsed_ms = 0U;
+    s_audio.conversation_status.last_error = ESP_OK;
+    s_audio.conversation_status.service_error_code = 0;
+    secure_wipe(s_audio.conversation_status.service_error_name,
+                sizeof(s_audio.conversation_status.service_error_name));
+    secure_wipe(s_audio.conversation_status.transcript,
+                sizeof(s_audio.conversation_status.transcript));
+    secure_wipe(s_audio.conversation_status.response,
+                sizeof(s_audio.conversation_status.response));
+    bump_conversation_revision_locked();
+    unlock_context();
+    return ESP_OK;
+}
+
+const char *audio_conversation_state_name(
+    audio_conversation_state_t state)
+{
+    switch (state) {
+    case AUDIO_CONVERSATION_STATE_CONNECTING:
+        return "connecting";
+    case AUDIO_CONVERSATION_STATE_WAITING_FOR_RELEASE:
+        return "waiting_for_release";
+    case AUDIO_CONVERSATION_STATE_LISTENING:
+        return "listening";
+    case AUDIO_CONVERSATION_STATE_THINKING:
+        return "thinking";
+    case AUDIO_CONVERSATION_STATE_SPEAKING:
+        return "speaking";
+    case AUDIO_CONVERSATION_STATE_COMPLETED:
+        return "completed";
+    case AUDIO_CONVERSATION_STATE_CANCELLED:
+        return "cancelled";
+    case AUDIO_CONVERSATION_STATE_FAILED:
+        return "failed";
+    case AUDIO_CONVERSATION_STATE_IDLE:
+    default:
+        return "idle";
+    }
 }
 
 const char *audio_voice_result_name(audio_voice_result_t result)

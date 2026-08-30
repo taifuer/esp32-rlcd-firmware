@@ -35,6 +35,8 @@ RLCD_DL_FFT_DIR="${RLCD_EXTERNAL_DEPS_DIR}/sources/espressif/espressif__dl_fft"
 RLCD_DL_FFT_ARCHIVE="${RLCD_EXTERNAL_DEPS_DIR}/downloads/espressif__dl_fft-v${DL_FFT_VERSION}.zip"
 RLCD_CJSON_DIR="${RLCD_EXTERNAL_DEPS_DIR}/sources/espressif/espressif__cjson"
 RLCD_CJSON_ARCHIVE="${RLCD_EXTERNAL_DEPS_DIR}/downloads/espressif__cjson-v${CJSON_VERSION}.zip"
+RLCD_ESP_PROTOCOLS_DIR="${RLCD_EXTERNAL_DEPS_DIR}/sources/espressif/esp-protocols"
+RLCD_ESP_WEBSOCKET_CLIENT_DIR="${RLCD_ESP_PROTOCOLS_DIR}/${ESP_WEBSOCKET_CLIENT_RELATIVE_PATH}"
 RLCD_ESPTOOL_WINDOWS_DIR="${RLCD_EXTERNAL_DEPS_DIR}/toolchains/esptool-windows-v${ESPTOOL_WINDOWS_VERSION}"
 
 export RLCD_PROJECT_DIR
@@ -46,6 +48,7 @@ export RLCD_ESP_SR_DIR
 export RLCD_ESP_DSP_DIR
 export RLCD_DL_FFT_DIR
 export RLCD_CJSON_DIR
+export RLCD_ESP_WEBSOCKET_CLIENT_DIR
 export IDF_COMPONENT_MANAGER=0
 
 verify_sha256_manifest_entry() {

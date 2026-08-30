@@ -23,6 +23,7 @@ Copyright 2026 taifu
 | ESP-DSP | v1.8.0，`196825deaa4848b2c8e87b6126491cd7fc87e5bf` | ESP-SR 的数字信号处理依赖 | Apache-2.0；见 [`LICENSE`](LICENSE) |
 | `dl_fft` | v0.6.0，`a8a7b60ea5bfd6ce46960ea061641fffa9589440` | ESP-SR 的 FFT 依赖 | 组件清单声明 MIT，部分源文件明确为 Apache-2.0；见 [`LICENSES/dl_fft-MIT.txt`](LICENSES/dl_fft-MIT.txt) 和 [`LICENSE`](LICENSE) |
 | cJSON | Espressif 组件 v1.7.19，`721d625669f4e4fdfe6e02cf7e11f15b33f13e3a` | 解析在线固件、图库和 ESP-SR 模型清单 | MIT；见 [`LICENSES/cJSON.txt`](LICENSES/cJSON.txt) |
+| ESP WebSocket Client | Espressif 组件 v1.8.0，`70bf122fc8bc74622dcf7e15233b5b2af9088df5` | 阿里云百炼 Realtime 可选语音会话的 WSS 传输 | Apache-2.0；见 [`LICENSE`](LICENSE) |
 | wpa_supplicant | ESP-IDF 内含 2.10 | WPA2/WPA3 客户端认证 | BSD-3-Clause；见 [`LICENSES/WPA-Supplicant.txt`](LICENSES/WPA-Supplicant.txt) 和 [`LICENSES/WPA-Supplicant-COPYING.txt`](LICENSES/WPA-Supplicant-COPYING.txt) |
 | HTTP Parser | ESP-IDF 内含 2.7.0 | 本地配网页面的 HTTP 请求解析 | MIT；见 [`LICENSES/HTTP-Parser.txt`](LICENSES/HTTP-Parser.txt) |
 | Espressif QR Code | v0.2.0，`3117b1e6806738c0271bbd18df17f6d74ec66452` | 在配网页面显示标准 Wi-Fi 加入二维码 | Espressif 包装层为 Apache-2.0，见 [`LICENSE`](LICENSE)；内含 Nayuki QR Code Generator，MIT，见 [`LICENSES/Nayuki-QR-Code-Generator.txt`](LICENSES/Nayuki-QR-Code-Generator.txt) |
@@ -52,6 +53,7 @@ Release 同时附带该版本打包时的本文件与完整许可文本。
 - ESP-DSP 与 `dl_fft`：Espressif Systems (Shanghai) PTE LTD、Espressif Systems
   (Shanghai) CO LTD 及贡献者；
 - cJSON：Copyright (c) 2009-2017 Dave Gamble and cJSON contributors；
+- ESP WebSocket Client：Copyright 2015-2025 Espressif Systems (Shanghai) CO LTD；
 - Espressif QR Code：Copyright 2015-2021 Espressif Systems (Shanghai) CO LTD；底层
   QR Code Generator：Copyright (c) Project Nayuki；
 - `esp_codec_dev`：Copyright 2023 Espressif Systems (Shanghai) CO LTD；

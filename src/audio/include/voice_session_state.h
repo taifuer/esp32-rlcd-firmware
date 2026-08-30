@@ -85,6 +85,11 @@ voice_session_action_t voice_session_state_alarm_started(
 bool voice_session_state_report_result(voice_session_state_t *state,
                                        uint32_t generation,
                                        voice_session_result_t result);
+/* Transport/setup can fail before capture reaches RECOGNIZING. Accept a
+ * matching failure from any live processing phase without pretending speech
+ * was detected. */
+bool voice_session_state_report_failure(voice_session_state_t *state,
+                                        uint32_t generation);
 voice_session_action_t voice_session_state_tick(
     voice_session_state_t *state, uint32_t elapsed_ms);
 const char *voice_session_state_name(voice_session_phase_t phase);

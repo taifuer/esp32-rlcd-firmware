@@ -160,9 +160,22 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_settings_record"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/conversation -Isrc/conversation/include \
+  src/conversation/conversation_config_model.c \
+  src/conversation/conversation_config_record.c \
+  tests/test_conversation_config.c \
+  -o "${RLCD_TEST_TMP}/test_conversation_config"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/app \
   src/app/network_screen_policy.c tests/test_network_screen_policy.c \
   -o "${RLCD_TEST_TMP}/test_network_screen_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/app \
+  src/app/voice_backend_policy.c tests/test_voice_backend_policy.c \
+  -o "${RLCD_TEST_TMP}/test_voice_backend_policy"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/update/include \
@@ -178,6 +191,14 @@ cc -std=c17 -w \
   -I"${RLCD_CJSON_DIR}/cJSON" \
   -c "${RLCD_CJSON_DIR}/cJSON/cJSON.c" \
   -o "${RLCD_TEST_TMP}/cJSON.o"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=address,undefined -fno-sanitize-recover=all \
+  -Isrc/conversation/include -I"${RLCD_CJSON_DIR}/cJSON" \
+  src/conversation/conversation_protocol.c \
+  tests/test_conversation_protocol.c \
+  "${RLCD_TEST_TMP}/cJSON.o" -lm \
+  -o "${RLCD_TEST_TMP}/test_conversation_protocol"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/update/include \
@@ -263,9 +284,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_sd_image_delete_policy"
 "${RLCD_TEST_TMP}/test_app_settings"
 "${RLCD_TEST_TMP}/test_settings_record"
+"${RLCD_TEST_TMP}/test_conversation_config"
 "${RLCD_TEST_TMP}/test_network_screen_policy"
+"${RLCD_TEST_TMP}/test_voice_backend_policy"
 "${RLCD_TEST_TMP}/test_firmware_update_policy"
 "${RLCD_TEST_TMP}/test_settings_portal_policy"
+ASAN_OPTIONS=detect_leaks=0 \
+  "${RLCD_TEST_TMP}/test_conversation_protocol"
 "${RLCD_TEST_TMP}/test_online_update_policy"
 "${RLCD_TEST_TMP}/test_gallery_manifest"
 "${RLCD_TEST_TMP}/test_rtc_backup_policy"

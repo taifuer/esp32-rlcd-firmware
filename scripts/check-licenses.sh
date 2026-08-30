@@ -111,6 +111,9 @@ compare_file "${RLCD_PROJECT_DIR}/LICENSES/cJSON.txt" \
     "${RLCD_CJSON_DIR}/LICENSE" "Espressif cJSON package"
 compare_file "${RLCD_PROJECT_DIR}/LICENSES/cJSON.txt" \
     "${RLCD_CJSON_DIR}/cJSON/LICENSE" "upstream cJSON"
+compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
+    "${RLCD_ESP_WEBSOCKET_CLIENT_DIR}/LICENSE" \
+    "ESP WebSocket Client"
 compare_text_file "${RLCD_PROJECT_DIR}/LICENSES/ESP-SR.txt" \
     "${RLCD_ESP_SR_DIR}/LICENSE" "ESP-SR"
 compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
@@ -189,6 +192,10 @@ notice_entries=(
     "组件清单声明 MIT"
     "Espressif 组件 v${CJSON_VERSION}"
     "721d625669f4e4fdfe6e02cf7e11f15b33f13e3a"
+    "ESP WebSocket Client"
+    "v${ESP_WEBSOCKET_CLIENT_VERSION}"
+    "${ESP_WEBSOCKET_CLIENT_COMMIT}"
+    "Copyright 2015-2025 Espressif Systems (Shanghai) CO LTD"
     "Espressif QR Code"
     "Mbed TLS"
     "lwIP"

@@ -287,6 +287,34 @@ static void test_engine_and_result_failures(void)
            VOICE_SESSION_PHASE_RECOGNIZING);
 }
 
+static void test_transport_failure_in_every_processing_phase(void)
+{
+    voice_session_state_t state;
+    voice_session_state_init(&state);
+
+    uint32_t generation = begin_waiting(&state);
+    assert(!voice_session_state_report_failure(&state, generation + 1U));
+    assert(voice_session_state_report_failure(&state, generation));
+    assert(voice_session_state_phase(&state) ==
+           VOICE_SESSION_PHASE_FAILED);
+    wait_for_feedback(&state, VOICE_SESSION_ACTION_RETURN_TO_READY);
+
+    generation = begin_listening(&state);
+    assert(voice_session_state_report_failure(&state, generation));
+    assert(voice_session_state_phase(&state) ==
+           VOICE_SESSION_PHASE_FAILED);
+    wait_for_feedback(&state, VOICE_SESSION_ACTION_RETURN_TO_READY);
+
+    generation = begin_recognizing(&state);
+    assert(voice_session_state_report_failure(&state, generation));
+    assert(voice_session_state_phase(&state) ==
+           VOICE_SESSION_PHASE_FAILED);
+    wait_for_feedback(&state, VOICE_SESSION_ACTION_RETURN_TO_READY);
+
+    assert(!voice_session_state_report_failure(&state, generation));
+    assert(!voice_session_state_report_failure(NULL, generation));
+}
+
 static void test_generation_wrap_and_null_safety(void)
 {
     voice_session_state_t state;
@@ -323,6 +351,7 @@ static void test_generation_wrap_and_null_safety(void)
            VOICE_SESSION_ACTION_NONE);
     assert(!voice_session_state_report_result(
         NULL, 1U, VOICE_SESSION_RESULT_MATCHED));
+    assert(!voice_session_state_report_failure(NULL, 1U));
     assert(voice_session_state_tick(NULL, UINT32_MAX) ==
            VOICE_SESSION_ACTION_NONE);
 }
@@ -345,6 +374,7 @@ int main(void)
     test_boot_cancel_preemption();
     test_alarm_preemption_in_every_phase();
     test_engine_and_result_failures();
+    test_transport_failure_in_every_processing_phase();
     test_generation_wrap_and_null_safety();
     test_state_names();
 

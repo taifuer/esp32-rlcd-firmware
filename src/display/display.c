@@ -369,6 +369,139 @@ static void draw_utf8_centered_in_region(int left, int width, int baseline_y,
     u8g2_DrawUTF8(s_u8g2, x, baseline_y, text);
 }
 
+static size_t display_utf8_sequence_bytes(unsigned char lead)
+{
+    if (lead < 0x80U) {
+        return 1U;
+    }
+    if (lead >= 0xc2U && lead <= 0xdfU) {
+        return 2U;
+    }
+    if (lead >= 0xe0U && lead <= 0xefU) {
+        return 3U;
+    }
+    if (lead >= 0xf0U && lead <= 0xf4U) {
+        return 4U;
+    }
+    return 1U;
+}
+
+static const char *make_utf8_display_line(
+    const char *source, char *line, size_t capacity, int max_width,
+    bool *remaining)
+{
+    if (remaining != NULL) {
+        *remaining = false;
+    }
+    if (line == NULL || capacity == 0U) {
+        return source;
+    }
+    line[0] = '\0';
+    if (source == NULL) {
+        return NULL;
+    }
+    while (*source == ' ' || *source == '\n' || *source == '\r' ||
+           *source == '\t') {
+        ++source;
+    }
+
+    size_t output_length = 0U;
+    size_t break_length = 0U;
+    const char *break_source = NULL;
+    const char *cursor = source;
+    while (*cursor != '\0' && *cursor != '\n' && *cursor != '\r') {
+        const size_t sequence = display_utf8_sequence_bytes(
+            (unsigned char)*cursor);
+        if (output_length + sequence >= capacity) {
+            break;
+        }
+        memcpy(line + output_length, cursor, sequence);
+        output_length += sequence;
+        line[output_length] = '\0';
+        if ((int)u8g2_GetUTF8Width(s_u8g2, line) > max_width) {
+            output_length -= sequence;
+            line[output_length] = '\0';
+            if (break_source != NULL && break_length > 0U) {
+                output_length = break_length;
+                line[output_length] = '\0';
+                cursor = break_source;
+            }
+            break;
+        }
+        cursor += sequence;
+        if (sequence == 1U && line[output_length - 1U] == ' ') {
+            break_length = output_length - 1U;
+            break_source = cursor;
+        }
+    }
+    while (output_length > 0U && line[output_length - 1U] == ' ') {
+        line[--output_length] = '\0';
+    }
+    while (*cursor == ' ' || *cursor == '\n' || *cursor == '\r' ||
+           *cursor == '\t') {
+        ++cursor;
+    }
+    if (remaining != NULL) {
+        *remaining = *cursor != '\0';
+    }
+    return cursor;
+}
+
+static void append_display_ellipsis(char *line, size_t capacity,
+                                    int max_width)
+{
+    size_t length = strlen(line);
+    while (length > 0U) {
+        if (length + 4U <= capacity) {
+            memcpy(line + length, "...", 4U);
+            if ((int)u8g2_GetUTF8Width(s_u8g2, line) <= max_width) {
+                return;
+            }
+            line[length] = '\0';
+        }
+        do {
+            --length;
+        } while (length > 0U &&
+                 ((unsigned char)line[length] & 0xc0U) == 0x80U);
+        line[length] = '\0';
+    }
+    snprintf(line, capacity, "...");
+}
+
+static void draw_voice_text(const char *text, int first_baseline_y,
+                            int second_baseline_y)
+{
+    enum {
+        VOICE_TEXT_MARGIN = 18,
+        VOICE_TEXT_LINE_CAPACITY = 192,
+    };
+    char first[VOICE_TEXT_LINE_CAPACITY];
+    char second[VOICE_TEXT_LINE_CAPACITY];
+    const int width = BOARD_DISPLAY_WIDTH - 2 * VOICE_TEXT_MARGIN;
+    bool has_second = false;
+    const char *cursor = make_utf8_display_line(
+        text, first, sizeof(first), width, &has_second);
+    bool has_more = false;
+    if (has_second) {
+        (void)make_utf8_display_line(cursor, second, sizeof(second),
+                                     width, &has_more);
+        if (has_more) {
+            append_display_ellipsis(second, sizeof(second), width);
+        }
+    } else {
+        second[0] = '\0';
+    }
+    if (first[0] == '\0') {
+        snprintf(first, sizeof(first), "...");
+    }
+    draw_utf8_centered_in_region(VOICE_TEXT_MARGIN, width,
+                                 first_baseline_y, first);
+    if (second[0] != '\0') {
+        draw_utf8_centered_in_region(VOICE_TEXT_MARGIN, width,
+                                     second_baseline_y, second);
+    }
+}
+
 static void draw_battery(int x, int y, bool valid, uint8_t percent)
 {
     const int body_width = 28;
@@ -938,8 +1071,12 @@ void display_show_voice(const display_voice_status_t *status)
     case DISPLAY_VOICE_STATE_WAITING_FOR_RELEASE:
         draw_centered(112, "RELEASE KEY");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
-        draw_centered(170, "Listening starts after release");
-        draw_centered(210, "One command, up to 5 seconds");
+        draw_centered(170, status->cloud_mode
+                               ? "Cloud is ready for your question"
+                               : "Listening starts after release");
+        draw_centered(210, status->cloud_mode
+                               ? "One turn, up to 10 seconds"
+                               : "One command, up to 5 seconds");
         draw_system_footer("BOOT: CANCEL");
         break;
     case DISPLAY_VOICE_STATE_PREPARING:
@@ -955,14 +1092,20 @@ void display_show_voice(const display_voice_status_t *status)
                  (unsigned)(status->max_listening_ms / 1000U));
         draw_centered(100, value);
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
-        draw_centered(158, "Say one command clearly");
-        u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
-        draw_utf8_centered_in_region(
-            0, BOARD_DISPLAY_WIDTH, 199,
-            "回到主页  打开日历  查看状态");
-        draw_utf8_centered_in_region(
-            0, BOARD_DISPLAY_WIDTH, 226,
-            "打开图片  打开设置  取消");
+        if (status->cloud_mode) {
+            draw_centered(148, "Speak Chinese or English");
+            u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+            draw_voice_text(status->transcript, 188, 220);
+        } else {
+            draw_centered(158, "Say one command clearly");
+            u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+            draw_utf8_centered_in_region(
+                0, BOARD_DISPLAY_WIDTH, 199,
+                "回到主页  打开日历  查看状态");
+            draw_utf8_centered_in_region(
+                0, BOARD_DISPLAY_WIDTH, 226,
+                "打开图片  打开设置  取消");
+        }
         draw_system_footer("KEY: DONE | BOOT: CANCEL");
         break;
     case DISPLAY_VOICE_STATE_RECOGNIZING:
@@ -970,6 +1113,31 @@ void display_show_voice(const display_voice_status_t *status)
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(174, "Matching locally on this device");
         draw_system_footer("BOOT: CANCEL");
+        break;
+    case DISPLAY_VOICE_STATE_CLOUD_CONNECTING:
+        draw_centered(112, "CONNECTING");
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+        draw_centered(172, "Preparing cloud conversation");
+        draw_centered(210, "Keep holding KEY or release now");
+        draw_system_footer("BOOT: CANCEL");
+        break;
+    case DISPLAY_VOICE_STATE_CLOUD_THINKING:
+        draw_centered(92, "THINKING");
+        u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+        draw_voice_text(status->transcript, 156, 194);
+        draw_system_footer("BOOT: CANCEL");
+        break;
+    case DISPLAY_VOICE_STATE_CLOUD_SPEAKING:
+        draw_centered(82, "SPEAKING");
+        u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+        draw_voice_text(status->response, 145, 185);
+        draw_system_footer("BOOT: CANCEL");
+        break;
+    case DISPLAY_VOICE_STATE_CLOUD_COMPLETED:
+        draw_centered(82, "DONE");
+        u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+        draw_voice_text(status->response, 145, 185);
+        draw_system_footer("Hold KEY 2s to talk again");
         break;
     case DISPLAY_VOICE_STATE_SUCCEEDED:
         draw_centered(112, "UNDERSTOOD");
@@ -1017,18 +1185,24 @@ void display_show_voice(const display_voice_status_t *status)
         break;
     case DISPLAY_VOICE_STATE_READY:
     default:
-        draw_centered(92, "OFFLINE VOICE");
+        draw_centered(92, status->cloud_mode
+                              ? "CLOUD VOICE"
+                              : "OFFLINE VOICE");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(145, status->engine_available
                                ? "Hold KEY 2s, then release"
                                : "Voice engine is not ready");
-        u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
-        draw_utf8_centered_in_region(
-            0, BOARD_DISPLAY_WIDTH, 190,
-            "回到主页  打开日历  查看状态");
-        draw_utf8_centered_in_region(
-            0, BOARD_DISPLAY_WIDTH, 218,
-            "打开图片  打开设置  取消");
+        if (status->cloud_mode) {
+            draw_centered(198, "Chinese / English conversation");
+        } else {
+            u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+            draw_utf8_centered_in_region(
+                0, BOARD_DISPLAY_WIDTH, 190,
+                "回到主页  打开日历  查看状态");
+            draw_utf8_centered_in_region(
+                0, BOARD_DISPLAY_WIDTH, 218,
+                "打开图片  打开设置  取消");
+        }
         draw_system_footer("BOOT: HOME | KEY: NEXT");
         break;
     }

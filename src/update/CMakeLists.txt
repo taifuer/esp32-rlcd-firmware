@@ -18,6 +18,7 @@ idf_component_register(
         esp_wifi
         gallery
         cjson
+        conversation
         mbedtls
         network
         rtc

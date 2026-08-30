@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware update progress screen</title>
+  <desc id="description">A minimal white-on-black status screen showing the actual percentage and transferred firmware size during an OTA update.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <rect x="3" y="3" width="394" height="294" fill="none" stroke="#eef3e8"/>
+  <g fill="#eef3e8" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-weight="700">
+    <text x="200" y="130" font-size="24">RECEIVING UPDATE</text>
+    <text x="200" y="170" font-size="17">64% | 993 / 1551 KiB</text>
+  </g>
+</svg>
