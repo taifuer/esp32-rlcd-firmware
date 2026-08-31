@@ -103,6 +103,8 @@ typedef enum {
     DISPLAY_VOICE_STATE_CLOUD_CONNECTING,
     DISPLAY_VOICE_STATE_CLOUD_THINKING,
     DISPLAY_VOICE_STATE_CLOUD_SPEAKING,
+    DISPLAY_VOICE_STATE_CLOUD_ADVANCING,
+    DISPLAY_VOICE_STATE_CLOUD_FOLLOW_UP,
     DISPLAY_VOICE_STATE_CLOUD_COMPLETED,
     DISPLAY_VOICE_STATE_SUCCEEDED,
     DISPLAY_VOICE_STATE_NO_VOICE,
@@ -116,6 +118,8 @@ typedef enum {
 typedef struct {
     bool engine_available;
     bool cloud_mode;
+    uint8_t turn_number;
+    uint8_t max_turns;
     uint32_t elapsed_ms;
     uint32_t max_listening_ms;
     display_voice_state_t state;

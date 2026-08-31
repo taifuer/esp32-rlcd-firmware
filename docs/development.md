@@ -16,10 +16,10 @@
 - 音频驱动、维护诊断与离线语音位于 `src/audio/`，使用板载 ES8311、ES7210、
   ESP-IDF I2S 和 Espressif ESP-SR MultiNet；16 kHz 单声道音频直接送入 MultiNet，
   不使用 AFE，也不创建第二套直接操作 codec 的采集链路。
-- 可选云端语音 Beta 位于 `src/conversation/`，负责启用状态、API Key、受控模型与官方
+- 可选 AI 语音 Beta 位于 `src/conversation/`，负责启用状态、API Key、受控模型与官方
   API Host 配置、双槽持久化、Realtime 事件和 WebSocket 客户端；scheme、路径与模型参数
-  由固件按白名单组成，不接受完整用户 URL。采集和播放仍由 `src/audio/` 的同一个串行化
-  worker 独占 codec 与 I2S。
+  由固件按白名单组成，不接受完整用户 URL。同一有界会话复用一条 WebSocket
+  和服务端上下文；采集和播放仍由 `src/audio/` 的同一个串行化 worker 独占 codec 与 I2S。
 - microSD 图片源使用 ESP-IDF 原生 1-bit SDMMC 和 FatFs；`src/sd_image/` 负责启动
   扫描、PSRAM 缓存和只在用户确认时开放的有界导入事务，PBM/BMP 单色图片校验
   与解码位于 `src/image/`。
@@ -111,7 +111,7 @@ ESP-SR 从标签为 `model` 的数据区域加载 `srmodels.bin`。v0.18.0 分�
 旧分区表，因此保留 Wi-Fi 和设备偏好。默认模型为 `build/srmodels/srmodels.bin`，必要时
 可用 `--model` 指定同一校验目录中的模型。
 
-从 v0.7.0 或更新版本迁移到当前 v0.20.0 的 USB 验收流程如下；离线语音模型仍是
+从 v0.7.0 或更新版本迁移到当前 v0.21.0 的 USB 验收流程如下；离线语音模型仍是
 v0.18.0 首次引入的同一发布边界：
 
 1. 先执行 `./scripts/build.sh`，再确认 `build/SHA256SUMS` 同时校验应用和
@@ -127,12 +127,12 @@ v0.18.0 首次引入的同一发布边界：
 ```bash
 ./scripts/update-app.sh \
   --port COM5 \
-  --firmware build/release/v0.20.0/esp32-rlcd-firmware-v0.20.0-ota.bin \
-  --model build/release/v0.20.0/esp32-rlcd-firmware-v0.20.0-model.bin \
+  --firmware build/release/v0.21.0/esp32-rlcd-firmware-v0.21.0-ota.bin \
+  --model build/release/v0.21.0/esp32-rlcd-firmware-v0.21.0-model.bin \
   --confirm
 ```
 
-首次安装、完整恢复和需要改写为新分区表时，使用包含模型的 v0.20.0 Factory 镜像；
+首次安装、完整恢复和需要改写为新分区表时，使用包含模型的 v0.21.0 Factory 镜像；
 `build.sh` 必须逐字节确认 Factory 在 `0x610000` 包含同一 `srmodels.bin`。已通过
 `update-app.sh` 或 Factory 安装兼容模型的设备，后续纯应用 OTA 可以继续复用它；改变
 模型内容、区域大小或不兼容 ABI 时，必须再次提供 app+model USB 更新或独立、断电安全且
@@ -168,20 +168,20 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 
 ### 构建版本与更新通道
 
-仓库默认构建版本为 `0.20.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
+仓库默认构建版本为 `0.21.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
 候选构建修改 `CMakeLists.txt`：
 
 ```bash
-RLCD_PROJECT_VERSION=0.21.0-dev.1 ./scripts/build.sh
-RLCD_PROJECT_VERSION=0.20.0 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.22.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.21.0 ./scripts/build.sh
 ```
 
 版本必须是固件可比较的 SemVer，且不带文件名使用的前导 `v`：
 
 - 设备默认读取 `https://mcu.taifua.com/esp32-rlcd/firmware/stable.json`；只有设备偏好中
   显式启用开发者测试通道后才读取 `testing.json`；
-- SemVer 不自动选择通道。稳定清单只允许 `0.20.0` 这类正式目标，测试清单用于
-  `0.21.0-dev.1`、`0.21.0-rc.1` 等候选，也可在转正式期间指向正式目标。
+- SemVer 不自动选择通道。稳定清单只允许 `0.21.0` 这类正式目标，测试清单用于
+  `0.22.0-dev.1`、`0.22.0-rc.1` 等候选，也可在转正式期间指向正式目标。
 
 预发布验证先上传版本化 `-ota.bin`，核对大小和 SHA-256，再更新 `testing.json`。正式
 发布必须从同一份已实机验收的源码构建正式版本，重新核对产物差异、大小与 SHA-256 后
@@ -216,6 +216,10 @@ RLCD_PROJECT_VERSION=0.20.0 ./scripts/build.sh
     请求头、PCM 或对话正文。停用与离线回退、错误 Key、第二模型、其他受控 Host、长输入、
     取消、中途断网、连续资源回收和闹钟抢占等完整矩阵记录在[开发计划](roadmap.md)，完成前
     功能保持 Beta，且每次发布必须在 Changelog 和版本说明中列出尚未实机覆盖的边界。
+    涉及多轮会话的版本还必须验证同一 WebSocket 的上下文连贯、播放中续问、
+    `FOLLOW-UP` 的 `KEY` / `BOOT` 语义、第 5 轮、30 秒续问、5 分钟下一轮准入边界和
+    在途回答不被总时限截断，
+    并确认会话结束后的网络、codec、内存和性能锁全部回收。
     Host、URL、模型和表单的拒绝路径还必须由主机测试覆盖。涉及对应路径的后续改动应补做
     针对性实机回归；移除 Beta 标记或更改默认模型前必须完成全部矩阵。
 11. 只有与本次发布范围对应的必需实机检查通过后，才把 Factory、OTA 与同一次构建生成的
@@ -277,8 +281,9 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
   主机、大小和 SHA-256 任一不匹配都不得写入或切换启动槽。安装前必须重新读取清单，
   自动流程只能检查，不能下载或安装。
 - 不改写或提交仓库外的上游参考源码。
-- 原始麦克风 PCM 不得写入日志、Flash、NVS 或 microSD。离线模式不得发送 PCM；云端
-  Beta 只在用户主动开始的本轮通过已验证证书的 TLS WebSocket 发送，不得让“不持久化”
+- 原始麦克风 PCM 不得写入日志、Flash、NVS 或 microSD。离线模式不得发送 PCM；AI
+  语音 Beta 只在用户主动开始的本次有界会话中通过已验证证书的 TLS WebSocket 发送，
+  不得让“不持久化”
   掩盖上传事实。语音日志只允许记录会话状态、不可还原的指令编号、耗时和错误码；任何
   调试采样、转写或回复都不得进入正式构建或发布产物。
 - 云端 API Key 不得由状态接口返回、网页预填或日志记录；空白保存只保留既有 Key，关闭
@@ -294,8 +299,8 @@ Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
 音频配置以[客户端事件文档](https://help.aliyun.com/zh/model-studio/client-events)
 为依据；Qwen-Audio 的 16 kHz 输入、24 kHz 输出和手动 PTT 以
 [Qwen-Audio Realtime 使用指南](https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides)
-为依据。首版只实现共同的单轮手动 PTT 子集，不得因为上游模型支持多轮、`smart_turn` 或
-Function Calling 就在产品文档中宣称已经提供这些能力。
+为依据。当前只实现共同的手动 PTT、最多 5 轮、半双工子集；不得因为上游模型
+支持 `smart_turn`、自动 VAD、全双工或 Function Calling 就在产品文档中宣称已经提供这些能力。
 
 ## 网络功能验收
 
@@ -333,6 +338,8 @@ Function Calling 就在产品文档中宣称已经提供这些能力。
    “状态、语音、设置、在线更新”四个系统页，所有次级页面 30 秒超时符合规范；
 9. “状态”页长按 `KEY` 2 秒触发即时校时；“语音”页长按 2 秒并松开后执行最长 5 秒的
    离线识别，监听中短按 `KEY` 可提前结束，活动阶段短按 `BOOT` 可取消且清除临时音频；
+   AI 语音满足联网条件时，同一 WebSocket 中最多进行 5 轮，回复后短按 `KEY`
+   续问、短按 `BOOT` 结束，并覆盖 30 秒续问、5 分钟准入边界及在途回答保护；
    “设置”页长按 `BOOT` 2 秒切换手动提前省电，长按 `KEY` 3 秒开启设置门户。其他页面
    未提示的 `KEY` 长按以及“设置”页之外的运行时 `BOOT` 长按均无操作，松开也不会误判
    为短按；
@@ -719,3 +726,42 @@ MultiNet 推理、任务调度和报警声音时序仍需单独实机观察。�
 电池供电下的 `SAVING | MANUAL`、`SAVING | LOW BAT` 与低电峰值另行执行，至少各完成一次
 主动语音并用外部仪表观察。USB 汇总中的性能锁释放成功只证明 API 返回成功，不能代替
 CPU 频率、电流或 brownout 的实测证据。
+
+## v0.21.0 有界多轮 AI 语音验收
+
+本次在 v0.20.0 的单轮直连基础上复用同一 TLS WebSocket 和服务端上下文，
+不改变 API Host 白名单、凭据边界、后端选择或云端回复不执行设备命令的约束。
+正式发布前至少确认：
+
+1. 首轮仍需在“语音”页按住 `KEY` 2 秒，显示 `RELEASE KEY` 并完整松开后才开始
+   最长 10 秒收音；监听中短按 `KEY` 提前提交，未收到第一个有效采集块时也不
+   产生空轮次；
+2. 一次会话从连接到结束只创建一条 WebSocket。第 2—5 轮只重置本地轮次资源，
+   不重新鉴权或建连；用需要前文的固定问答验证服务端上下文真正保留，不只根据
+   连接日志推断；
+3. 每轮回复完成后进入 `FOLLOW-UP`，显示 `TURN x/5` 和
+   `KEY: CONTINUE | BOOT: END`。短按 `KEY` 不需再长按或等待松开，但只能启动一次
+   下一轮；短按 `BOOT` 正常结束整段会话；
+4. 轮次未满时，播放中短按 `KEY` 先请求取消当前回复、关闭扬声器并等待协议轮次
+   边界，期间显示 `NEXT TURN`，然后才打开麦克风开始下一轮。连续或重复按键不得重入，
+   也不得在扬声器
+   仍播放时收音；
+5. 第 5 轮完成后不再提供续问；`FOLLOW-UP` 无操作满 30 秒时自动结束。新一轮只在
+   工作任务开始后的 5 分钟内准入，已经开始的收音和回答不被该总时限截断；定时使用
+   单调时间并饱和累加，不受 RTC 校时影响；
+6. 会话仍是半双工，不启用 `server_vad`、`smart_turn`、AFE、回声消除、唤醒词或后台麦克风。
+   结束后不把上下文写入 Flash、NVS、microSD 或日志，下次长按是新会话；
+7. 鉴权失败、断网、协议错误、用户取消、闹钟抢占和两种超时都必须关闭麦克风与扬声器、
+   释放 WebSocket、联网会话、性能锁和临时缓冲，不播放迟到回复；随后 RTC、闹钟、离线语音、
+   设置门户和 OTA 仍可正常使用；
+8. 主机测试覆盖轮次状态重置、连续输入门控、5 轮上限、30 秒续问、5 分钟准入边界、
+   在途回答保护、计时饱和和取消复位。真实 WebSocket 复用、服务端上下文、codec 切换、播放中
+   续问、闹钟时序、内存趋势与实际账单仍由目标板验收。
+
+`0.21.0-dev.2` 的目标板验收确认了前文依赖的续问上下文、播放中短按 `KEY` 进入下一轮、
+`FOLLOW-UP` 的 `KEY` 继续和 `BOOT` 结束，以及首屏与既有功能。用户随后发现 90 秒
+硬截止会截断第三轮播放；目标板更新至 `0.21.0-dev.3` 后，已确认对话越过旧截止点仍能
+完整播放回答，最新 4 行持续覆盖旧行且无省略号。第 5 轮、30 秒续问和 5 分钟准入边界
+已有主机状态测试；本轮没有把这些边界、会话资源回收或断网、鉴权失败、闹钟抢占后的
+整机恢复记录为目标板专项结果。具体证据见
+[实机验证记录](bringup-log.md)。

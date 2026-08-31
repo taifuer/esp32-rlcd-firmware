@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware status page</title>
+  <desc id="description">A clean white-on-black system page separating RTC, sensor, battery, time synchronization and current Wi-Fi link status.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="200" y="32" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">STATUS</text>
+    <text x="388" y="32" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">1/4</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+    <g stroke="none" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">
+      <text x="18" y="72">RTC</text>
+      <text x="18" y="108">SENSOR</text>
+      <text x="18" y="144">BATTERY</text>
+      <text x="18" y="180">TIME SYNC</text>
+      <text x="18" y="216">WI-FI</text>
+    </g>
+    <g stroke="none" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="700">
+      <text x="116" y="72">OK | BACKUP VERIFIED</text>
+      <text x="116" y="108">OK | 31.3 C | 73 %</text>
+      <text x="116" y="144">OK | 93 % | 4125 mV</text>
+      <text x="116" y="180">08-29 09:30 | OK</text>
+      <text x="116" y="216">CONNECTED</text>
+    </g>
+    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: HOME | KEY: NEXT | HOLD KEY 2s: SYNC</text>
+  </g>
+</svg>

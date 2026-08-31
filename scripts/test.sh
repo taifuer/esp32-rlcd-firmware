@@ -194,11 +194,27 @@ cc -std=c17 -w \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=address,undefined -fno-sanitize-recover=all \
-  -Isrc/conversation/include -I"${RLCD_CJSON_DIR}/cJSON" \
+  -Isrc/conversation \
+  src/conversation/conversation_text_buffer.c \
+  tests/test_conversation_text_buffer.c \
+  -o "${RLCD_TEST_TMP}/test_conversation_text_buffer"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=address,undefined -fno-sanitize-recover=all \
+  -Isrc/conversation -Isrc/conversation/include \
+  -I"${RLCD_CJSON_DIR}/cJSON" \
+  src/conversation/conversation_text_buffer.c \
   src/conversation/conversation_protocol.c \
   tests/test_conversation_protocol.c \
   "${RLCD_TEST_TMP}/cJSON.o" -lm \
   -o "${RLCD_TEST_TMP}/test_conversation_protocol"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/conversation \
+  src/conversation/conversation_turn_state.c \
+  tests/test_conversation_turn_state.c \
+  -o "${RLCD_TEST_TMP}/test_conversation_turn_state"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/update/include \
@@ -250,6 +266,21 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_voice_session_state"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/audio/include \
+  src/audio/audio_conversation_control.c \
+  src/audio/audio_conversation_flow.c \
+  tests/test_audio_conversation_control.c \
+  -o "${RLCD_TEST_TMP}/test_audio_conversation_control"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/audio/include \
+  src/audio/audio_conversation_flow.c \
+  tests/test_audio_conversation_flow.c \
+  -o "${RLCD_TEST_TMP}/test_audio_conversation_flow"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/audio/include \
   src/audio/voice_command_policy.c tests/test_voice_command_policy.c \
   -o "${RLCD_TEST_TMP}/test_voice_command_policy"
@@ -259,6 +290,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   src/audio/voice_reliability_metrics.c \
   tests/test_voice_reliability_metrics.c \
   -o "${RLCD_TEST_TMP}/test_voice_reliability_metrics"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/display \
+  src/display/voice_display_model.c \
+  tests/test_voice_display_model.c \
+  -o "${RLCD_TEST_TMP}/test_voice_display_model"
 
 "${RLCD_TEST_TMP}/test_chinese_lunar"
 "${RLCD_TEST_TMP}/test_calendar_month"
@@ -290,7 +328,10 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_firmware_update_policy"
 "${RLCD_TEST_TMP}/test_settings_portal_policy"
 ASAN_OPTIONS=detect_leaks=0 \
+  "${RLCD_TEST_TMP}/test_conversation_text_buffer"
+ASAN_OPTIONS=detect_leaks=0 \
   "${RLCD_TEST_TMP}/test_conversation_protocol"
+"${RLCD_TEST_TMP}/test_conversation_turn_state"
 "${RLCD_TEST_TMP}/test_online_update_policy"
 "${RLCD_TEST_TMP}/test_gallery_manifest"
 "${RLCD_TEST_TMP}/test_rtc_backup_policy"
@@ -299,6 +340,9 @@ ASAN_OPTIONS=detect_leaks=0 \
 "${RLCD_TEST_TMP}/test_audio_mono"
 "${RLCD_TEST_TMP}/test_audio_session_state"
 "${RLCD_TEST_TMP}/test_voice_session_state"
+"${RLCD_TEST_TMP}/test_audio_conversation_control"
+"${RLCD_TEST_TMP}/test_audio_conversation_flow"
 "${RLCD_TEST_TMP}/test_voice_command_policy"
 "${RLCD_TEST_TMP}/test_voice_reliability_metrics"
+"${RLCD_TEST_TMP}/test_voice_display_model"
 python3 tests/test_rlcd_image_tool.py

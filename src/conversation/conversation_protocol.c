@@ -1,5 +1,7 @@
 #include "conversation_protocol.h"
 
+#include "conversation_text_buffer.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -309,6 +311,15 @@ static bool copy_json_text(const cJSON *object, const char *name,
     return append_utf8(item->valuestring, output, capacity, &length);
 }
 
+static bool copy_json_text_tail(const cJSON *object, const char *name,
+                                char *output, size_t capacity)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(object, name);
+    return cJSON_IsString(item) && item->valuestring != NULL &&
+           conversation_text_copy_tail(output, capacity,
+                                       item->valuestring);
+}
+
 static bool copy_json_text_pair(const cJSON *object, const char *first,
                                 const char *second, char *output,
                                 size_t capacity)
@@ -534,8 +545,8 @@ bool conversation_protocol_parse_server_event(
     } else if (strcmp(type->valuestring,
                       "response.audio_transcript.done") == 0) {
         event->kind = CONVERSATION_SERVER_EVENT_RESPONSE_TRANSCRIPT_DONE;
-        valid = copy_json_text(root, "transcript", event->text,
-                               sizeof(event->text));
+        valid = copy_json_text_tail(root, "transcript", event->text,
+                                    sizeof(event->text));
     } else if (strcmp(type->valuestring, "response.audio.delta") == 0) {
         event->kind = CONVERSATION_SERVER_EVENT_AUDIO_DELTA;
         const cJSON *delta = cJSON_GetObjectItemCaseSensitive(root, "delta");

@@ -6,6 +6,8 @@
 #include <string.h>
 
 #include "conversation_protocol.h"
+#include "conversation_text_buffer.h"
+#include "conversation_turn_state.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_random.h"
@@ -23,6 +25,7 @@ enum {
      * audio in bursts even though playback itself is real-time. */
     CONVERSATION_AUDIO_BUFFER_BYTES = 256 * 1024,
     CONVERSATION_AUDIO_BACKPRESSURE_MS = 1500,
+    CONVERSATION_AUDIO_CANCEL_POLL_MS = 20,
     CONVERSATION_WS_TASK_STACK_BYTES = 8192,
     CONVERSATION_WS_TASK_PRIORITY = 5,
     /* PCM is captured on the shared audio worker. Bound each socket write so
@@ -54,16 +57,7 @@ struct conversation_client {
     bool text_message_active;
     bool closing;
     bool start_sent;
-    bool send_speech_sent;
-    bool audio_sent;
-    bool audio_committed;
-    bool stop_speech_sent;
-    bool cancel_speech_sent;
-    bool response_requested;
-    bool response_active;
-    bool response_cancel_sent;
-    bool local_started_sent;
-    bool local_ended_sent;
+    conversation_turn_state_t turn;
     bool finish_in_progress;
     bool stop_sent;
     conversation_model_t model;
@@ -196,29 +190,12 @@ static void copy_status_text(char *destination, size_t capacity,
     }
 }
 
-static void append_status_text(char *destination, size_t capacity,
-                               const char *text)
+static bool response_cancel_requested(conversation_client_t *client)
 {
-    if (destination == NULL || text == NULL || capacity == 0U) {
-        return;
-    }
-    size_t used = strnlen(destination, capacity);
-    if (used >= capacity - 1U) {
-        return;
-    }
-    const size_t available = capacity - used - 1U;
-    const size_t source_length = strnlen(text, available + 1U);
-    if (source_length <= available) {
-        memcpy(destination + used, text, source_length + 1U);
-        return;
-    }
-    size_t copied = available;
-    while (copied > 0U &&
-           ((unsigned char)text[copied] & 0xc0U) == 0x80U) {
-        --copied;
-    }
-    memcpy(destination + used, text, copied);
-    destination[used + copied] = '\0';
+    lock_client(client);
+    const bool requested = client->turn.response_cancel_sent;
+    unlock_client(client);
+    return requested;
 }
 
 static bool enqueue_pcm_bytes(conversation_client_t *client,
@@ -231,18 +208,32 @@ static bool enqueue_pcm_bytes(conversation_client_t *client,
     const TickType_t started = xTaskGetTickCount();
     const TickType_t timeout =
         pdMS_TO_TICKS(CONVERSATION_AUDIO_BACKPRESSURE_MS);
+    TickType_t cancel_poll =
+        pdMS_TO_TICKS(CONVERSATION_AUDIO_CANCEL_POLL_MS);
+    if (cancel_poll == 0U) {
+        cancel_poll = 1U;
+    }
+    bool cancelled = false;
     while (sent < length) {
+        if (response_cancel_requested(client)) {
+            cancelled = true;
+            break;
+        }
         const TickType_t elapsed = xTaskGetTickCount() - started;
         if (elapsed >= timeout) {
             break;
         }
+        const TickType_t remaining = timeout - elapsed;
         const size_t chunk = xStreamBufferSend(
             client->audio_stream, data + sent, length - sent,
-            timeout - elapsed);
+            remaining < cancel_poll ? remaining : cancel_poll);
         if (chunk == 0U) {
-            break;
+            continue;
         }
         sent += chunk;
+    }
+    if (cancelled) {
+        return true;
     }
     lock_client(client);
     client->status.received_audio_bytes += (uint32_t)sent;
@@ -269,6 +260,9 @@ static void apply_server_event(conversation_client_t *client,
                                const uint8_t *audio)
 {
     if (event->kind == CONVERSATION_SERVER_EVENT_AUDIO_DELTA) {
+        if (response_cancel_requested(client)) {
+            return;
+        }
         if (audio == NULL || event->audio_length == 0U ||
             (event->audio_length & 1U) != 0U ||
             !enqueue_pcm_bytes(client, audio, event->audio_length)) {
@@ -277,6 +271,9 @@ static void apply_server_event(conversation_client_t *client,
                 set_failed(client, ESP_ERR_INVALID_RESPONSE, 0,
                            "InvalidAudioDelta");
             }
+            return;
+        }
+        if (response_cancel_requested(client)) {
             return;
         }
     }
@@ -293,6 +290,8 @@ static void apply_server_event(conversation_client_t *client,
         break;
     case CONVERSATION_SERVER_EVENT_SESSION_UPDATED:
         if (!already_failed) {
+            conversation_turn_state_mark_session_ready(&client->turn);
+            client->status.turn_index = client->turn.index;
             client->status.phase = CONVERSATION_CLIENT_PHASE_LISTENING;
         }
         break;
@@ -307,19 +306,21 @@ static void apply_server_event(conversation_client_t *client,
         client->status.transcript[0] = '\0';
         break;
     case CONVERSATION_SERVER_EVENT_RESPONSE_CREATED:
-        client->response_requested = true;
-        client->response_active = true;
+        client->turn.response_requested = true;
+        client->turn.response_active = true;
         if (!already_failed) {
             client->status.phase = CONVERSATION_CLIENT_PHASE_THINKING;
         }
         break;
     case CONVERSATION_SERVER_EVENT_RESPONSE_TRANSCRIPT_DELTA:
-        append_status_text(client->status.response,
-                           sizeof(client->status.response), event->text);
+        (void)conversation_text_append_tail(
+            client->status.response, sizeof(client->status.response),
+            event->text);
         break;
     case CONVERSATION_SERVER_EVENT_RESPONSE_TRANSCRIPT_DONE:
-        copy_status_text(client->status.response,
-                         sizeof(client->status.response), event->text);
+        (void)conversation_text_copy_tail(
+            client->status.response, sizeof(client->status.response),
+            event->text);
         break;
     case CONVERSATION_SERVER_EVENT_AUDIO_DELTA:
         if (!already_failed) {
@@ -329,8 +330,8 @@ static void apply_server_event(conversation_client_t *client,
     case CONVERSATION_SERVER_EVENT_AUDIO_DONE:
         break;
     case CONVERSATION_SERVER_EVENT_RESPONSE_DONE:
-        client->response_requested = false;
-        client->response_active = false;
+        client->turn.response_requested = false;
+        client->turn.response_active = false;
         if (!already_failed) {
             client->status.phase = CONVERSATION_CLIENT_PHASE_RESPONSE_ENDED;
         }
@@ -338,10 +339,10 @@ static void apply_server_event(conversation_client_t *client,
         bits |= CONVERSATION_EVENT_RESPONSE_ENDED;
         break;
     case CONVERSATION_SERVER_EVENT_RESPONSE_CANCELLED:
-        client->response_requested = false;
-        client->response_active = false;
+        client->turn.response_requested = false;
+        client->turn.response_active = false;
         if (!already_failed &&
-            (client->response_cancel_sent || client->closing ||
+            (client->turn.response_cancel_sent || client->closing ||
              client->finish_in_progress || client->stop_sent)) {
             client->status.phase = CONVERSATION_CLIENT_PHASE_RESPONSE_ENDED;
             client->status.response_ended = true;
@@ -362,8 +363,8 @@ static void apply_server_event(conversation_client_t *client,
         bits |= CONVERSATION_EVENT_STOPPED;
         break;
     case CONVERSATION_SERVER_EVENT_ERROR:
-        client->response_requested = false;
-        client->response_active = false;
+        client->turn.response_requested = false;
+        client->turn.response_active = false;
         client->status.phase = CONVERSATION_CLIENT_PHASE_FAILED;
         client->status.last_error = ESP_FAIL;
         client->status.service_error_code = event->error_code;
@@ -618,6 +619,7 @@ esp_err_t conversation_client_create(
         return ESP_ERR_INVALID_ARG;
     }
     client->model = snapshot->config.model;
+    conversation_turn_state_init(&client->turn);
     client->status.phase = CONVERSATION_CLIENT_PHASE_IDLE;
     client->status.revision = 1U;
 
@@ -726,18 +728,67 @@ esp_err_t conversation_client_send_start(conversation_client_t *client)
     return error;
 }
 
+esp_err_t conversation_client_begin_next_turn(
+    conversation_client_t *client)
+{
+    if (client == NULL || client->audio_stream == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    lock_client(client);
+    const bool audio_empty =
+        xStreamBufferBytesAvailable(client->audio_stream) == 0U;
+    const bool can_begin = conversation_turn_state_can_begin_next(
+        &client->turn, client->status.connected,
+        client->status.response_ended, audio_empty) &&
+        !client->closing && !client->finish_in_progress &&
+        !client->stop_sent &&
+        client->status.phase ==
+            CONVERSATION_CLIENT_PHASE_RESPONSE_ENDED;
+    if (!can_begin || xStreamBufferReset(client->audio_stream) != pdPASS ||
+        !conversation_turn_state_begin_next(
+            &client->turn, client->status.connected,
+            client->status.response_ended, true)) {
+        unlock_client(client);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    client->status.speech_started = false;
+    client->status.speech_ended = false;
+    client->status.response_ended = false;
+    client->status.audio_overflow = false;
+    client->status.received_audio_bytes = 0U;
+    client->status.last_error = ESP_OK;
+    client->status.service_error_code = 0;
+    secure_wipe(client->status.service_error_name,
+                sizeof(client->status.service_error_name));
+    secure_wipe(client->status.transcript,
+                sizeof(client->status.transcript));
+    secure_wipe(client->status.response,
+                sizeof(client->status.response));
+    client->status.turn_index = client->turn.index;
+    client->status.phase = CONVERSATION_CLIENT_PHASE_LISTENING;
+    bump_revision_locked(client);
+    unlock_client(client);
+    xEventGroupClearBits(client->events,
+                         CONVERSATION_EVENT_AUDIO |
+                             CONVERSATION_EVENT_RESPONSE_ENDED);
+    xEventGroupSetBits(client->events,
+                       CONVERSATION_EVENT_STATE_CHANGED);
+    return ESP_OK;
+}
+
 esp_err_t conversation_client_send_speech(conversation_client_t *client)
 {
     if (client == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
     lock_client(client);
-    const bool can_start = client->start_sent &&
-                           !client->send_speech_sent &&
+    const bool can_start = client->start_sent && client->turn.index > 0U &&
+                           !client->turn.send_speech_sent &&
                            client->status.phase ==
                                CONVERSATION_CLIENT_PHASE_LISTENING;
     if (can_start) {
-        client->send_speech_sent = true;
+        client->turn.send_speech_sent = true;
         client->status.speech_started = true;
         client->status.phase = CONVERSATION_CLIENT_PHASE_CAPTURING;
         bump_revision_locked(client);
@@ -761,10 +812,10 @@ esp_err_t conversation_client_send_pcm(conversation_client_t *client,
         return ESP_ERR_INVALID_ARG;
     }
     lock_client(client);
-    const bool can_send = client->send_speech_sent &&
-                          !client->audio_committed &&
-                          !client->stop_speech_sent &&
-                          !client->cancel_speech_sent;
+    const bool can_send = client->turn.send_speech_sent &&
+                          !client->turn.audio_committed &&
+                          !client->turn.stop_speech_sent &&
+                          !client->turn.cancel_speech_sent;
     unlock_client(client);
     if (!can_send ||
         !esp_websocket_client_is_connected(client->websocket)) {
@@ -788,7 +839,7 @@ esp_err_t conversation_client_send_pcm(conversation_client_t *client,
     secure_wipe(client->outgoing_message, length + 1U);
     if (error == ESP_OK) {
         lock_client(client);
-        client->audio_sent = true;
+        client->turn.audio_sent = true;
         unlock_client(client);
     }
     return error;
@@ -800,11 +851,11 @@ esp_err_t conversation_client_stop_speech(conversation_client_t *client)
         return ESP_ERR_INVALID_STATE;
     }
     lock_client(client);
-    const bool can_stop = client->send_speech_sent &&
-                          client->audio_sent &&
-                          !client->stop_speech_sent &&
-                          !client->cancel_speech_sent;
-    bool committed = client->audio_committed;
+    const bool can_stop = client->turn.send_speech_sent &&
+                          client->turn.audio_sent &&
+                          !client->turn.stop_speech_sent &&
+                          !client->turn.cancel_speech_sent;
+    bool committed = client->turn.audio_committed;
     unlock_client(client);
     if (!can_stop) {
         return ESP_ERR_INVALID_STATE;
@@ -815,29 +866,29 @@ esp_err_t conversation_client_stop_speech(conversation_client_t *client)
             client, CONVERSATION_CLIENT_EVENT_AUDIO_COMMIT);
         if (error == ESP_OK) {
             lock_client(client);
-            client->audio_committed = true;
+            client->turn.audio_committed = true;
             unlock_client(client);
             committed = true;
         }
     }
     if (error == ESP_OK && committed) {
         lock_client(client);
-        client->response_requested = true;
+        client->turn.response_requested = true;
         unlock_client(client);
         error = send_client_event(
             client, CONVERSATION_CLIENT_EVENT_RESPONSE_CREATE);
         if (error != ESP_OK) {
             lock_client(client);
-            if (!client->response_active &&
+            if (!client->turn.response_active &&
                 !client->status.response_ended) {
-                client->response_requested = false;
+                client->turn.response_requested = false;
             }
             unlock_client(client);
         }
     }
     if (error == ESP_OK) {
         lock_client(client);
-        client->stop_speech_sent = true;
+        client->turn.stop_speech_sent = true;
         client->status.speech_ended = true;
         if (client->status.phase !=
                 CONVERSATION_CLIENT_PHASE_RESPONDING &&
@@ -859,12 +910,13 @@ static esp_err_t request_response_cancel(
 {
     lock_client(client);
     const bool can_cancel =
-        (client->response_requested || client->response_active) &&
-        !client->status.response_ended && !client->response_cancel_sent;
+        (client->turn.response_requested || client->turn.response_active) &&
+        !client->status.response_ended &&
+        !client->turn.response_cancel_sent;
     if (can_cancel) {
         /* Mark before the synchronous send: the WebSocket task may process
          * response.done(cancelled) before this call returns. */
-        client->response_cancel_sent = true;
+        client->turn.response_cancel_sent = true;
     }
     unlock_client(client);
     if (!can_cancel) {
@@ -876,30 +928,61 @@ static esp_err_t request_response_cancel(
         lock_client(client);
         if (!client->status.response_ended &&
             client->status.phase != CONVERSATION_CLIENT_PHASE_FAILED) {
-            client->response_cancel_sent = false;
+            client->turn.response_cancel_sent = false;
         }
         unlock_client(client);
     }
     return error;
 }
 
-esp_err_t conversation_client_cancel_speech(
+esp_err_t conversation_client_cancel_response(
     conversation_client_t *client)
 {
     if (client == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
     lock_client(client);
-    const bool can_cancel = client->send_speech_sent &&
-                            !client->cancel_speech_sent;
+    const bool locally_playing_completed_response =
+        client->status.response_ended &&
+        client->status.phase == CONVERSATION_CLIENT_PHASE_RESPONSE_ENDED &&
+        client->turn.index > 0U &&
+        (!client->turn.local_ended_sent ||
+         xStreamBufferBytesAvailable(client->audio_stream) > 0U);
+    if (locally_playing_completed_response) {
+        /* response.done may arrive before buffered PCM finishes playing.
+         * Treat a user interruption after that point as a local cancellation
+         * so begin_next_turn can discard the remainder without sending a
+         * stale response.cancel to the service. */
+        client->turn.response_cancel_sent = true;
+        bump_revision_locked(client);
+    }
+    unlock_client(client);
+    if (locally_playing_completed_response) {
+        xEventGroupSetBits(client->events,
+                           CONVERSATION_EVENT_STATE_CHANGED);
+        return ESP_OK;
+    }
+    return request_response_cancel(client);
+}
+
+esp_err_t conversation_client_cancel_turn(
+    conversation_client_t *client)
+{
+    if (client == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    lock_client(client);
+    const bool can_cancel = client->turn.send_speech_sent &&
+                            !client->turn.cancel_speech_sent;
     const bool response_pending =
-        (client->response_requested || client->response_active) &&
+        (client->turn.response_requested || client->turn.response_active) &&
         !client->status.response_ended;
-    const bool audio_sent = client->audio_sent;
-    const bool audio_committed = client->audio_committed;
+    const bool response_complete = client->status.response_ended;
+    const bool audio_sent = client->turn.audio_sent;
+    const bool audio_committed = client->turn.audio_committed;
     if (can_cancel) {
-        client->cancel_speech_sent = true;
-        client->stop_speech_sent = true;
+        client->turn.cancel_speech_sent = true;
+        client->turn.stop_speech_sent = true;
         client->status.speech_ended = true;
         bump_revision_locked(client);
     }
@@ -911,31 +994,72 @@ esp_err_t conversation_client_cancel_speech(
     if (response_pending) {
         return request_response_cancel(client);
     }
-    return audio_sent && !audio_committed
-               ? send_client_event(client,
-                                   CONVERSATION_CLIENT_EVENT_AUDIO_CLEAR)
-               : ESP_OK;
+    if (response_complete) {
+        return conversation_client_cancel_response(client);
+    }
+    const esp_err_t error = audio_sent && !audio_committed
+                                ? send_client_event(
+                                      client,
+                                      CONVERSATION_CLIENT_EVENT_AUDIO_CLEAR)
+                                : ESP_OK;
+    if (error == ESP_OK) {
+        /* WebSocket client messages are ordered. Once clear has been sent,
+         * the next turn may safely append new PCM without waiting for a
+         * separate clear acknowledgement. No response was created for this
+         * cancelled turn, so this is its local turn boundary. */
+        lock_client(client);
+        if (client->status.phase != CONVERSATION_CLIENT_PHASE_FAILED) {
+            client->status.phase =
+                CONVERSATION_CLIENT_PHASE_RESPONSE_ENDED;
+            client->status.response_ended = true;
+            client->turn.response_requested = false;
+            client->turn.response_active = false;
+            bump_revision_locked(client);
+        }
+        unlock_client(client);
+        xEventGroupSetBits(client->events,
+                           CONVERSATION_EVENT_RESPONSE_ENDED |
+                               CONVERSATION_EVENT_STATE_CHANGED);
+    }
+    return error;
+}
+
+esp_err_t conversation_client_cancel_speech(
+    conversation_client_t *client)
+{
+    return conversation_client_cancel_turn(client);
 }
 
 esp_err_t conversation_client_local_response_started(
     conversation_client_t *client)
 {
-    if (client == NULL || client->local_started_sent) {
+    if (client == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    client->local_started_sent = true;
-    return ESP_OK;
+    lock_client(client);
+    const bool can_start = !client->turn.local_started_sent &&
+                           client->turn.index > 0U;
+    if (can_start) {
+        client->turn.local_started_sent = true;
+    }
+    unlock_client(client);
+    return can_start ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
 esp_err_t conversation_client_local_response_ended(
     conversation_client_t *client)
 {
-    if (client == NULL || !client->local_started_sent ||
-        client->local_ended_sent) {
+    if (client == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
-    client->local_ended_sent = true;
-    return ESP_OK;
+    lock_client(client);
+    const bool can_end = client->turn.local_started_sent &&
+                         !client->turn.local_ended_sent;
+    if (can_end) {
+        client->turn.local_ended_sent = true;
+    }
+    unlock_client(client);
+    return can_end ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
 esp_err_t conversation_client_finish(conversation_client_t *client)
@@ -947,8 +1071,9 @@ esp_err_t conversation_client_finish(conversation_client_t *client)
     const bool already_sent =
         client->stop_sent || client->finish_in_progress || client->closing;
     const bool response_pending =
-        (client->response_requested || client->response_active) &&
-        !client->status.response_ended && !client->response_cancel_sent;
+        (client->turn.response_requested || client->turn.response_active) &&
+        !client->status.response_ended &&
+        !client->turn.response_cancel_sent;
     if (!already_sent) {
         client->finish_in_progress = true;
     }
@@ -1007,8 +1132,8 @@ esp_err_t conversation_client_abort(conversation_client_t *client)
         return ESP_ERR_INVALID_STATE;
     }
     client->closing = true;
-    client->response_requested = false;
-    client->response_active = false;
+    client->turn.response_requested = false;
+    client->turn.response_active = false;
     if (client->status.phase != CONVERSATION_CLIENT_PHASE_FAILED) {
         client->status.phase = CONVERSATION_CLIENT_PHASE_STOPPING;
         bump_revision_locked(client);

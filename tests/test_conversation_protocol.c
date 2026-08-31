@@ -307,6 +307,28 @@ static void test_invalid_and_bounded_messages(void)
     assert(strlen(parsed.text) < CONVERSATION_EVENT_TEXT_CAPACITY);
     assert(strlen(parsed.text) % strlen("你") == 0U);
 
+    char long_transcript[700];
+    memset(long_transcript, 'x', sizeof(long_transcript));
+    const char suffix[] = "TAIL-回答结束";
+    const size_t suffix_length = strlen(suffix);
+    const size_t transcript_length = 620U;
+    memcpy(long_transcript + transcript_length - suffix_length,
+           suffix, suffix_length);
+    long_transcript[transcript_length] = '\0';
+    const int transcript_written = snprintf(
+        json, sizeof(json),
+        "{\"type\":\"response.audio_transcript.done\","
+        "\"transcript\":\"%s\"}",
+        long_transcript);
+    assert(transcript_written > 0 &&
+           (size_t)transcript_written < sizeof(json));
+    const conversation_server_event_t tail = parse(json, NULL, 0U);
+    assert(tail.kind ==
+           CONVERSATION_SERVER_EVENT_RESPONSE_TRANSCRIPT_DONE);
+    assert(strlen(tail.text) == CONVERSATION_EVENT_TEXT_CAPACITY - 1U);
+    assert(strcmp(tail.text + strlen(tail.text) - suffix_length,
+                  suffix) == 0);
+
     /* response.done may include a large complete output and usage object. */
     const size_t filler_size = 40U * 1024U;
     char *large = malloc(filler_size + 128U);

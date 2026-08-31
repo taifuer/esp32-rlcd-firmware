@@ -37,6 +37,8 @@ typedef struct {
     bool speech_ended;
     bool response_ended;
     bool audio_overflow;
+    /* Zero before session.updated; otherwise the 1-based current user turn. */
+    uint32_t turn_index;
     uint32_t revision;
     uint32_t received_audio_bytes;
     esp_err_t last_error;
@@ -56,11 +58,24 @@ esp_err_t conversation_client_create(
 esp_err_t conversation_client_start_transport(
     conversation_client_t *client);
 esp_err_t conversation_client_send_start(conversation_client_t *client);
+/* Starts another user turn on the existing WebSocket session. This is
+ * non-blocking and succeeds only after response.done (including cancelled)
+ * has been received and all local response PCM has been consumed/discarded.
+ * The server-side conversation context is intentionally retained. */
+esp_err_t conversation_client_begin_next_turn(
+    conversation_client_t *client);
 esp_err_t conversation_client_send_speech(conversation_client_t *client);
 esp_err_t conversation_client_send_pcm(conversation_client_t *client,
                                        const int16_t *samples,
                                        size_t sample_count);
 esp_err_t conversation_client_stop_speech(conversation_client_t *client);
+/* Cancels the current user turn while keeping the WebSocket session open. */
+esp_err_t conversation_client_cancel_turn(conversation_client_t *client);
+/* Cancels only the in-flight model response. The caller must stop local
+ * playback and report local_response_ended before beginning another turn. */
+esp_err_t conversation_client_cancel_response(
+    conversation_client_t *client);
+/* Compatibility alias for conversation_client_cancel_turn(). */
 esp_err_t conversation_client_cancel_speech(conversation_client_t *client);
 esp_err_t conversation_client_local_response_started(
     conversation_client_t *client);

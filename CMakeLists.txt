@@ -66,7 +66,7 @@ elseif(DEFINED ENV{RLCD_PROJECT_VERSION} AND
        NOT "$ENV{RLCD_PROJECT_VERSION}" STREQUAL "")
     set(PROJECT_VER "$ENV{RLCD_PROJECT_VERSION}")
 else()
-    set(PROJECT_VER "0.20.0")
+    set(PROJECT_VER "0.21.0")
 endif()
 set(COMPONENTS app)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
