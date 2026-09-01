@@ -1,5 +1,6 @@
 idf_component_register(
     SRCS "audio_conversation_control.c" "audio_conversation_flow.c"
+         "audio_response_watchdog.c"
          "audio_diagnostics.c"
          "audio_level.c" "audio_mono.c"
          "audio_session_state.c"

@@ -991,7 +991,7 @@ void display_show_voice(const display_voice_status_t *status)
 
     char value[48];
     const char *detail = status->detail != NULL ? status->detail : "";
-    draw_system_header("VOICE", 2U);
+    draw_system_header("CHAT", 2U);
     u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
 
     switch (status->state) {
@@ -999,7 +999,7 @@ void display_show_voice(const display_voice_status_t *status)
         draw_centered(102, "RELEASE KEY");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(158, status->cloud_mode
-                               ? "AI is ready for your question"
+                               ? "AI chat is ready for your question"
                                : "Listening starts after release");
         draw_centered(198, status->cloud_mode
                                ? "Up to 10 seconds per turn"
@@ -1046,7 +1046,7 @@ void display_show_voice(const display_voice_status_t *status)
     case DISPLAY_VOICE_STATE_CLOUD_CONNECTING:
         draw_centered(102, "CONNECTING");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
-        draw_centered(164, "Preparing AI conversation");
+        draw_centered(164, "Preparing AI chat");
         draw_centered(202, "Keep holding KEY or release now");
         draw_voice_turn(status, 226);
         draw_system_footer("BOOT: CANCEL");
@@ -1088,7 +1088,7 @@ void display_show_voice(const display_voice_status_t *status)
         draw_system_footer("Opening page...");
         break;
     case DISPLAY_VOICE_STATE_NO_VOICE:
-        draw_centered(112, "NO VOICE");
+        draw_centered(112, "NO SPEECH");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(174, "No clear speech was detected");
         draw_system_footer("Hold KEY 2s to try again");
@@ -1106,7 +1106,7 @@ void display_show_voice(const display_voice_status_t *status)
         draw_system_footer("Hold KEY 2s to try again");
         break;
     case DISPLAY_VOICE_STATE_UNAVAILABLE:
-        draw_centered(105, "VOICE UNAVAILABLE");
+        draw_centered(105, "CHAT UNAVAILABLE");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(164, detail);
         u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
@@ -1120,7 +1120,7 @@ void display_show_voice(const display_voice_status_t *status)
         draw_system_footer("Hold KEY 2s to try again");
         break;
     case DISPLAY_VOICE_STATE_FAILED:
-        draw_centered(112, "VOICE FAILED");
+        draw_centered(112, "CHAT FAILED");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(174, detail);
         draw_system_footer("Hold KEY 2s to try again");
@@ -1131,7 +1131,7 @@ void display_show_voice(const display_voice_status_t *status)
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(145, status->engine_available
                                ? "Hold KEY 2s, then release"
-                               : "Voice engine is not ready");
+                               : "Commands are not ready");
         if (status->cloud_mode) {
             if (status->max_turns > 0U) {
                 snprintf(value, sizeof(value),

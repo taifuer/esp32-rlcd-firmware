@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "conversation_caption_sync.h"
 #include "conversation_protocol.h"
-#include "conversation_text_buffer.h"
 #include "conversation_turn_state.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
@@ -62,6 +62,7 @@ struct conversation_client {
     bool stop_sent;
     conversation_model_t model;
     char endpoint[CONVERSATION_ENDPOINT_MAX_LENGTH + 1U];
+    conversation_caption_sync_t caption;
     conversation_client_status_t status;
 };
 
@@ -190,6 +191,25 @@ static void copy_status_text(char *destination, size_t capacity,
     }
 }
 
+static bool sync_visible_caption_locked(conversation_client_t *client,
+                                        bool force_complete)
+{
+    char visible[CONVERSATION_CLIENT_TEXT_CAPACITY];
+    if (!conversation_caption_sync_copy_visible(
+            &client->caption, visible, sizeof(visible),
+            force_complete)) {
+        return false;
+    }
+    const bool changed = strcmp(client->status.response, visible) != 0;
+    if (changed) {
+        secure_wipe(client->status.response,
+                    sizeof(client->status.response));
+        memcpy(client->status.response, visible, strlen(visible) + 1U);
+    }
+    secure_wipe(visible, sizeof(visible));
+    return changed;
+}
+
 static bool response_cancel_requested(conversation_client_t *client)
 {
     lock_client(client);
@@ -237,6 +257,8 @@ static bool enqueue_pcm_bytes(conversation_client_t *client,
     }
     lock_client(client);
     client->status.received_audio_bytes += (uint32_t)sent;
+    conversation_caption_sync_note_audio_received(
+        &client->caption, sent);
     if (sent != length) {
         client->status.audio_overflow = true;
         client->status.phase = CONVERSATION_CLIENT_PHASE_FAILED;
@@ -313,14 +335,14 @@ static void apply_server_event(conversation_client_t *client,
         }
         break;
     case CONVERSATION_SERVER_EVENT_RESPONSE_TRANSCRIPT_DELTA:
-        (void)conversation_text_append_tail(
-            client->status.response, sizeof(client->status.response),
-            event->text);
+        (void)conversation_caption_sync_append(
+            &client->caption, event->text);
+        (void)sync_visible_caption_locked(client, false);
         break;
     case CONVERSATION_SERVER_EVENT_RESPONSE_TRANSCRIPT_DONE:
-        (void)conversation_text_copy_tail(
-            client->status.response, sizeof(client->status.response),
-            event->text);
+        (void)conversation_caption_sync_set_final(
+            &client->caption, event->text);
+        (void)sync_visible_caption_locked(client, false);
         break;
     case CONVERSATION_SERVER_EVENT_AUDIO_DELTA:
         if (!already_failed) {
@@ -330,12 +352,16 @@ static void apply_server_event(conversation_client_t *client,
     case CONVERSATION_SERVER_EVENT_AUDIO_DONE:
         break;
     case CONVERSATION_SERVER_EVENT_RESPONSE_DONE:
+    case CONVERSATION_SERVER_EVENT_RESPONSE_TRUNCATED:
         client->turn.response_requested = false;
         client->turn.response_active = false;
         if (!already_failed) {
             client->status.phase = CONVERSATION_CLIENT_PHASE_RESPONSE_ENDED;
         }
         client->status.response_ended = true;
+        conversation_caption_sync_mark_complete(&client->caption);
+        (void)sync_visible_caption_locked(
+            client, client->status.received_audio_bytes == 0U);
         bits |= CONVERSATION_EVENT_RESPONSE_ENDED;
         break;
     case CONVERSATION_SERVER_EVENT_RESPONSE_CANCELLED:
@@ -619,6 +645,7 @@ esp_err_t conversation_client_create(
         return ESP_ERR_INVALID_ARG;
     }
     client->model = snapshot->config.model;
+    conversation_caption_sync_reset(&client->caption);
     conversation_turn_state_init(&client->turn);
     client->status.phase = CONVERSATION_CLIENT_PHASE_IDLE;
     client->status.revision = 1U;
@@ -765,6 +792,7 @@ esp_err_t conversation_client_begin_next_turn(
                 sizeof(client->status.transcript));
     secure_wipe(client->status.response,
                 sizeof(client->status.response));
+    conversation_caption_sync_reset(&client->caption);
     client->status.turn_index = client->turn.index;
     client->status.phase = CONVERSATION_CLIENT_PHASE_LISTENING;
     bump_revision_locked(client);
@@ -1055,10 +1083,21 @@ esp_err_t conversation_client_local_response_ended(
     lock_client(client);
     const bool can_end = client->turn.local_started_sent &&
                          !client->turn.local_ended_sent;
+    bool caption_changed = false;
     if (can_end) {
         client->turn.local_ended_sent = true;
+        if (!client->turn.response_cancel_sent) {
+            caption_changed = sync_visible_caption_locked(client, true);
+            if (caption_changed) {
+                bump_revision_locked(client);
+            }
+        }
     }
     unlock_client(client);
+    if (caption_changed) {
+        xEventGroupSetBits(client->events,
+                           CONVERSATION_EVENT_STATE_CHANGED);
+    }
     return can_end ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
@@ -1179,6 +1218,28 @@ size_t conversation_client_receive_pcm(
         client->audio_stream, samples,
         sample_capacity * sizeof(samples[0]), pdMS_TO_TICKS(timeout_ms));
     return bytes / sizeof(samples[0]);
+}
+
+esp_err_t conversation_client_note_played_pcm(
+    conversation_client_t *client, size_t sample_count)
+{
+    if (client == NULL || sample_count == 0U ||
+        sample_count > SIZE_MAX / sizeof(int16_t)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    lock_client(client);
+    conversation_caption_sync_note_audio_played(
+        &client->caption, sample_count * sizeof(int16_t));
+    const bool changed = sync_visible_caption_locked(client, false);
+    if (changed) {
+        bump_revision_locked(client);
+    }
+    unlock_client(client);
+    if (changed) {
+        xEventGroupSetBits(client->events,
+                           CONVERSATION_EVENT_STATE_CHANGED);
+    }
+    return ESP_OK;
 }
 
 size_t conversation_client_buffered_pcm_bytes(

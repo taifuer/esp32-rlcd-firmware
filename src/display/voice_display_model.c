@@ -97,7 +97,7 @@ static const char *build_line(
 
 const char *voice_display_mode_title(bool ai_mode)
 {
-    return ai_mode ? "AI VOICE" : "OFFLINE VOICE";
+    return ai_mode ? "AI CHAT" : "OFFLINE COMMANDS";
 }
 
 bool voice_display_format_turn(char *buffer, size_t capacity,

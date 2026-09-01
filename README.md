@@ -1,26 +1,27 @@
 # ESP32 RLCD Firmware
 
 面向 Waveshare ESP32-S3-RLCD-4.2 的原生 ESP-IDF 固件。它以离线可用的 RTC 时钟为
-核心，提供月历、环境信息、microSD 图片、离线语音、网络校时和安全的双槽固件更新。
+核心，提供月历、环境信息、microSD 图片、离线语音指令、AI 对话、网络校时和安全的
+双槽固件更新。
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.21.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.22.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
-以下界面反映 v0.21.0 正式版。
+以下为当前固件的界面示意。
 
 | 首屏 | 月历 |
 | :---: | :---: |
 | ![首屏效果图](docs/assets/home-screen.svg) | ![月历页效果图](docs/assets/calendar-screen.svg) |
 | microSD 图片 | 状态 |
 | ![microSD 图片页效果图](docs/assets/image-screen.svg) | ![状态页效果图](docs/assets/status.svg) |
-| 语音 | 设置 |
-| ![AI 语音页效果图](docs/assets/voice.svg) | ![设置页效果图](docs/assets/settings.svg) |
+| 对话 | 设置 |
+| ![AI 对话页效果图](docs/assets/voice.svg) | ![设置页效果图](docs/assets/settings.svg) |
 | 闹钟 | 在线更新 |
 | ![闹钟提醒效果图](docs/assets/alarm.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
 
@@ -34,16 +35,16 @@
 - 首次启动使用临时 WPA2 热点配网，凭据保存在 NVS，随后自动 SNTP 校时；
 - 网络不可用时继续使用 RTC、月历、传感器、按键和离线语音；`NORMAL` 保持家庭 Wi-Fi
   连接并在断线后后台退避重试，`SAVING` 空闲时保持离线；
-- 离线语音使用板载 ES7210 和 ESP-SR 中文模型：在“语音”页按住 `KEY` 2 秒并松开后，
+- 离线语音使用板载 ES7210 和 ESP-SR 中文模型：在“对话”页按住 `KEY` 2 秒并松开后，
   可用“回到主页”“打开日历”“查看状态”“打开图片”“打开设置”等安全指令导航；
   不使用唤醒词，离线会话的原始音频不持久化、不上传；
-- 可选的[AI 语音 Beta](docs/cloud-voice.md)使用用户自己的阿里云百炼 API Key：设备在线
+- 可选的[AI 对话 Beta](docs/cloud-voice.md)使用用户自己的阿里云百炼 API Key：设备在线
   且处于 `NORMAL` 时，在同一 WebSocket 会话中支持最多 5 轮中英文问答；每轮仍由按键
   明确开始，续问等待 30 秒，新一轮可在会话开始后的 5 分钟内发起；已经开始的回答会
-  完整结束。回复文字使用最新 4 行滚动显示。停用、离线、省电或未配置时自动使用
-  本地 MultiNet；默认模型为 `qwen3-omni-flash-realtime`，无需创建百炼应用或填写
+  完整结束。回答默认简短，回复文字会跟随本地播放进度滚动显示最新 4 行。停用、离线、
+  省电或未配置时自动使用本地 MultiNet；默认模型为 `qwen3-omni-flash-realtime`，无需创建百炼应用或填写
   Workspace ID、App ID，也不使用唤醒词或后台监听；
-- 四页系统中心依次为状态、语音、设置和在线更新，低频维护不再占用独立页面；
+- 四页系统中心依次为状态、对话、设置和在线更新，低频维护不再占用独立页面；
 - “设置”页支持手动提前省电；设置门户支持时区、温度单位、播放音量、单个每周闹钟、
   更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、microSD 图片管理和
   本地 OTA；
@@ -79,7 +80,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.21.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.22.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -87,11 +88,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.21.0
+cd dist/v0.22.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.21.0/esp32-rlcd-firmware-v0.21.0-factory.bin \
+  --firmware dist/v0.22.0/esp32-rlcd-firmware-v0.22.0-factory.bin \
   --confirm
 ```
 
@@ -113,7 +114,7 @@ cd ../..
 │   ├── audio/           # 扬声器、双麦克风、音频诊断与离线语音
 │   ├── board/           # 板级总线和引脚
 │   ├── calendar/        # 公历月份与农历换算
-│   ├── conversation/    # 可选 AI 语音配置、多轮会话与安全传输
+│   ├── conversation/    # 可选 AI 对话配置、多轮会话与安全传输
 │   ├── display/         # ST7305 界面
 │   ├── gallery/         # 公共演示图清单与 HTTPS 下载
 │   ├── image/           # PBM/BMP 单色图片校验与解码
@@ -153,7 +154,7 @@ cd ../..
 - [固件安装与更新](docs/firmware-update.md)：在线更新、设置门户本地 OTA、双槽与失败恢复；
 - [自动配网与网络校时](docs/network-time.md)：配网、NVS、SNTP 与离线行为；
 - [界面与按键](docs/home-screen.md)：首屏、月历、条件图片页、系统中心和实体按键；
-- [AI 语音 Beta](docs/cloud-voice.md)：API Key 获取、多轮交互、离线回退、
+- [AI 对话 Beta](docs/cloud-voice.md)：API Key 获取、多轮交互、离线回退、
   数据与费用边界；
 - [microSD 图片准备](docs/microsd-images.md)：FAT32、固定目录、图片格式、导入与管理边界；
 - [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉与交互原则；

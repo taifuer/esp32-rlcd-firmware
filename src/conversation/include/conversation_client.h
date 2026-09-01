@@ -93,6 +93,11 @@ void conversation_client_get_status(
 size_t conversation_client_receive_pcm(
     conversation_client_t *client, int16_t *samples,
     size_t sample_capacity, uint32_t timeout_ms);
+/* Advances subtitles only after these PCM samples have been consumed by the
+ * local playback path. Call once after a successful speaker write; volume 0
+ * still counts drained samples so the text-only experience keeps pace. */
+esp_err_t conversation_client_note_played_pcm(
+    conversation_client_t *client, size_t sample_count);
 size_t conversation_client_buffered_pcm_bytes(
     conversation_client_t *client);
 

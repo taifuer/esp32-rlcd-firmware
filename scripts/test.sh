@@ -201,6 +201,14 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=address,undefined -fno-sanitize-recover=all \
+  -Isrc/conversation \
+  src/conversation/conversation_text_buffer.c \
+  src/conversation/conversation_caption_sync.c \
+  tests/test_conversation_caption_sync.c \
+  -o "${RLCD_TEST_TMP}/test_conversation_caption_sync"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=address,undefined -fno-sanitize-recover=all \
   -Isrc/conversation -Isrc/conversation/include \
   -I"${RLCD_CJSON_DIR}/cJSON" \
   src/conversation/conversation_text_buffer.c \
@@ -281,6 +289,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_audio_conversation_flow"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/audio/include \
+  src/audio/audio_response_watchdog.c \
+  tests/test_audio_response_watchdog.c \
+  -o "${RLCD_TEST_TMP}/test_audio_response_watchdog"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/audio/include \
   src/audio/voice_command_policy.c tests/test_voice_command_policy.c \
   -o "${RLCD_TEST_TMP}/test_voice_command_policy"
@@ -330,6 +345,8 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 ASAN_OPTIONS=detect_leaks=0 \
   "${RLCD_TEST_TMP}/test_conversation_text_buffer"
 ASAN_OPTIONS=detect_leaks=0 \
+  "${RLCD_TEST_TMP}/test_conversation_caption_sync"
+ASAN_OPTIONS=detect_leaks=0 \
   "${RLCD_TEST_TMP}/test_conversation_protocol"
 "${RLCD_TEST_TMP}/test_conversation_turn_state"
 "${RLCD_TEST_TMP}/test_online_update_policy"
@@ -342,6 +359,7 @@ ASAN_OPTIONS=detect_leaks=0 \
 "${RLCD_TEST_TMP}/test_voice_session_state"
 "${RLCD_TEST_TMP}/test_audio_conversation_control"
 "${RLCD_TEST_TMP}/test_audio_conversation_flow"
+"${RLCD_TEST_TMP}/test_audio_response_watchdog"
 "${RLCD_TEST_TMP}/test_voice_command_policy"
 "${RLCD_TEST_TMP}/test_voice_reliability_metrics"
 "${RLCD_TEST_TMP}/test_voice_display_model"

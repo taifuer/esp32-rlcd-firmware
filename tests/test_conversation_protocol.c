@@ -24,6 +24,10 @@ static void test_model_specific_session_update(void)
     assert(strstr(message, "\"turn_detection\":null") != NULL);
     assert(strstr(message, "\"input_audio_format\":\"pcm\"") != NULL);
     assert(strstr(message, "\"output_audio_format\":\"pcm\"") != NULL);
+    assert(strstr(message, "\"max_tokens\":256") != NULL);
+    assert(strstr(message, "\"max_history_turns\"") == NULL);
+    assert(strstr(message, "中文通常不超过六十字") != NULL);
+    assert(strstr(message, "英文通常不超过四十词") != NULL);
     assert(strstr(
                message,
                "\"input_audio_transcription\":{\"model\":"
@@ -39,6 +43,8 @@ static void test_model_specific_session_update(void)
     assert(strstr(message, "\"voice\":\"longanqian\"") != NULL);
     assert(strstr(message, "input_audio_transcription") == NULL);
     assert(strstr(message, "Cherry") == NULL);
+    assert(strstr(message, "\"max_history_turns\":5") != NULL);
+    assert(strstr(message, "\"max_tokens\"") == NULL);
 
     char too_small[32];
     assert(!conversation_protocol_build_session_update(
@@ -210,6 +216,30 @@ static void test_response_done_status_and_errors(void)
         "\"response\":{\"status\":\"cancelled\"}}",
         NULL, 0U);
     assert(event.kind == CONVERSATION_SERVER_EVENT_RESPONSE_CANCELLED);
+
+    event = parse(
+        "{\"type\":\"response.done\",\"response\":{"
+        "\"status\":\"incomplete\",\"status_details\":{"
+        "\"type\":\"incomplete\","
+        "\"reason\":\"max_output_tokens\"}}}",
+        NULL, 0U);
+    assert(event.kind == CONVERSATION_SERVER_EVENT_RESPONSE_TRUNCATED);
+
+    event = parse(
+        "{\"type\":\"response.done\",\"response\":{"
+        "\"status\":\"incomplete\",\"status_details\":{"
+        "\"type\":\"incomplete\",\"reason\":\"max_tokens\"}}}",
+        NULL, 0U);
+    assert(event.kind == CONVERSATION_SERVER_EVENT_RESPONSE_TRUNCATED);
+
+    event = parse(
+        "{\"type\":\"response.done\",\"response\":{"
+        "\"status\":\"incomplete\",\"status_details\":{"
+        "\"type\":\"incomplete\","
+        "\"reason\":\"content_filter\"}}}",
+        NULL, 0U);
+    assert(event.kind == CONVERSATION_SERVER_EVENT_ERROR);
+    assert(strcmp(event.error_name, "ResponseIncomplete") == 0);
 
     event = parse(
         "{\"type\":\"response.done\",\"response\":{"

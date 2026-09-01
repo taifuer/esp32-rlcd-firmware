@@ -69,16 +69,19 @@ bool conversation_protocol_build_session_update(
 {
     const char *voice = NULL;
     const char *transcription = NULL;
+    const char *response_limits = NULL;
     switch (model) {
     case CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME:
         voice = "Cherry";
         transcription =
             "\"input_audio_transcription\":{\"model\":"
             "\"qwen3-asr-flash-realtime\"},";
+        response_limits = "\"max_tokens\":256,";
         break;
     case CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH:
         voice = "longanqian";
         transcription = "";
+        response_limits = "\"max_history_turns\":5,";
         break;
     case CONVERSATION_MODEL_COUNT:
     default:
@@ -86,7 +89,7 @@ bool conversation_protocol_build_session_update(
     }
     if (output == NULL || capacity == 0U ||
         !event_id_is_safe(event_id) || voice == NULL ||
-        transcription == NULL) {
+        transcription == NULL || response_limits == NULL) {
         if (output != NULL && capacity > 0U) {
             output[0] = '\0';
         }
@@ -101,12 +104,13 @@ bool conversation_protocol_build_session_update(
         "{\"event_id\":\"%s\",\"type\":\"session.update\","
         "\"session\":{\"modalities\":[\"text\",\"audio\"],"
         "\"voice\":\"%s\",\"instructions\":"
-        "\"你是简洁友好的中英双语助手。跟随用户语言回答，必要时清楚朗读单词。\","
+        "\"你是简洁友好的中英双语语音助手。跟随用户语言，用适合朗读的纯文本回答。默认先给结论，只说一至三个短句；中文通常不超过六十字，英文通常不超过四十词。内容较多时只给最重要的三点，并请用户继续追问。不要复述问题，不用Markdown，不主动展开。用户明确要求详细说明时仍分轮简短回答；单词学习需要清楚朗读。\","
         "\"input_audio_format\":\"pcm\","
         "\"output_audio_format\":\"pcm\","
         "%s"
+        "%s"
         "\"turn_detection\":null}}",
-        event_id, voice, transcription);
+        event_id, voice, response_limits, transcription);
     return finish_message(output, capacity, result, written);
 }
 
@@ -462,9 +466,24 @@ static bool parse_response_done(const cJSON *root,
         return true;
     }
 
-    event->kind = CONVERSATION_SERVER_EVENT_ERROR;
     const cJSON *details =
         cJSON_GetObjectItemCaseSensitive(response, "status_details");
+    const cJSON *reason = cJSON_IsObject(details)
+                              ? cJSON_GetObjectItemCaseSensitive(details,
+                                                                 "reason")
+                              : NULL;
+    if (strcmp(status->valuestring, "incomplete") == 0 &&
+        cJSON_IsString(reason) && reason->valuestring != NULL &&
+        (strcmp(reason->valuestring, "max_tokens") == 0 ||
+         strcmp(reason->valuestring, "max_output_tokens") == 0)) {
+        /* The configured response budget intentionally bounds spoken
+         * answers. Already generated PCM remains useful and must drain as a
+         * normal, shortened turn instead of becoming a playback failure. */
+        event->kind = CONVERSATION_SERVER_EVENT_RESPONSE_TRUNCATED;
+        return true;
+    }
+
+    event->kind = CONVERSATION_SERVER_EVENT_ERROR;
     const cJSON *error = cJSON_IsObject(details)
                              ? cJSON_GetObjectItemCaseSensitive(details,
                                                                 "error")
@@ -602,6 +621,8 @@ const char *conversation_server_event_name(
         return "audio_done";
     case CONVERSATION_SERVER_EVENT_RESPONSE_DONE:
         return "response_done";
+    case CONVERSATION_SERVER_EVENT_RESPONSE_TRUNCATED:
+        return "response_truncated";
     case CONVERSATION_SERVER_EVENT_RESPONSE_CANCELLED:
         return "response_cancelled";
     case CONVERSATION_SERVER_EVENT_SESSION_FINISHED:

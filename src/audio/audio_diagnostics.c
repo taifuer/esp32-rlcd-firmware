@@ -3,6 +3,7 @@
 #include "audio_conversation.h"
 #include "audio_conversation_control.h"
 #include "audio_conversation_flow.h"
+#include "audio_response_watchdog.h"
 #include "audio_voice.h"
 
 #include <limits.h>
@@ -95,7 +96,6 @@ enum {
     AUDIO_CONVERSATION_NETWORK_TIMEOUT_MS = 1000,
     AUDIO_CONVERSATION_PROTOCOL_TIMEOUT_MS = 15000,
     AUDIO_CONVERSATION_RELEASE_TIMEOUT_MS = 5000,
-    AUDIO_CONVERSATION_RESPONSE_TIMEOUT_MS = 45000,
     AUDIO_CONVERSATION_STOP_TIMEOUT_MS = 2000,
     AUDIO_CONVERSATION_POLL_MS = 50,
 };
@@ -2299,13 +2299,24 @@ static esp_err_t play_conversation_response(
     unlock_context();
 
     set_conversation_state(AUDIO_CONVERSATION_STATE_THINKING);
-    const TickType_t started = xTaskGetTickCount();
-    uint32_t previous_revision = UINT32_MAX;
+    conversation_client_get_status(client, remote);
+    uint32_t previous_revision = remote->revision;
+    uint32_t previous_received_audio_bytes =
+        remote->received_audio_bytes;
+    bool previous_response_ended = remote->response_ended;
+    audio_response_watchdog_t response_watchdog;
+    audio_response_watchdog_init(&response_watchdog);
+    TickType_t previous_watchdog_tick = xTaskGetTickCount();
     bool speaker_open = false;
     bool local_started = false;
     bool response_cancel_requested = false;
     esp_err_t error = ESP_OK;
     while (true) {
+        const TickType_t now = xTaskGetTickCount();
+        const uint32_t watchdog_elapsed_ms =
+            (uint32_t)(now - previous_watchdog_tick) *
+            portTICK_PERIOD_MS;
+        previous_watchdog_tick = now;
         const audio_control_t control = take_control();
         if (control == AUDIO_CONTROL_CANCEL) {
             *cancelled = true;
@@ -2334,6 +2345,13 @@ static esp_err_t play_conversation_response(
             break;
         }
         conversation_client_get_status(client, remote);
+        bool response_progress =
+            remote->received_audio_bytes !=
+                previous_received_audio_bytes ||
+            (remote->response_ended && !previous_response_ended);
+        previous_received_audio_bytes =
+            remote->received_audio_bytes;
+        previous_response_ended = remote->response_ended;
         if (remote->revision != previous_revision) {
             update_conversation_remote_status(remote);
             previous_revision = remote->revision;
@@ -2373,17 +2391,42 @@ static esp_err_t play_conversation_response(
                 if (error != ESP_OK) {
                     break;
                 }
+            } else {
+                /* Muted playback still advances captions at the duration of
+                 * the discarded PCM instead of draining the network queue at
+                 * download speed. Chunks are small enough to keep controls
+                 * responsive while preserving the text-only timing. */
+                const uint32_t muted_playback_ms =
+                    (uint32_t)((samples * 1000U +
+                                AUDIO_CONVERSATION_PLAYBACK_SAMPLE_RATE_HZ -
+                                1U) /
+                               AUDIO_CONVERSATION_PLAYBACK_SAMPLE_RATE_HZ);
+                vTaskDelay(pdMS_TO_TICKS(muted_playback_ms));
             }
+            error = conversation_client_note_played_pcm(
+                client, samples);
+            if (error != ESP_OK) {
+                break;
+            }
+            response_progress = true;
+        }
+
+        /* Only generated/drained audio or response.done counts as model
+         * progress. ASR and other status revisions must neither shorten the
+         * first-audio window nor keep a stalled response alive forever. A
+         * progress sample observed at the timeout boundary wins this poll. */
+        if (response_progress) {
+            audio_response_watchdog_note_progress(
+                &response_watchdog);
+            previous_watchdog_tick = xTaskGetTickCount();
+        } else if (audio_response_watchdog_tick(
+                       &response_watchdog, watchdog_elapsed_ms)) {
+            error = ESP_ERR_TIMEOUT;
+            break;
         }
 
         if (remote->response_ended &&
             conversation_client_buffered_pcm_bytes(client) == 0U) {
-            break;
-        }
-        const uint32_t elapsed_ms = (uint32_t)(
-            xTaskGetTickCount() - started) * portTICK_PERIOD_MS;
-        if (elapsed_ms >= AUDIO_CONVERSATION_RESPONSE_TIMEOUT_MS) {
-            error = ESP_ERR_TIMEOUT;
             break;
         }
     }

@@ -1,24 +1,27 @@
-# AI 语音 Beta
+# AI 对话 Beta
 
-本功能自 v0.20.0 正式固件开始提供。AI 语音是“语音”页中的可选 Beta 能力，不增加新页面，也不
+本功能自 v0.20.0 正式固件开始提供。AI 对话是“对话”页中的可选 Beta 功能，不增加新页面，也不
 替代设备上的 ESP-SR MultiNet 离线指令。默认接入只需提供自己的阿里云百炼 API Key；
 无需创建百炼应用，也无需填写 Workspace ID 或 App ID。需要使用新加坡地域或业务空间
 专属域名时，才在高级设置中填写官方 API Host。
 
-云端语音未开启、未配置 API Key、家庭 Wi-Fi 当前离线或设备处于 `SAVING` 时，设备会
+AI 对话未开启、未配置 API Key、家庭 Wi-Fi 当前离线或设备处于 `SAVING` 时，设备会
 直接使用本地 MultiNet，不等待云端连接超时。
 
-## 能力边界
+## 功能说明
 
-- AI 模式用于有界的中文或英文多轮问答。设备流式接收回复，并在屏幕上
+- AI 模式用于中文或英文多轮问答。设备流式接收回复，并在屏幕上
   显示文字、通过扬声器播放语音；
 - 会话由用户主动长按发起，设备没有唤醒词，也不会在空闲时持续开启麦克风；
 - 一次会话在同一条 TLS WebSocket 上保留服务端上下文，最多 5 轮。每轮回复后
   最多等待 30 秒续问，新一轮只在会话开始后的 5 分钟内准入；已经开始的收音和回答
   会完整结束。结束、取消、失败或到达边界后关闭连接并清理临时上下文，下次需要重新
   长按开始；
-- 回复文字按实际字体宽度换行并持续显示最新 4 行；新内容覆盖最旧行，不追加省略号。
-  状态缓冲满时保留最新的完整 UTF-8 文本；
+- 回答默认使用一至三个短句；问题较复杂时先给结论和最重要的三点，用户可以继续追问。
+  默认模型还设置了输出上限，避免一轮回答长期占用设备；如果模型达到上限，设备会播完
+  已经生成的内容并正常进入续问，不会在播完后误报失败；
+- 回复文字按实际字体宽度换行并持续显示最新 4 行；字幕跟随扬声器已经播放的音频推进，
+  不会在声音尚未播放完时直接跳到回答末尾；
 - 当前仍是手动 PTT 半双工：收音时不播放，播放时不收音。播放中短按 `KEY`
   只会先停止当前回复，然后进入下一轮；这不是全双工语音打断；
 - 云端回复只用于显示和播放，不会打开页面、修改设置、清除 Wi-Fi、删除图片、控制闹钟、
@@ -31,7 +34,7 @@
 
 两种模型均使用 16 kHz、16-bit、单声道 PCM 输入和 24 kHz、16-bit、单声道 PCM 输出。
 模型选择只影响下一次新会话，不能突破上述产品边界。两者的官方能力、固件实际差异、费用
-口径和目标板 A/B 方案见[AI 语音模型评估](cloud-voice-evaluation.md)。
+口径和目标板 A/B 方案见[AI 对话模型评估](cloud-voice-evaluation.md)。
 
 ## 准备和配置
 
@@ -45,15 +48,15 @@
    Coding Plan 等专属套餐 Key 不在当前固件的验证范围内。详细步骤可参考
    [阿里云官方说明](https://help.aliyun.com/zh/model-studio/get-api-key)；
 4. 在设备“设置”页按住 `KEY` 3 秒，连接屏幕显示的临时热点并打开设置门户；
-5. 在“云端语音”中选择开启，将刚才复制的 API Key 直接粘贴到输入框；
+5. 在“AI 对话”中选择开启，将刚才复制的 API Key 直接粘贴到输入框；
 6. 保持默认模型，并让 API Host 留空。默认北京共享接口不需要 Workspace ID、App ID，
    也不需要创建百炼应用；
 7. 保存后关闭设置门户，等待设备恢复家庭 Wi-Fi。设备处于 `NORMAL` 且取得 IPv4 后，
-   下一次语音会话就会使用云端。
+   下一次对话就会使用云端。
 
 API Key 使用普通文本框以兼容手机设置窗口粘贴，输入内容在本次编辑时可见；保存后输入框
 立即清空，状态接口也不会回显已保存内容。只修改开关、模型或 API Host 时将 API Key
-留空，会保留原 Key；关闭云端语音也只停用云端，不会删除 Key。“清除云端语音配置”的
+留空，会保留原 Key；关闭 AI 对话也只停用云端，不会删除 Key。“清除 AI 对话配置”的
 独立确认操作会删除已保存 Key、关闭云端，并恢复默认模型与默认 API Host。配置保存或
 清除后无需重启设备。
 
@@ -78,7 +81,7 @@ Realtime URL，并拒绝其他域名。API Key 必须与 API Host 的地域和�
 
 ## 使用
 
-在“语音”页：
+在“对话”页：
 
 1. 按住 `KEY` 2 秒；
 2. 看到提示后松开 `KEY`，再开始说话；
@@ -100,8 +103,8 @@ Realtime URL，并拒绝其他域名。API Key 必须与 API Host 的地域和�
 
 | 条件 | 使用方式 |
 | --- | --- |
-| 云端语音已开启、已保存 API Key、设备为 `NORMAL`、家庭 Wi-Fi 当前已取得 IPv4 | 阿里云百炼 Realtime |
-| 云端语音已关闭、未配置 API Key、家庭 Wi-Fi 离线或设备为 `SAVING` | 本地 ESP-SR MultiNet |
+| AI 对话已开启、已保存 API Key、设备为 `NORMAL`、家庭 Wi-Fi 当前已取得 IPv4 | 阿里云百炼 Realtime |
+| AI 对话已关闭、未配置 API Key、家庭 Wi-Fi 离线或设备为 `SAVING` | 本地 ESP-SR MultiNet |
 | 云端条件不满足，且本地模型缺失或麦克风不可用 | 显示语音不可用，不影响其他功能 |
 
 后端在整段会话开始时确定，不在后续轮次或讲话过程中切换。鉴权失败、服务端错误或
@@ -111,7 +114,7 @@ Realtime URL，并拒绝其他域名。API Key 必须与 API Host 的地域和�
 
 ## 数据、凭据与费用
 
-选择 AI 语音后，设备会通过 TLS WebSocket 向阿里云百炼发送各轮 16 kHz 单声道 PCM、
+选择 AI 对话后，设备会通过 TLS WebSocket 向阿里云百炼发送各轮 16 kHz 单声道 PCM、
 所选模型和协议所需元数据，并接收识别文字、回复文字和 24 kHz 合成语音。服务端在同一
 WebSocket 内保留本次会话的上下文；设备不把这些对话历史写入 Flash、NVS、microSD 或
 USB 日志。原始 PCM、转写、回复和播放缓冲只在本次会话的易失内存中处理；但语音
@@ -127,7 +130,7 @@ API Key 保存在设备 NVS 中。设置门户状态接口不会返回完整 Key
 
 - 为设备或本项目创建专用、可轮换的 Key，不复用管理员 Key 或其他生产业务 Key；
 - 在阿里云控制台设置预算、账单提醒或其他消费保护，并定期检查调用记录；
-- 设备遗失、转让或送修前先清除云端语音配置，并在控制台吊销旧 Key；
+- 设备遗失、转让或送修前先清除 AI 对话配置，并在控制台吊销旧 Key；
 - 不在语音会话中提供密码、验证码、私钥或其他敏感内容。
 
 百炼 Realtime 模型按实际输入和输出 Token 计费，不同模型、地域、免费额度和活动价格可能
@@ -137,11 +140,11 @@ API Key 保存在设备 NVS 中。设置门户状态接口不会返回完整 Key
 
 ## 常见问题
 
-### 已保存 API Key，但仍显示本地语音
+### 已保存 API Key，但仍显示离线指令
 
-确认设置门户中的云端语音已经开启、设备不是 `SAVING`，并检查首屏 Wi-Fi 图标或“状态”
+确认设置门户中的 AI 对话已经开启、设备不是 `SAVING`，并检查首屏 Wi-Fi 图标或“状态”
 页的 `WI-FI` 行。只保存过网络名称不代表当前在线；家庭网络重新取得 IPv4 后，下一次
-新会话才会选择 AI 语音。
+新会话才会选择 AI 对话。
 
 ### 云端连接或鉴权失败
 
@@ -162,6 +165,7 @@ API Key 保存在设备 NVS 中。设置门户状态接口不会返回完整 Key
 - [阿里云百炼 Base URL 与业务空间专属域名](https://help.aliyun.com/zh/model-studio/base-url)
 - [`qwen3-omni-flash-realtime` 模型信息](https://help.aliyun.com/zh/model-studio/qwen3-omni-flash-realtime)
 - [Qwen-Omni Realtime 客户端事件](https://help.aliyun.com/zh/model-studio/client-events)
+- [Qwen-Omni Realtime 服务端事件](https://help.aliyun.com/zh/model-studio/server-events)
 - [`qwen-audio-3.0-realtime-flash` 模型信息](https://help.aliyun.com/zh/model-studio/qwen-audio-3-0-realtime-flash)
 - [Qwen-Audio Realtime 使用指南](https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides)
 - [阿里云百炼模型价格](https://help.aliyun.com/zh/model-studio/model-pricing)

@@ -155,17 +155,17 @@ static const char SETTINGS_PAGE[] =
     "<p id=\"maintenanceMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details>"
     "<button type=\"submit\">保存设置</button></form>"
     "<p id=\"settingsMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
-    "<section><h2>云端语音 Beta</h2><div class=\"wifi-summary\"><span>配置状态</span>"
+    "<section><h2>AI 对话 Beta</h2><div class=\"wifi-summary\"><span>配置状态</span>"
     "<strong id=\"conversationStatus\">未保存</strong></div>"
     "<form id=\"conversationForm\" autocomplete=\"off\">"
     "<input type=\"hidden\" name=\"service\" value=\""
     SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "\">"
-    "<label for=\"conversationEnabled\">云端语音</label><select id=\"conversationEnabled\" name=\"enabled\">"
+    "<label for=\"conversationEnabled\">AI 对话</label><select id=\"conversationEnabled\" name=\"enabled\">"
     "<option value=\"off\">关闭（默认）</option><option value=\"on\">开启</option></select>"
     "<label for=\"conversationKey\">API Key</label><input id=\"conversationKey\" name=\"api_key\" type=\"text\" "
     "maxlength=\"256\" autocomplete=\"off\" autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\">"
     "<p class=\"note\">请直接粘贴；内容仅在本次编辑时可见，保存后立即清空且不会再次显示或预填。已有配置时留空将保留当前 API Key。</p>"
-    "<p class=\"note\">关闭云端语音不会删除 API Key，无网络时仍使用本地语音。</p>"
+    "<p class=\"note\">关闭 AI 对话不会删除 API Key；未配置、断网或省电时仍使用离线语音指令。</p>"
     "<details class=\"advanced\"><summary>高级设置</summary>"
     "<label for=\"conversationModel\">对话模型</label><select id=\"conversationModel\" name=\"model\">"
     "<option value=\"" SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI
@@ -177,13 +177,13 @@ static const char SETTINGS_PAGE[] =
     "<input id=\"conversationApiHost\" name=\"api_host\" maxlength=\"127\" "
     "placeholder=\"llm-xxx.cn-beijing.maas.aliyuncs.com\" autocomplete=\"off\">"
     "<p class=\"note\">留空使用北京共享服务；也可填写受支持的新加坡共享或 Workspace 专属 API Host。不要包含 wss://、路径或端口。</p></details>"
-    "<p class=\"note\">使用云端语音时，麦克风音频会发送至阿里云百炼，识别文本与回复由服务端生成，并可能产生费用。</p>"
+    "<p class=\"note\">使用 AI 对话时，麦克风音频会发送至阿里云百炼，识别文本与回复由服务端生成，并可能产生费用。</p>"
     "<p class=\"note\">当前固件未启用 Flash/NVS 加密；具备设备物理访问能力的人可能读取已保存的 API Key。建议使用本设备专用、最小权限且可随时撤销的 Key。</p>"
-    "<button id=\"conversationSave\" type=\"submit\">保存云端语音配置</button></form>"
+    "<button id=\"conversationSave\" type=\"submit\">保存 AI 对话配置</button></form>"
     "<p id=\"conversationMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
-    "<details class=\"advanced\"><summary>清除云端语音配置</summary>"
-    "<p class=\"note\">清除已保存的 API Key，关闭云端语音并恢复默认模型与共享 API Host；其他设备设置不会改变，也无需重启。</p>"
-    "<button id=\"conversationClear\" type=\"button\" class=\"danger\">确认清除云端语音配置</button></details></section>"
+    "<details class=\"advanced\"><summary>清除 AI 对话配置</summary>"
+    "<p class=\"note\">清除已保存的 API Key，关闭 AI 对话并恢复默认模型与共享 API Host；其他设备设置不会改变，也无需重启。</p>"
+    "<button id=\"conversationClear\" type=\"button\" class=\"danger\">确认清除 AI 对话配置</button></details></section>"
     "<section><h2>日期与时间</h2><p>无需互联网，使用当前手机时间校准设备 RTC。</p>"
     "<button id=\"setTime\" type=\"button\" class=\"secondary\">使用手机时间校准</button>"
     "<p id=\"timeMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
@@ -242,7 +242,7 @@ static const char SETTINGS_PAGE[] =
     "conversationConfigured=conversationAvailable&&cloud.configured===true;conversationEnabled=conversationConfigured&&cloud.enabled===true;$('conversationStatus').textContent=!conversationAvailable?'暂不可用':!conversationConfigured?'未配置':conversationEnabled?'已开启':'已关闭';"
     "$('conversationEnabled').value=conversationEnabled?'on':'off';"
     "const modelSelect=$('conversationModel');modelSelect.value=conversationAvailable?cloud.model:'';if(modelSelect.selectedIndex<0)modelSelect.value='" SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI "';$('conversationApiHost').value=conversationAvailable&&!(cloud.shared_endpoint&&cloud.api_host==='" CONVERSATION_DEFAULT_API_HOST "')?cloud.api_host:'';$('conversationKey').value='';"
-    "show('conversationMessage',conversationAvailable?'':'云端语音设置暂不可用；其他设备设置仍可正常使用。');conversationControls()}"
+    "show('conversationMessage',conversationAvailable?'':'AI 对话设置暂不可用；其他设备设置仍可正常使用。');conversationControls()}"
     "function storedControls(){const available=storedImages.length>0&&!imageBusy&&!storedBusy;"
     "$('storedPrevious').disabled=!available||storedImages.length<2;$('storedNext').disabled=!available||storedImages.length<2;"
     "$('storedSelect').disabled=!available||storedImages[storedIndex]===storedSelected;$('storedDelete').disabled=!available}"
@@ -347,7 +347,7 @@ static const char SETTINGS_PAGE[] =
     "show('conversationMessage','正在保存…');try{const message=await post('/api/conversation/config',body);await load();show('conversationMessage',message)}"
     "catch(error){show('conversationMessage',error.message)}finally{$('conversationKey').value='';conversationBusy=false;conversationControls()}};"
     "$('conversationClear').onclick=async()=>{if(conversationBusy||!conversationAvailable)return;"
-    "if(!confirm('确认清除已保存的 API Key，关闭云端语音并恢复默认模型与 API Host？此操作无法撤销。'))return;conversationBusy=true;conversationControls();"
+    "if(!confirm('确认清除已保存的 API Key，关闭 AI 对话并恢复默认模型与 API Host？此操作无法撤销。'))return;conversationBusy=true;conversationControls();"
     "show('conversationMessage','正在清除…');try{const message=await post('/api/conversation/clear','confirm=CLEAR_CONVERSATION');"
     "await load();show('conversationMessage',message)}catch(error){show('conversationMessage',error.message)}finally{conversationBusy=false;conversationControls()}};"
     "$('defaults').onclick=async()=>{if(!confirm('恢复偏好默认值？Wi-Fi 配置不会被删除。'))return;"
@@ -1356,13 +1356,13 @@ static const char *conversation_form_error_message(
     case CONVERSATION_CONFIG_RESULT_INVALID_API_HOST:
         return "API Host 无效；请留空使用北京共享服务，或填写受支持的百炼共享或 Workspace 专属 Host。\n";
     case CONVERSATION_CONFIG_RESULT_API_KEY_REQUIRED:
-        return "开启云端语音前需要填写 API Key。\n";
+        return "开启 AI 对话前需要填写 API Key。\n";
     case CONVERSATION_CONFIG_RESULT_INVALID_API_KEY:
         return "API Key 格式无效，请输入可见的英文字符、数字或符号。\n";
     case CONVERSATION_CONFIG_RESULT_MISSING_FIELD:
-        return "云端语音配置不完整，请填写所有必填项。\n";
+        return "AI 对话配置不完整，请填写所有必填项。\n";
     default:
-        return "云端语音配置格式无效，请检查后重试。\n";
+        return "AI 对话配置格式无效，请检查后重试。\n";
     }
 }
 
@@ -1376,7 +1376,7 @@ static esp_err_t conversation_config_post_handler(httpd_req_t *request)
     if (body == NULL) {
         return send_page(request, "503 Service Unavailable",
                          "text/plain; charset=utf-8",
-                         "设备内存不足，暂时无法保存云端语音配置。\n");
+                         "设备内存不足，暂时无法保存 AI 对话配置。\n");
     }
     size_t length = 0U;
     conversation_config_update_t update = {0};
@@ -1414,19 +1414,19 @@ static esp_err_t conversation_config_post_handler(httpd_req_t *request)
             conversation_config_clear_sensitive(&update, sizeof(update));
             return send_page(request, "503 Service Unavailable",
                              "text/plain; charset=utf-8",
-                             "云端语音设置暂不可用，请稍后重试。\n");
+                             "AI 对话设置暂不可用，请稍后重试。\n");
         }
         if (update.enabled && !has_saved_key) {
             conversation_config_clear_sensitive(&update, sizeof(update));
             return send_page(request, "400 Bad Request",
                              "text/plain; charset=utf-8",
-                             "开启云端语音前需要填写 API Key。\n");
+                             "开启 AI 对话前需要填写 API Key。\n");
         }
         if (!update.enabled && !has_saved_key) {
             conversation_config_clear_sensitive(&update, sizeof(update));
             return send_page(request, "200 OK",
                              "text/plain; charset=utf-8",
-                             "云端语音保持关闭，无需保存 API Key。\n");
+                             "AI 对话保持关闭，无需保存 API Key。\n");
         }
     }
     if (!begin_regular_mutation()) {
@@ -1444,11 +1444,11 @@ static esp_err_t conversation_config_post_handler(httpd_req_t *request)
             error == ESP_ERR_INVALID_ARG ? "400 Bad Request"
                                          : "500 Internal Server Error",
             error == ESP_ERR_INVALID_ARG
-                ? "云端语音配置未通过校验，原配置未更改。\n"
-                : "云端语音配置未能保存，原配置未更改。\n");
+                ? "AI 对话配置未通过校验，原配置未更改。\n"
+                : "AI 对话配置未能保存，原配置未更改。\n");
     }
     return finish_regular_request(
-        request, "200 OK", "云端语音配置已保存，无需重启。\n");
+        request, "200 OK", "AI 对话配置已保存，无需重启。\n");
 }
 
 static esp_err_t conversation_clear_post_handler(httpd_req_t *request)
@@ -1470,7 +1470,7 @@ static esp_err_t conversation_clear_post_handler(httpd_req_t *request)
     if (!confirmed) {
         return send_page(request, "400 Bad Request",
                          "text/plain; charset=utf-8",
-                         "清除云端语音配置需要重新确认。\n");
+                         "清除 AI 对话配置需要重新确认。\n");
     }
     if (!begin_regular_mutation()) {
         return send_mutation_unavailable(request);
@@ -1482,11 +1482,11 @@ static esp_err_t conversation_clear_post_handler(httpd_req_t *request)
                  esp_err_to_name(error));
         return finish_regular_request(
             request, "500 Internal Server Error",
-            "云端语音配置未能清除，请稍后重试。\n");
+            "AI 对话配置未能清除，请稍后重试。\n");
     }
     return finish_regular_request(
         request, "200 OK",
-        "云端语音配置已清除，已关闭云端语音并恢复默认模型与共享 API Host，无需重启。\n");
+        "AI 对话配置已清除，已关闭 AI 对话并恢复默认模型与共享 API Host，无需重启。\n");
 }
 
 static esp_err_t time_post_handler(httpd_req_t *request)

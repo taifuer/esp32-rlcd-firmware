@@ -3,7 +3,7 @@
 v0.7.0 起使用两个 3 MiB OTA 应用槽。新镜像只写入未运行槽，校验通过后才切换启动目标；
 普通更新不覆盖 NVS，因此会保留家庭 Wi-Fi 配置。
 
-下文按 v0.21.0 正式版说明。在线更新与设置门户本地 OTA 使用相同的 `-ota.bin` 和校验
+下文按 v0.22.0 正式版说明。在线更新与设置门户本地 OTA 使用相同的 `-ota.bin` 和校验
 规则。
 
 ## 两类发布固件
@@ -115,13 +115,13 @@ Wi-Fi 配置；本地 OTA 本身不依赖这些偏好。五分钟截止后不再
 ./scripts/update-app.sh --port COM5 --confirm
 ```
 
-使用仓库中的 v0.21.0 正式发布目录时可直接执行：
+使用仓库中的 v0.22.0 正式发布目录时可直接执行：
 
 ```bash
 ./scripts/update-app.sh \
   --port COM5 \
-  --firmware dist/v0.21.0/esp32-rlcd-firmware-v0.21.0-ota.bin \
-  --model dist/v0.21.0/esp32-rlcd-firmware-v0.21.0-model.bin \
+  --firmware dist/v0.22.0/esp32-rlcd-firmware-v0.22.0-ota.bin \
+  --model dist/v0.22.0/esp32-rlcd-firmware-v0.22.0-model.bin \
   --confirm
 ```
 
@@ -129,7 +129,7 @@ Wi-Fi 配置；本地 OTA 本身不依赖这些偏好。五分钟截止后不再
 待写文件更直观。脚本验证发布目录 `SHA256SUMS` 中的 OTA 应用和模型，再在一次 esptool
 `write-flash` 中分别写入 `0x10000` 和 `0x610000`，最后只清除 8 KiB OTA 选择数据，
 不触碰位于 `0x9000` 的 NVS。v0.7.0 及更新版本的旧分区表没有 `model` 条目，但固定模型
-区域原本未分配，因此 v0.21.0 可用本流程安装应用与自 v0.18.0 起提供的模型，并保留
+区域原本未分配，因此 v0.22.0 可用本流程安装应用与自 v0.18.0 起提供的模型，并保留
 Wi-Fi。设备仍运行 v0.6.0 及更早版本、Bootloader 需要变化、首次安装或完整恢复时，
 必须改用
 `./scripts/flash.sh` 完整安装。

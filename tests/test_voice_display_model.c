@@ -23,8 +23,9 @@ static int measured_width(const char *text, void *context)
 
 static void test_mode_title(void)
 {
-    assert(strcmp(voice_display_mode_title(true), "AI VOICE") == 0);
-    assert(strcmp(voice_display_mode_title(false), "OFFLINE VOICE") == 0);
+    assert(strcmp(voice_display_mode_title(true), "AI CHAT") == 0);
+    assert(strcmp(voice_display_mode_title(false),
+                  "OFFLINE COMMANDS") == 0);
 }
 
 static void test_turn_label(void)
