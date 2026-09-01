@@ -20,6 +20,48 @@ static button_event_t update_for(button_state_t *state, bool pressed,
     return event;
 }
 
+static void test_action_timing(uint32_t long_press_ms,
+                               uint32_t initial_seconds_remaining)
+{
+    button_state_t state;
+    button_state_init(&state, false);
+    assert(button_state_set_action_timing(&state, long_press_ms));
+    assert(update_for(&state, false, 100U, 10U) == BUTTON_EVENT_NONE);
+
+    /* Debouncing consumes 40 ms before hold time starts. */
+    assert(update_for(&state, true, 1030U, 10U) == BUTTON_EVENT_NONE);
+    assert(button_state_hold_ms(&state) == BUTTON_HOLD_PROMPT_MS - 10U);
+    assert(!button_state_hold_prompt_active(&state));
+    assert(button_state_hold_seconds_remaining(&state) == 0U);
+    assert(update_for(&state, true, 10U, 10U) == BUTTON_EVENT_NONE);
+    assert(button_state_hold_ms(&state) == BUTTON_HOLD_PROMPT_MS);
+    assert(button_state_hold_prompt_active(&state));
+    assert(button_state_hold_seconds_remaining(&state) ==
+           initial_seconds_remaining);
+
+    /* Releasing after the prompt, but before the action threshold, is never
+     * reinterpreted as a short press. */
+    assert(update_for(&state, false, 60U, 10U) ==
+           BUTTON_EVENT_HOLD_CANCELLED);
+    assert(!button_state_hold_prompt_active(&state));
+    assert(button_state_hold_seconds_remaining(&state) == 0U);
+
+    assert(update_for(&state, true, long_press_ms + 30U, 10U) ==
+           BUTTON_EVENT_NONE);
+    assert(button_state_hold_ms(&state) == long_press_ms - 10U);
+    assert(button_state_hold_prompt_active(&state));
+    assert(button_state_hold_seconds_remaining(&state) == 1U);
+    assert(update_for(&state, true, 10U, 10U) ==
+           BUTTON_EVENT_LONG_PRESS);
+    assert(button_state_hold_ms(&state) == long_press_ms);
+    assert(!button_state_hold_prompt_active(&state));
+    assert(button_state_hold_seconds_remaining(&state) == 0U);
+    assert(update_for(&state, true, 500U, 10U) == BUTTON_EVENT_NONE);
+
+    /* The release which follows a triggered action is consumed. */
+    assert(update_for(&state, false, 60U, 10U) == BUTTON_EVENT_NONE);
+}
+
 int main(void)
 {
     button_state_t state;
@@ -55,6 +97,9 @@ int main(void)
     assert(button_state_hold_ms(&state) >= BUTTON_LONG_PRESS_MS);
     assert(update_for(&state, true, 500U, 10U) == BUTTON_EVENT_NONE);
     assert(update_for(&state, false, 60U, 10U) == BUTTON_EVENT_NONE);
+
+    test_action_timing(2000U, 1U);
+    test_action_timing(3000U, 2U);
 
     button_state_init_custom(&state, false, BUTTON_HOLD_PROMPT_MS, 3000U);
     assert(update_for(&state, true, 1500U, 10U) == BUTTON_EVENT_NONE);
@@ -105,17 +150,30 @@ int main(void)
     assert(update_for(&state, true, 100U, 10U) == BUTTON_EVENT_NONE);
     assert(!button_state_set_timing(&state, BUTTON_HOLD_PROMPT_MS,
                                     BUTTON_LONG_PRESS_MS));
+    assert(!button_state_set_action_timing(&state, 3000U));
     assert(update_for(&state, false, 60U, 10U) == BUTTON_EVENT_SHORT_PRESS);
     assert(button_state_set_timing(&state, BUTTON_HOLD_PROMPT_MS,
                                    BUTTON_LONG_PRESS_DISABLED_MS));
     assert(update_for(&state, true, 1400U, 10U) == BUTTON_EVENT_NONE);
+    assert(!button_state_hold_prompt_active(&state));
+    assert(button_state_hold_seconds_remaining(&state) == 0U);
+    assert(update_for(&state, false, 60U, 10U) ==
+           BUTTON_EVENT_HOLD_CANCELLED);
+
+    assert(button_state_set_action_timing(&state, 0U));
+    assert(update_for(&state, true, 1400U, 10U) == BUTTON_EVENT_NONE);
+    assert(!button_state_hold_prompt_active(&state));
+    assert(button_state_hold_seconds_remaining(&state) == 0U);
     assert(update_for(&state, false, 60U, 10U) ==
            BUTTON_EVENT_HOLD_CANCELLED);
 
     assert(button_state_update(NULL, true, 10U) == BUTTON_EVENT_NONE);
     assert(!button_state_set_timing(NULL, 1000U, 2000U));
+    assert(!button_state_set_action_timing(NULL, 2000U));
     assert(!button_state_is_pressed(NULL));
     assert(button_state_hold_ms(NULL) == 0U);
+    assert(!button_state_hold_prompt_active(NULL));
+    assert(button_state_hold_seconds_remaining(NULL) == 0U);
 
     puts("button state tests passed");
     return 0;

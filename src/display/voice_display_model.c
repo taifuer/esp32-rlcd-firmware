@@ -100,6 +100,20 @@ const char *voice_display_mode_title(bool ai_mode)
     return ai_mode ? "AI CHAT" : "OFFLINE COMMANDS";
 }
 
+const char *voice_display_ready_prompt(bool ai_mode, bool engine_available)
+{
+    if (!engine_available) {
+        return "Commands are not ready";
+    }
+    return ai_mode ? "Hold KEY 2s to ask"
+                   : "Hold KEY 2s for a command";
+}
+
+const char *voice_display_feedback_footer(void)
+{
+    return "RETURNING TO CHAT...";
+}
+
 bool voice_display_format_turn(char *buffer, size_t capacity,
                                uint8_t turn_number, uint8_t max_turns)
 {

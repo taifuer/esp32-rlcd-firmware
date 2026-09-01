@@ -4,7 +4,7 @@
 诊断和维护操作集中到系统中心，避免两个实体键在不同页面承担难以预测的含义。完整设计
 原则见[产品界面与交互设计规范](design-guidelines.md)。
 
-本文以当前固件的页面与交互为基线。
+本文以 `v0.23.0` 正式版的页面与交互为基线。
 
 ```text
 日常功能（BOOT）
@@ -30,12 +30,30 @@ v0.12.0 起，只有在开机时从 microSD 成功读到有效图片后才加入
 | 长按 `KEY` | 图片页按住 2 秒进入当前图片的删除确认；其他日常页无操作 | 仅执行当前页面明确提示的操作 |
 | `PWR` | 短按开机，长按关机 | 同左 |
 
-月历、图片和所有系统页无操作 30 秒后返回首屏。长按中的按键、图片删除确认与执行、
+稳态页脚直接写出按键将到达的目的地或完成的动作，不使用脱离上下文的 `PAGE`、裸
+`NEXT`、`SYSTEM` 或 `PORTAL`。可选页面会按当前状态显示唯一真实目的地：
+
+| 页面或条件 | 页脚文案 |
+| --- | --- |
+| 月历（存在有效图片） | `BOOT: IMAGE | KEY: STATUS` |
+| 月历（无有效图片） | `BOOT: HOME | KEY: STATUS` |
+| 图片（多图） | `BOOT: HOME | KEY: NEXT IMAGE | 2/6`；第二行 `HOLD KEY 2s: DELETE IMAGE` |
+| 图片（单图） | `BOOT: HOME | KEY: STATUS`；第二行 `HOLD KEY 2s: DELETE IMAGE` |
+| 状态 | `BOOT: HOME | KEY: CHAT | HOLD KEY 2s: SYNC TIME` |
+| 对话（空闲或不可用） | `BOOT: HOME | KEY: SETTINGS` |
+| 设置 | `BOOT: HOME | KEY: ONLINE UPDATE`；第二行按当前请求显示 `MANUAL SAVING ON` 或 `MANUAL SAVING OFF`，并使用 `WEB SETTINGS` |
+| 在线更新 | `BOOT: HOME | KEY: STATUS`；可操作时追加 `CHECK UPDATE` 或 `REVIEW UPDATE` |
+
+所有有效长按在持续 1 秒后统一显示剩余时间与 `RELEASE TO CANCEL`；此时提前松开只取消
+长按，不会再执行短按动作。月历、图片和所有系统页无操作 30 秒后返回首屏。长按中的按键、
+图片删除确认与执行、
 语音会话、校时任务、设置门户和固件更新会暂停普通页面超时。图片删除确认页必须先松开
 发起长按的 `KEY`，再短按 `KEY` 删除；短按 `BOOT` 或 10 秒无操作取消。语音监听时，
 屏幕明确显示的 `KEY: DONE` 与 `BOOT: CANCEL` 临时取代页面导航；AI 回复播放中
 可按 `KEY` 跳过并续问，`FOLLOW-UP` 中用 `KEY` 续问、`BOOT` 结束。在线更新检查、连接和
 确认阶段也可按 `BOOT` 取消。操作结束后恢复表格中的普通语义。
+
+![统一长按提示效果图](assets/hold-prompt.svg)
 
 闹钟到点时会临时覆盖当前页面，并优先接管两个按键：
 
@@ -111,6 +129,8 @@ v0.12.0 起，只有在开机时从 microSD 成功读到有效图片后才加入
 
 月历显示 RTC 当前月份，以星期一为每周首日，并用实心圆反色突出今天。顶部显示当月、
 当天农历、星期和当前时分。当前版本不提供历史月份翻阅，避免两个按键承担额外模式。
+存在有效图片时，月历页脚显示 `BOOT: IMAGE`；没有有效图片时显示 `BOOT: HOME`。
+`KEY` 始终前往状态页，屏幕不会同时列出两个可能目标。
 
 ## microSD 图片
 
@@ -123,8 +143,8 @@ v0.12.0 起，只有在开机时从 microSD 成功读到有效图片后才加入
 首选格式是二进制 PBM P4，另外只接受尺寸、位深、压缩和调色板都符合限定的 1-bit
 BMP 子集。两种格式都必须是 400 × 300 纯黑白像素。底部 50 像素由固件保留并重画
 操作提示，因此主要图像内容应放在顶部 400 × 250 区域。多图时显示
-`BOOT: PAGE | KEY: NEXT | 2/6` 一类提示，单图时显示 `BOOT: PAGE | KEY: SYSTEM`；
-两种情况都明确提示 `HOLD KEY 2s: DELETE`。
+`BOOT: HOME | KEY: NEXT IMAGE | 2/6` 一类提示，单图时显示
+`BOOT: HOME | KEY: STATUS`；两种情况都明确提示 `HOLD KEY 2s: DELETE IMAGE`。
 
 多图时短按 `KEY` 立即查看下一张，选中的图片会一直显示并跨重启保留；固件不按小时、
 日期或其他周期自动换图。无论卡中有多少张图，日常页面环仍只保留一个图片页。
@@ -183,11 +203,15 @@ Wi-Fi 使用 `CONNECTED`、`CONNECTING`、`OFFLINE | RETRY`、`OFFLINE`、
 停振标志和时间变化，通过后显示 `VERIFIED`，曾丢失有效时间则显示 `FAILED`。该结果只
 证明最近一次断电保持成功，不估算电池容量或剩余寿命。
 
-“对话”页只在用户主动操作后采集。按住 `KEY` 2 秒进入会话，看到 `RELEASE KEY` 后
+“对话”页只在用户主动操作后采集。AI 模式空闲时显示 `Hold KEY 2s to ask`，本地模式
+显示 `Hold KEY 2s for a command`；前者说明目标是提问，后者说明只接受设备指令。
+按住 `KEY` 2 秒进入会话，看到 `RELEASE KEY` 后
 松开再开始说话；监听时短按 `KEY` 提前结束，连接、监听、识别、思考或播放阶段短按
 `BOOT` 取消。AI 回复播放完成后，续问页中短按 `KEY` 继续、短按 `BOOT` 结束；
-轮次未满时，播放中短按 `KEY` 会先跳过剩余回复，短暂显示 `NEXT TURN` 后再开始
+轮次未满时，播放中使用 `KEY: NEXT TURN` 会先跳过剩余回复，短暂显示 `NEXT TURN` 后再开始
 下一轮。设备不使用唤醒词，也不会在空闲时持续监听。
+
+![离线设备指令页效果图](assets/offline-commands.svg)
 
 AI 对话已开启、已保存 API Key、实际状态为 `NORMAL` 且家庭 Wi-Fi 当前取得 IPv4 时，
 设备会直连阿里云百炼 Realtime，在同一 WebSocket 上保留服务端上下文，
@@ -223,7 +247,8 @@ MultiNet 指令识别，不会停在云端连接页等待网络。后端在整�
 `SAVING | LOW BAT`，不再显示单独的自动配置项。按住 `BOOT` 2 秒只切换并保存
 “手动提前省电”的开与关，随后在原地应用，不需要开启热点；关闭手动请求不等于强制
 `NORMAL`，低电规则仍可能保持 `SAVING | LOW BAT`。应用完成后显示成功，暂时无法应用时
-显示等待重试。按住 `KEY` 3 秒仍会开启
+显示等待重试。第二行页脚显示的是下一次长按会执行的 `MANUAL SAVING ON` 或
+`MANUAL SAVING OFF`，而不是重复当前状态。按住 `KEY` 3 秒的 `WEB SETTINGS` 会开启
 最多 5 分钟的临时 WPA2 设置门户，屏幕显示标准 Wi-Fi 二维码、随机密码和
 `192.168.4.1`：
 
@@ -262,7 +287,8 @@ Beta 更新默认
 公共演示图下载需要设备已保存可用 Wi-Fi。
 
 “在线更新”显示 `NOT CHECKED`、`CHECKING`、`UP TO DATE`、`UPDATE AVAILABLE` 或
-`FAILED`。按住 `KEY` 2 秒检查；已有可用版本时，同样按住 2 秒进入 `REVIEW` 确认页，核对
+`FAILED`。无可用版本时页脚显示 `CHECK UPDATE`；已有可用版本时改为 `REVIEW UPDATE`。
+按住 `KEY` 2 秒检查或进入 `REVIEW` 确认页，核对
 目标版本后再按住 `KEY` 3 秒才开始安装。实际 `NORMAL` 状态的自动联网只检查，不会弹出
 页面或静默安装，并复用保持中的家庭 Wi-Fi 连接；实际 `SAVING` 状态不自动检查，手动
 检查和安装时临时连接。两种状态下安装都必须明确确认。

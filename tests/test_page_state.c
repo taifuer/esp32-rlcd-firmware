@@ -26,23 +26,30 @@ int main(void)
            APP_PAGE_ACTION_DELETE_IMAGE);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_IMAGE) ==
            APP_PAGE_IMAGE_DELETE_HOLD_MS);
+    assert(APP_PAGE_IMAGE_DELETE_HOLD_MS == 2000U);
     assert(app_page_key_hold_action(APP_PAGE_STATUS) ==
            APP_PAGE_ACTION_SYNC_TIME);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_STATUS) ==
            APP_PAGE_MANUAL_SYNC_HOLD_MS);
+    assert(APP_PAGE_MANUAL_SYNC_HOLD_MS == 2000U);
     assert(app_page_key_hold_action(APP_PAGE_VOICE) ==
            APP_PAGE_ACTION_START_VOICE);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_VOICE) ==
            APP_PAGE_VOICE_HOLD_MS);
+    assert(APP_PAGE_VOICE_HOLD_MS == 2000U);
     assert(app_page_key_hold_action(APP_PAGE_SETTINGS) ==
            APP_PAGE_ACTION_OPEN_SETTINGS);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_SETTINGS) ==
            APP_PAGE_SETTINGS_HOLD_MS);
+    assert(APP_PAGE_SETTINGS_HOLD_MS == 3000U);
     assert(app_page_key_hold_action(APP_PAGE_ONLINE_UPDATE) ==
            APP_PAGE_ACTION_CHECK_ONLINE_UPDATE);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_ONLINE_UPDATE) ==
            APP_PAGE_ONLINE_UPDATE_CHECK_HOLD_MS);
+    assert(APP_PAGE_ONLINE_UPDATE_CHECK_HOLD_MS == 2000U);
     assert(APP_PAGE_ONLINE_UPDATE_INSTALL_HOLD_MS == 3000U);
+    assert(app_page_online_update_hold_threshold_ms(false) == 2000U);
+    assert(app_page_online_update_hold_threshold_ms(true) == 3000U);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_HOME) == 0U);
 
     assert(app_page_boot_hold_action(APP_PAGE_HOME) ==

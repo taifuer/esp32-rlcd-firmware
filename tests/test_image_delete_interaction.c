@@ -30,20 +30,25 @@ static void settle_released(button_state_t *button)
 int main(void)
 {
     button_state_t key;
-    button_state_init_custom(&key, false, BUTTON_HOLD_PROMPT_MS,
-                             APP_PAGE_IMAGE_DELETE_HOLD_MS);
+    button_state_init(&key, false);
+    assert(button_state_set_action_timing(
+        &key, APP_PAGE_IMAGE_DELETE_HOLD_MS));
     settle_released(&key);
 
     assert(update_for(&key, true, 300U) == BUTTON_EVENT_NONE);
     assert(update_for(&key, false, 60U) == BUTTON_EVENT_SHORT_PRESS);
 
     assert(update_for(&key, true, 1500U) == BUTTON_EVENT_NONE);
+    assert(button_state_hold_prompt_active(&key));
+    assert(button_state_hold_seconds_remaining(&key) == 1U);
     assert(update_for(&key, false, 60U) ==
            BUTTON_EVENT_HOLD_CANCELLED);
+    assert(!button_state_hold_prompt_active(&key));
 
     app_image_delete_ui_t ui;
     app_image_delete_ui_init(&ui);
     assert(update_for(&key, true, 2100U) == BUTTON_EVENT_LONG_PRESS);
+    assert(!button_state_hold_prompt_active(&key));
     assert(app_image_delete_ui_begin(&ui));
     assert(!app_image_delete_ui_confirmation_armed(&ui));
     assert(!app_image_delete_ui_confirm(&ui));

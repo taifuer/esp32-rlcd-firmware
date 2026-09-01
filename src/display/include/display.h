@@ -118,6 +118,7 @@ typedef enum {
 typedef struct {
     bool engine_available;
     bool cloud_mode;
+    bool session_active;
     uint8_t turn_number;
     uint8_t max_turns;
     uint32_t elapsed_ms;
@@ -165,8 +166,11 @@ void display_show_network_setup(const char *ssid, const char *password, const ch
 void display_show_settings_portal_ready(const char *ssid,
                                         const char *password,
                                         const char *url);
+void display_show_hold_prompt(const char *title,
+                              uint8_t seconds_remaining);
 void display_show_dashboard(const display_dashboard_t *dashboard);
-void display_show_calendar(const display_dashboard_t *dashboard);
+void display_show_calendar(const display_dashboard_t *dashboard,
+                           bool image_available);
 void display_show_monochrome_image(
     const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
     size_t selected_index, size_t image_count);

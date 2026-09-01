@@ -52,6 +52,8 @@ bool app_page_is_daily(app_page_t page);
 bool app_page_is_system(app_page_t page);
 app_page_action_t app_page_key_hold_action(app_page_t page);
 uint32_t app_page_key_hold_threshold_ms(app_page_t page);
+uint32_t app_page_online_update_hold_threshold_ms(
+    bool awaiting_install_confirmation);
 app_page_action_t app_page_boot_hold_action(app_page_t page);
 uint32_t app_page_boot_hold_threshold_ms(app_page_t page);
 void app_page_state_boot_short_press(app_page_state_t *state);

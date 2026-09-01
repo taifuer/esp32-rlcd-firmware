@@ -48,6 +48,15 @@ bool button_state_set_timing(button_state_t *state, uint32_t hold_prompt_ms,
     return true;
 }
 
+bool button_state_set_action_timing(button_state_t *state,
+                                    uint32_t long_press_ms)
+{
+    return button_state_set_timing(
+        state, BUTTON_HOLD_PROMPT_MS,
+        long_press_ms > 0U ? long_press_ms
+                           : BUTTON_LONG_PRESS_DISABLED_MS);
+}
+
 button_event_t button_state_update(button_state_t *state, bool raw_pressed,
                                    uint32_t elapsed_ms)
 {
@@ -99,4 +108,22 @@ bool button_state_is_pressed(const button_state_t *state)
 uint32_t button_state_hold_ms(const button_state_t *state)
 {
     return button_state_is_pressed(state) ? state->hold_ms : 0U;
+}
+
+bool button_state_hold_prompt_active(const button_state_t *state)
+{
+    return button_state_is_pressed(state) &&
+           !state->long_press_reported &&
+           state->long_press_ms != BUTTON_LONG_PRESS_DISABLED_MS &&
+           state->hold_ms >= state->hold_prompt_ms &&
+           state->hold_ms < state->long_press_ms;
+}
+
+uint32_t button_state_hold_seconds_remaining(const button_state_t *state)
+{
+    if (!button_state_hold_prompt_active(state)) {
+        return 0U;
+    }
+    const uint32_t remaining_ms = state->long_press_ms - state->hold_ms;
+    return remaining_ms / 1000U + (remaining_ms % 1000U != 0U ? 1U : 0U);
 }

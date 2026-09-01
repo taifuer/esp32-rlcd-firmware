@@ -5,6 +5,7 @@
 
 #include "board_pins.h"
 #include "calendar_month.h"
+#include "display_interaction_model.h"
 #include "network_credentials.h"
 #include "qrcode.h"
 #include "u8g2.h"
@@ -149,15 +150,18 @@ static void draw_system_footer(const char *text)
     draw_centered(SYSTEM_FOOTER_BASELINE_Y, text);
 }
 
-static void draw_settings_footer(void)
+static void draw_settings_footer(bool manual_saving_requested)
 {
     u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN,
                    SYSTEM_FOOTER_DIVIDER_Y,
                    BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    draw_centered(270, "BOOT: HOME | KEY: NEXT");
-    draw_centered(294,
-                  "HOLD BOOT 2s: MANUAL SAVING | HOLD KEY 3s: PORTAL");
+    draw_centered(270,
+                  display_interaction_settings_navigation_footer());
+    draw_centered(
+        294,
+        display_interaction_settings_action_footer(
+            manual_saving_requested));
 }
 
 static void draw_daily_footer(const char *text)
@@ -176,7 +180,7 @@ static void draw_image_footer(const char *navigation)
                    BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(270, navigation);
-    draw_centered(294, "HOLD KEY 2s: DELETE");
+    draw_centered(294, display_interaction_image_action_footer());
 }
 
 static void format_version(char *buffer, size_t capacity,
@@ -564,6 +568,30 @@ void display_show_status(const char *title, const char *detail)
     u8g2_SendBuffer(s_u8g2);
 }
 
+void display_show_hold_prompt(const char *title,
+                              uint8_t seconds_remaining)
+{
+    if (s_u8g2 == NULL) {
+        return;
+    }
+
+    char countdown[32];
+    snprintf(countdown, sizeof(countdown), "KEEP HOLDING: %us",
+             seconds_remaining);
+
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    u8g2_DrawFrame(s_u8g2, 3, 3, BOARD_DISPLAY_WIDTH - 6,
+                   BOARD_DISPLAY_HEIGHT - 6);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    draw_centered(118, title != NULL ? title : "KEEP HOLDING");
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+    draw_centered(170, countdown);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(218, "RELEASE TO CANCEL");
+    u8g2_SendBuffer(s_u8g2);
+}
+
 void display_show_network_setup(const char *ssid, const char *password, const char *url)
 {
     if (s_u8g2 == NULL) {
@@ -732,7 +760,8 @@ void display_show_dashboard(const display_dashboard_t *dashboard)
     u8g2_SendBuffer(s_u8g2);
 }
 
-void display_show_calendar(const display_dashboard_t *dashboard)
+void display_show_calendar(const display_dashboard_t *dashboard,
+                           bool image_available)
 {
     if (s_u8g2 == NULL || dashboard == NULL) {
         return;
@@ -807,7 +836,8 @@ void display_show_calendar(const display_dashboard_t *dashboard)
         }
     }
 
-    draw_daily_footer("BOOT: PAGE | KEY: SYSTEM");
+    draw_daily_footer(
+        display_interaction_calendar_footer(image_available));
     u8g2_SendBuffer(s_u8g2);
 }
 
@@ -830,18 +860,10 @@ void display_show_monochrome_image(
                  BOARD_DISPLAY_WIDTH,
                  BOARD_DISPLAY_HEIGHT - DAILY_FOOTER_DIVIDER_Y);
     u8g2_SetDrawColor(s_u8g2, 1);
-    if (image_count > 1U) {
-        char footer[48];
-        if (selected_index >= image_count) {
-            selected_index = 0U;
-        }
-        snprintf(footer, sizeof(footer),
-                 "BOOT: PAGE | KEY: NEXT | %u/%u",
-                 (unsigned)(selected_index + 1U),
-                 (unsigned)image_count);
+    char footer[64];
+    if (display_interaction_format_image_navigation(
+            footer, sizeof(footer), selected_index, image_count)) {
         draw_image_footer(footer);
-    } else {
-        draw_image_footer("BOOT: PAGE | KEY: SYSTEM");
     }
     u8g2_SendBuffer(s_u8g2);
 }
@@ -978,8 +1000,7 @@ void display_show_system_status(const display_system_status_t *status)
                                         : "NOT READY");
     draw_system_row(216, "WI-FI", value);
 
-    draw_system_footer(
-        "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: SYNC");
+    draw_system_footer(display_interaction_status_footer());
     u8g2_SendBuffer(s_u8g2);
 }
 
@@ -1063,7 +1084,7 @@ void display_show_voice(const display_voice_status_t *status)
             status, "SPEAKING",
             status->turn_number > 0U &&
                     status->turn_number < status->max_turns
-                ? "KEY: NEXT | BOOT: CANCEL"
+                ? display_interaction_chat_next_turn_footer()
                 : "BOOT: CANCEL");
         break;
     case DISPLAY_VOICE_STATE_CLOUD_ADVANCING:
@@ -1079,7 +1100,7 @@ void display_show_voice(const display_voice_status_t *status)
         break;
     case DISPLAY_VOICE_STATE_CLOUD_COMPLETED:
         draw_cloud_response(status, "DONE",
-                            "Hold KEY 2s to start again");
+                            voice_display_feedback_footer());
         break;
     case DISPLAY_VOICE_STATE_SUCCEEDED:
         draw_centered(112, "UNDERSTOOD");
@@ -1091,19 +1112,19 @@ void display_show_voice(const display_voice_status_t *status)
         draw_centered(112, "NO SPEECH");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(174, "No clear speech was detected");
-        draw_system_footer("Hold KEY 2s to try again");
+        draw_system_footer(voice_display_feedback_footer());
         break;
     case DISPLAY_VOICE_STATE_NOT_UNDERSTOOD:
         draw_centered(112, "NOT UNDERSTOOD");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(174, "Try one of the commands shown");
-        draw_system_footer("Hold KEY 2s to try again");
+        draw_system_footer(voice_display_feedback_footer());
         break;
     case DISPLAY_VOICE_STATE_TARGET_UNAVAILABLE:
         draw_centered(112, "NOT AVAILABLE");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(174, detail);
-        draw_system_footer("Hold KEY 2s to try again");
+        draw_system_footer(voice_display_feedback_footer());
         break;
     case DISPLAY_VOICE_STATE_UNAVAILABLE:
         draw_centered(105, "CHAT UNAVAILABLE");
@@ -1111,27 +1132,30 @@ void display_show_voice(const display_voice_status_t *status)
         draw_centered(164, detail);
         u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
         draw_centered(210, "Clock and other pages still work");
-        draw_system_footer("BOOT: HOME | KEY: NEXT");
+        draw_system_footer(status->session_active
+                               ? voice_display_feedback_footer()
+                               : display_interaction_chat_footer());
         break;
     case DISPLAY_VOICE_STATE_CANCELLED:
         draw_centered(112, "CANCELLED");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(174, "Temporary audio buffer cleared");
-        draw_system_footer("Hold KEY 2s to try again");
+        draw_system_footer(voice_display_feedback_footer());
         break;
     case DISPLAY_VOICE_STATE_FAILED:
         draw_centered(112, "CHAT FAILED");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(174, detail);
-        draw_system_footer("Hold KEY 2s to try again");
+        draw_system_footer(voice_display_feedback_footer());
         break;
     case DISPLAY_VOICE_STATE_READY:
     default:
         draw_centered(92, voice_display_mode_title(status->cloud_mode));
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
-        draw_centered(145, status->engine_available
-                               ? "Hold KEY 2s, then release"
-                               : "Commands are not ready");
+        draw_centered(
+            145,
+            voice_display_ready_prompt(status->cloud_mode,
+                                       status->engine_available));
         if (status->cloud_mode) {
             if (status->max_turns > 0U) {
                 snprintf(value, sizeof(value),
@@ -1150,7 +1174,7 @@ void display_show_voice(const display_voice_status_t *status)
                 0, BOARD_DISPLAY_WIDTH, 218,
                 "打开图片  打开设置  取消");
         }
-        draw_system_footer("BOOT: HOME | KEY: NEXT");
+        draw_system_footer(display_interaction_chat_footer());
         break;
     }
     u8g2_SendBuffer(s_u8g2);
@@ -1237,7 +1261,7 @@ void display_show_settings(const display_settings_status_t *status)
     }
     draw_system_row(216, "ALARM", value);
 
-    draw_settings_footer();
+    draw_settings_footer(status->manual_saving_requested);
     u8g2_SendBuffer(s_u8g2);
 }
 
@@ -1327,20 +1351,20 @@ void display_show_online_update(const display_online_update_status_t *status)
             "UPDATE FAILED",
             status->detail != NULL ? status->detail : "Try again when online",
             "Current firmware is unchanged",
-            "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: CHECK");
+            display_interaction_online_update_footer(false));
         break;
     case DISPLAY_ONLINE_UPDATE_STATE_NOT_CHECKED:
     case DISPLAY_ONLINE_UPDATE_STATE_UP_TO_DATE:
     case DISPLAY_ONLINE_UPDATE_STATE_UPDATE_AVAILABLE: {
         const char *state_text = "NOT CHECKED";
         const char *footer =
-            "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: CHECK";
+            display_interaction_online_update_footer(false);
         if (status->state == DISPLAY_ONLINE_UPDATE_STATE_UP_TO_DATE) {
             state_text = "UP TO DATE";
         } else if (status->state ==
                    DISPLAY_ONLINE_UPDATE_STATE_UPDATE_AVAILABLE) {
             state_text = "UPDATE AVAILABLE";
-            footer = "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: REVIEW";
+            footer = display_interaction_online_update_footer(true);
         }
         draw_system_row(82, "CURRENT", current_version);
         draw_system_row(126,
@@ -1356,7 +1380,7 @@ void display_show_online_update(const display_online_update_status_t *status)
     default:
         draw_system_row(126, "STATUS", "NOT CHECKED");
         draw_system_footer(
-            "BOOT: HOME | KEY: NEXT | HOLD KEY 2s: CHECK");
+            display_interaction_online_update_footer(false));
         break;
     }
     u8g2_SendBuffer(s_u8g2);

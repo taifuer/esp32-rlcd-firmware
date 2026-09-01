@@ -114,6 +114,12 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/app \
+  src/app/hold_interaction.c tests/test_hold_interaction.c \
+  -o "${RLCD_TEST_TMP}/test_hold_interaction"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/app \
   src/app/image_delete_ui.c tests/test_image_delete_ui.c \
   -o "${RLCD_TEST_TMP}/test_image_delete_ui"
 
@@ -329,6 +335,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_network_qr"
 "${RLCD_TEST_TMP}/test_button_state"
 "${RLCD_TEST_TMP}/test_page_state"
+"${RLCD_TEST_TMP}/test_hold_interaction"
 "${RLCD_TEST_TMP}/test_image_delete_ui"
 "${RLCD_TEST_TMP}/test_image_delete_interaction"
 "${RLCD_TEST_TMP}/test_monochrome_image"

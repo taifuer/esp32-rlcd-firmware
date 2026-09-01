@@ -15,6 +15,8 @@
 - 离线可用：实际 `NORMAL` 在已有凭据时保持家庭 Wi-Fi 连接，但网络仍不是本地时钟、
   传感器、日历与离线语音的启动前提；断线重试不得长期占用或周期性打断日常页面；
 - 可预测：同一个按键在同一信息域内保持相同语义，长按动作只在屏幕明确提示时有效；
+- 目标导向：页脚写出按键将到达的页面或完成的动作，不用 `PAGE`、裸 `NEXT`、
+  `SYSTEM`、`PORTAL` 等结构或实现术语代替用户目标；
 - 安全：清除配置、重启等有副作用的操作必须与普通浏览分离，并提供持续长按或二次确认。
 
 全反射屏适合持续展示而不是频繁动画。页面切换直接、稳定即可，不为装饰目的加入动画；
@@ -249,8 +251,12 @@ AI 对话复用既有“对话”页、实体按键和串行化 audio worker，�
 - 其他页面长按 `KEY`，或“设置”页以外的正常运行页面长按 `BOOT`，均不执行动作，松开
   也不得误判为短按。
 
+上述六类有效长按统一在持续 1 秒后显示动作名称、剩余秒数和 `RELEASE TO CANCEL`。
+未达到 2 秒或 3 秒动作阈值前松开只取消长按，不得再执行该按键的短按动作；动作触发后
+产生的松开同样不得落入普通导航。双键同时按下、闹钟或其他模态占用输入时不显示长按提示。
+
 图片删除确认必须与发起长按分成两次独立输入。普通短按仍执行切图或进入系统中心；持续按住
-1 秒出现长按提示后，未满 2 秒松开只取消长按，不执行短按动作。满 2 秒进入确认页后，必须
+1 秒出现统一长按提示后，满 2 秒进入确认页。进入确认页后必须
 先完整松开 `KEY`，短按 `KEY` 才删除，短按 `BOOT` 取消，10 秒无操作也自动取消。确认页
 始终显示待删除的当前图片和明确按键提示，不提供批量删除。确认后由异步任务执行写卡，
 执行期间暂停普通页面导航并显示正在删除状态；成功后显示下一张，删除末张后回到首张，
@@ -315,17 +321,23 @@ microSD 是完全可选的本地内容源：无卡不显示启动错误，不影
   当前操作，但不能与日常页面竞争视觉层级；
 - 闹钟模态不显示系统页位置，使用大号当前时间、一个短状态和
   `BOOT: STOP | KEY: SNOOZE 5m`；延后后第二次响铃只显示 `BOOT: STOP`，不加入动画；
-- 页面底部提示保持简短：月历使用 `BOOT: PAGE | KEY: SYSTEM`；图片页在原有
-  `BOOT: PAGE | KEY: SYSTEM` 或 `BOOT: PAGE | KEY: NEXT | 2/6` 基础上，另行明确
-  `HOLD KEY 2s: DELETE`；删除确认页在原长按尚未松开时使用
+- 页面底部提示保持简短并直接命名目的地：月历在有图时使用
+  `BOOT: IMAGE | KEY: STATUS`，无图时使用 `BOOT: HOME | KEY: STATUS`；图片页多图时使用
+  `BOOT: HOME | KEY: NEXT IMAGE | 2/6`，单图时使用 `BOOT: HOME | KEY: STATUS`，
+  两者另行明确 `HOLD KEY 2s: DELETE IMAGE`；删除确认页在原长按尚未松开时使用
   `RELEASE KEY | BOOT: CANCEL`，松开后改为 `BOOT: CANCEL | KEY: DELETE`；系统页使用
-  `BOOT: HOME | KEY: NEXT`；“设置”页使用第二行
-  `HOLD BOOT 2s: MANUAL SAVING | HOLD KEY 3s: PORTAL` 同时区分直接设置与维护入口，其他系统页
-  有长按动作时只追加当前页面的那一个动作。“对话”空闲页在内容区明确提示
-  `Hold KEY 2s, then release`，footer 保持系统页导航；监听页使用
+  明确的环形目的地：状态到 `CHAT`、对话到 `SETTINGS`、设置到 `ONLINE UPDATE`、
+  在线更新到 `STATUS`，同时都保留 `BOOT: HOME`；“设置”页第二行根据当前请求显示下一动作
+  `HOLD BOOT 2s: MANUAL SAVING ON/OFF`，并用 `HOLD KEY 3s: WEB SETTINGS` 表达网页设置
+  目标，其他系统页有长按动作时只追加当前页面的那一个动作；状态页使用 `SYNC TIME`，
+  在线更新页按状态使用 `CHECK UPDATE` 或 `REVIEW UPDATE`。“对话”空闲页在内容区按模式
+  分别显示 `Hold KEY 2s to ask` 或 `Hold KEY 2s for a command`，footer 使用
+  `BOOT: HOME | KEY: SETTINGS`；监听页使用
   `KEY: DONE | BOOT: CANCEL`，AI 连接与思考页只保留 `BOOT: CANCEL`；播放页在轮次未满时
-  显示 `KEY: NEXT | BOOT: CANCEL`，第 5 轮只显示 `BOOT: CANCEL`；续问页显示
+  显示 `KEY: NEXT TURN | BOOT: CANCEL`，第 5 轮只显示 `BOOT: CANCEL`；续问页显示
   `KEY: CONTINUE | BOOT: END`；
+- “未听到”“未识别”“不可用”“取消”“失败”和会话轮次结束等短暂结果态，在输入门控尚未
+  恢复时只显示 `RETURNING TO CHAT...`；不得提前显示尚不可执行的重试或页面导航动作；
 
 “明亮”表示清晰、高对比和有呼吸感，不表示用白色大面积填满屏幕。反色块只用于今天、
 当前选择或需要用户确认的焦点。

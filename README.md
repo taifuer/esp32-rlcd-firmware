@@ -6,14 +6,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.22.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.23.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
-以下为当前固件的界面示意。
+以下为 v0.23.0 的界面示意。
 
 | 首屏 | 月历 |
 | :---: | :---: |
@@ -35,16 +35,19 @@
 - 首次启动使用临时 WPA2 热点配网，凭据保存在 NVS，随后自动 SNTP 校时；
 - 网络不可用时继续使用 RTC、月历、传感器、按键和离线语音；`NORMAL` 保持家庭 Wi-Fi
   连接并在断线后后台退避重试，`SAVING` 空闲时保持离线；
-- 离线语音使用板载 ES7210 和 ESP-SR 中文模型：在“对话”页按住 `KEY` 2 秒并松开后，
+- 离线语音使用板载 ES7210 和 ESP-SR 中文模型：“对话”页显示
+  `OFFLINE COMMANDS` 和 `Hold KEY 2s for a command`，按住 `KEY` 2 秒并松开后，
   可用“回到主页”“打开日历”“查看状态”“打开图片”“打开设置”等安全指令导航；
   不使用唤醒词，离线会话的原始音频不持久化、不上传；
-- 可选的[AI 对话 Beta](docs/cloud-voice.md)使用用户自己的阿里云百炼 API Key：设备在线
+- 可选的[AI 对话 Beta](docs/cloud-voice.md)使用用户自己的阿里云百炼 API Key：空闲页显示
+  `AI CHAT` 和 `Hold KEY 2s to ask`；设备在线
   且处于 `NORMAL` 时，在同一 WebSocket 会话中支持最多 5 轮中英文问答；每轮仍由按键
   明确开始，续问等待 30 秒，新一轮可在会话开始后的 5 分钟内发起；已经开始的回答会
   完整结束。回答默认简短，回复文字会跟随本地播放进度滚动显示最新 4 行。停用、离线、
   省电或未配置时自动使用本地 MultiNet；默认模型为 `qwen3-omni-flash-realtime`，无需创建百炼应用或填写
   Workspace ID、App ID，也不使用唤醒词或后台监听；
-- 四页系统中心依次为状态、对话、设置和在线更新，低频维护不再占用独立页面；
+- 四页系统中心依次为状态、对话、设置和在线更新；页脚直接写出下一目的地或动作，
+  不再用泛化的“下一页”“系统”或“门户”代替用户目标；
 - “设置”页支持手动提前省电；设置门户支持时区、温度单位、播放音量、单个每周闹钟、
   更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、microSD 图片管理和
   本地 OTA；
@@ -80,7 +83,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.22.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.23.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -88,11 +91,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.22.0
+cd dist/v0.23.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.22.0/esp32-rlcd-firmware-v0.22.0-factory.bin \
+  --firmware dist/v0.23.0/esp32-rlcd-firmware-v0.23.0-factory.bin \
   --confirm
 ```
 
@@ -161,7 +164,7 @@ cd ../..
 - [开发计划](docs/roadmap.md)：已经确定的后续版本范围与验收边界；
 - [开发与发布指南](docs/development.md)：依赖、版本、测试和 Release 流程；
 - [实机验证记录](docs/bringup-log.md)：已完成的硬件验收结果；
-- [版本变更记录](CHANGELOG.md)：已发布与开发中版本的功能变化。
+- [版本变更记录](CHANGELOG.md)：各版本的功能变化。
 
 ## 参考资料
 

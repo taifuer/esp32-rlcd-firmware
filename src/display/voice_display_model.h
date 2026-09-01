@@ -22,6 +22,8 @@ typedef struct {
 } voice_display_text_window_t;
 
 const char *voice_display_mode_title(bool ai_mode);
+const char *voice_display_ready_prompt(bool ai_mode, bool engine_available);
+const char *voice_display_feedback_footer(void);
 bool voice_display_format_turn(char *buffer, size_t capacity,
                                uint8_t turn_number, uint8_t max_turns);
 /* Wrap with the supplied font measurement and retain only the newest lines.

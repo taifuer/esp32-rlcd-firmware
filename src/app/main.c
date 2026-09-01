@@ -35,6 +35,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "gallery_download.h"
+#include "hold_interaction.h"
 #include "image_delete_ui.h"
 #include "network_time.h"
 #include "network_screen_policy.h"
@@ -58,7 +59,7 @@ typedef enum {
     APP_DISPLAY_NETWORK_SETUP,
     APP_DISPLAY_CALENDAR,
     APP_DISPLAY_MONOCHROME_IMAGE,
-    APP_DISPLAY_IMAGE_DELETE_HOLD,
+    APP_DISPLAY_HOLD_PROMPT,
     APP_DISPLAY_IMAGE_DELETE_CONFIRMATION,
     APP_DISPLAY_IMAGE_DELETE_STATUS,
     APP_DISPLAY_STATUS,
@@ -68,9 +69,7 @@ typedef enum {
     APP_DISPLAY_ONLINE_UPDATE,
     APP_DISPLAY_MANUAL_SYNC,
     APP_DISPLAY_MANUAL_SYNC_RESULT,
-    APP_DISPLAY_SETTINGS_POWER_PROMPT,
     APP_DISPLAY_SETTINGS_POWER_RESULT,
-    APP_DISPLAY_SETTINGS_PORTAL_PROMPT,
     APP_DISPLAY_FIRMWARE_UPDATE_STARTING,
     APP_DISPLAY_FIRMWARE_UPDATE_READY,
     APP_DISPLAY_FIRMWARE_UPDATE_RECEIVING,
@@ -550,23 +549,23 @@ static const char *voice_unavailable_detail(
     const audio_voice_status_t *status)
 {
     if (status == NULL || !status->initialized) {
-        return "Audio service not ready";
+        return "Audio not ready";
     }
     if (status->engine_preparing) {
-        return "Starting offline voice";
+        return "Starting offline commands";
     }
     if (!status->model_ready) {
-        return "Voice model not installed";
+        return "Offline command model missing";
     }
     if (!status->microphone_ready) {
         return "Microphones not ready";
     }
     if (!status->engine_ready) {
         return status->last_error == ESP_OK
-                   ? "Voice engine is not ready"
+                   ? "Offline commands not ready"
                    : esp_err_to_name(status->last_error);
     }
-    return "Voice engine is busy";
+    return "Offline commands busy";
 }
 
 static const char *voice_command_detail(
@@ -798,40 +797,20 @@ static void configure_key_timing(
     online_update_state_t online_update_state)
 {
     uint32_t action_threshold_ms = app_page_key_hold_threshold_ms(page);
-    const app_page_action_t action = app_page_key_hold_action(page);
-    if (page == APP_PAGE_ONLINE_UPDATE &&
-        online_update_state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION) {
-        action_threshold_ms = APP_PAGE_ONLINE_UPDATE_INSTALL_HOLD_MS;
+    if (page == APP_PAGE_ONLINE_UPDATE) {
+        action_threshold_ms =
+            app_page_online_update_hold_threshold_ms(
+                online_update_state ==
+                ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION);
     }
-    if (action == APP_PAGE_ACTION_DELETE_IMAGE ||
-        action == APP_PAGE_ACTION_OPEN_SETTINGS ||
-        (page == APP_PAGE_ONLINE_UPDATE &&
-         online_update_state ==
-             ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION)) {
-        (void)button_state_set_timing(state, BUTTON_HOLD_PROMPT_MS,
-                                      action_threshold_ms);
-    } else if (action_threshold_ms > 0U) {
-        (void)button_state_set_timing(state, action_threshold_ms,
-                                      action_threshold_ms);
-    } else {
-        (void)button_state_set_timing(state, BUTTON_HOLD_PROMPT_MS,
-                                      BUTTON_LONG_PRESS_DISABLED_MS);
-    }
+    (void)button_state_set_action_timing(state, action_threshold_ms);
 }
 
 static void configure_boot_timing(button_state_t *state, app_page_t page)
 {
     const uint32_t action_threshold_ms =
         app_page_boot_hold_threshold_ms(page);
-    if (app_page_boot_hold_action(page) ==
-            APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING &&
-        action_threshold_ms > 0U) {
-        (void)button_state_set_timing(state, BUTTON_HOLD_PROMPT_MS,
-                                      action_threshold_ms);
-    } else {
-        (void)button_state_set_timing(state, BUTTON_HOLD_PROMPT_MS,
-                                      BUTTON_LONG_PRESS_DISABLED_MS);
-    }
+    (void)button_state_set_action_timing(state, action_threshold_ms);
 }
 
 static esp_err_t seed_system_time_from_rtc(
@@ -2602,57 +2581,73 @@ void app_main(void)
             }
         }
 
-        const uint32_t button_hold_ms =
-            button_state_hold_ms(&key_button_state);
-        const uint32_t boot_hold_ms =
-            button_state_hold_ms(&boot_button_state);
-        const bool image_delete_hold_prompt_active =
-            !alarm_button_events_suppressed && !alarm_modal_active &&
-            buttons_ready && input_page == APP_PAGE_IMAGE &&
-            app_image_delete_ui_state(&image_delete_ui) ==
-                APP_IMAGE_DELETE_UI_IDLE &&
-            !image_delete_wait_for_button_release &&
-            previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
-            manual_sync_ui == MANUAL_SYNC_UI_NONE &&
-            !firmware_update_ui_active && !gallery_download_ui_active &&
-            !online_update_busy && !online_update_confirmation_active &&
-            latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
-            button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
-            button_hold_ms < APP_PAGE_IMAGE_DELETE_HOLD_MS;
-        const bool settings_power_prompt_active =
-            !alarm_button_events_suppressed && !alarm_modal_active &&
-            buttons_ready && input_page == APP_PAGE_SETTINGS &&
-            power_setting_ui == POWER_SETTING_UI_NONE &&
-            manual_sync_ui == MANUAL_SYNC_UI_NONE &&
-            !firmware_update_ui_active && !gallery_download_ui_active &&
-            !online_update_busy && !online_update_confirmation_active &&
-            !key_pressed_or_debounced &&
-            boot_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
-            boot_hold_ms < APP_PAGE_SETTINGS_POWER_HOLD_MS;
-        const bool settings_portal_prompt_active =
-            !alarm_button_events_suppressed && !alarm_modal_active &&
-            buttons_ready &&
-            input_page == APP_PAGE_SETTINGS &&
-            power_setting_ui == POWER_SETTING_UI_NONE &&
-            manual_sync_ui == MANUAL_SYNC_UI_NONE &&
-            !firmware_update_ui_active && !gallery_download_ui_active &&
-            !online_update_busy &&
-            !online_update_confirmation_active &&
-            !boot_pressed_or_debounced &&
-            button_hold_ms >= BUTTON_HOLD_PROMPT_MS &&
-            button_hold_ms < APP_PAGE_SETTINGS_HOLD_MS;
-        uint8_t power_seconds_remaining = 0U;
-        if (settings_power_prompt_active) {
-            power_seconds_remaining = (uint8_t)(
-                (APP_PAGE_SETTINGS_POWER_HOLD_MS - boot_hold_ms + 999U) /
-                1000U);
-        }
-        uint8_t portal_seconds_remaining = 0U;
-        if (settings_portal_prompt_active) {
-            portal_seconds_remaining = (uint8_t)(
-                (APP_PAGE_SETTINGS_HOLD_MS - button_hold_ms + 999U) /
-                1000U);
-        }
+        const app_hold_prompt_context_t hold_prompt_context = {
+            .buttons_ready = buttons_ready,
+            .alarm_input_blocked =
+                alarm_button_events_suppressed || alarm_modal_active,
+            .dual_button_release_gate = dual_button_release_gate,
+            .voice_button_release_gate = voice_button_release_gate,
+            .image_delete_release_gate =
+                image_delete_wait_for_button_release,
+            .network_setup_visible =
+                previous_display_mode == APP_DISPLAY_NETWORK_SETUP,
+            .power_setting_ui_active =
+                power_setting_ui != POWER_SETTING_UI_NONE,
+            .firmware_update_ui_active = firmware_update_ui_active,
+            .gallery_download_ui_active = gallery_download_ui_active,
+            .online_update_busy = online_update_busy,
+            .image_delete_ui_active =
+                app_image_delete_ui_is_active(&image_delete_ui),
+            .voice_session_active =
+                voice_session_state_is_active(&voice_session),
+            .manual_sync_idle =
+                manual_sync_ui == MANUAL_SYNC_UI_NONE,
+            .manual_sync_active =
+                manual_sync_ui == MANUAL_SYNC_UI_ACTIVE,
+            .online_update_confirmation_active =
+                online_update_confirmation_active,
+            .image_delete_available =
+                latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
+                latest_sd_image_status.image_count > 0U &&
+                latest_sd_image_status.filename[0] != '\0' &&
+                latest_image_delete_status.state ==
+                    SD_IMAGE_DELETE_STATE_IDLE,
+        };
+        const app_page_action_t key_hold_action =
+            app_page_key_hold_action(input_page);
+        const app_page_action_t boot_hold_action =
+            app_page_boot_hold_action(input_page);
+        const bool key_hold_prompt_active =
+            app_hold_prompt_allowed(
+                &hold_prompt_context, key_hold_action,
+                boot_pressed_or_debounced) &&
+            button_state_hold_prompt_active(&key_button_state);
+        const bool boot_hold_prompt_active =
+            app_hold_prompt_allowed(
+                &hold_prompt_context, boot_hold_action,
+                key_pressed_or_debounced) &&
+            button_state_hold_prompt_active(&boot_button_state);
+        const bool hold_prompt_active =
+            key_hold_prompt_active || boot_hold_prompt_active;
+        const app_page_action_t active_hold_action =
+            boot_hold_prompt_active ? boot_hold_action : key_hold_action;
+        const uint8_t hold_seconds_remaining = (uint8_t)(
+            boot_hold_prompt_active
+                ? button_state_hold_seconds_remaining(
+                      &boot_button_state)
+                : button_state_hold_seconds_remaining(
+                      &key_button_state));
+        const app_hold_update_intent_t hold_update_intent =
+            online_update_status.state ==
+                    ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION
+                ? APP_HOLD_UPDATE_INSTALL
+                : online_update_status.state ==
+                          ONLINE_UPDATE_STATE_AVAILABLE
+                      ? APP_HOLD_UPDATE_REVIEW
+                      : APP_HOLD_UPDATE_CHECK;
+        const char *hold_title = app_hold_prompt_title(
+            active_hold_action, hold_update_intent,
+            settings.manual_saving_requested);
 
         const bool button_interaction_active =
             key_pressed || boot_pressed ||
@@ -2780,11 +2775,10 @@ void app_main(void)
             }
         }
         if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
-            !image_delete_hold_prompt_active &&
+            !hold_prompt_active &&
             !app_image_delete_ui_is_active(&image_delete_ui) &&
-            !settings_power_prompt_active &&
             power_setting_ui == POWER_SETTING_UI_NONE &&
-            !settings_portal_prompt_active && !firmware_update_ui_active &&
+            !firmware_update_ui_active &&
             !gallery_download_ui_active &&
             !(input_page == APP_PAGE_ONLINE_UPDATE &&
               (online_update_busy ||
@@ -3308,35 +3302,14 @@ void app_main(void)
                     APP_DISPLAY_IMAGE_DELETE_STATUS;
             }
             previous_portal_seconds = 0U;
-        } else if (display_ready && image_delete_hold_prompt_active) {
-            if (previous_display_mode != APP_DISPLAY_IMAGE_DELETE_HOLD) {
-                display_show_status("DELETE IMAGE",
-                                    "Keep holding: 1s");
+        } else if (display_ready && hold_prompt_active) {
+            if (previous_display_mode != APP_DISPLAY_HOLD_PROMPT ||
+                hold_seconds_remaining != previous_portal_seconds) {
+                display_show_hold_prompt(hold_title,
+                                         hold_seconds_remaining);
             }
-            previous_display_mode = APP_DISPLAY_IMAGE_DELETE_HOLD;
-            previous_portal_seconds = 0U;
-        } else if (display_ready && settings_power_prompt_active) {
-            if (previous_display_mode !=
-                    APP_DISPLAY_SETTINGS_POWER_PROMPT ||
-                power_seconds_remaining != previous_portal_seconds) {
-                char detail[40];
-                snprintf(detail, sizeof(detail), "Keep holding: %us",
-                         power_seconds_remaining);
-                display_show_status("MANUAL SAVING", detail);
-            }
-            previous_display_mode = APP_DISPLAY_SETTINGS_POWER_PROMPT;
-            previous_portal_seconds = power_seconds_remaining;
-        } else if (display_ready && settings_portal_prompt_active) {
-            if (previous_display_mode !=
-                    APP_DISPLAY_SETTINGS_PORTAL_PROMPT ||
-                portal_seconds_remaining != previous_portal_seconds) {
-                char detail[40];
-                snprintf(detail, sizeof(detail), "Keep holding: %us",
-                         portal_seconds_remaining);
-                display_show_status("OPEN SETTINGS", detail);
-            }
-            previous_display_mode = APP_DISPLAY_SETTINGS_PORTAL_PROMPT;
-            previous_portal_seconds = portal_seconds_remaining;
+            previous_display_mode = APP_DISPLAY_HOLD_PROMPT;
+            previous_portal_seconds = hold_seconds_remaining;
         } else if (display_ready && gallery_download_ui_active) {
             if (render_requested ||
                 previous_display_mode != APP_DISPLAY_GALLERY_DOWNLOAD) {
@@ -3596,6 +3569,9 @@ void app_main(void)
                         .engine_available =
                             display_backend_available,
                         .cloud_mode = display_cloud_mode,
+                        .session_active =
+                            voice_session_state_is_active(
+                                &voice_session),
                         .turn_number =
                             cloud_session_selected
                                 ? cloud_voice_status.turn_number
@@ -3712,16 +3688,14 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_ALARM ||
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||
                     previous_display_mode == APP_DISPLAY_MONOCHROME_IMAGE ||
-                    previous_display_mode == APP_DISPLAY_IMAGE_DELETE_HOLD ||
+                    previous_display_mode == APP_DISPLAY_HOLD_PROMPT ||
                     previous_display_mode ==
                         APP_DISPLAY_IMAGE_DELETE_CONFIRMATION ||
                     previous_display_mode ==
                         APP_DISPLAY_IMAGE_DELETE_STATUS ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC ||
                     previous_display_mode == APP_DISPLAY_MANUAL_SYNC_RESULT ||
-                    previous_display_mode == APP_DISPLAY_GALLERY_DOWNLOAD ||
-                    previous_display_mode ==
-                        APP_DISPLAY_SETTINGS_PORTAL_PROMPT)) {
+                    previous_display_mode == APP_DISPLAY_GALLERY_DOWNLOAD)) {
             const TickType_t provisioning_elapsed = now - provisioning_started;
             const bool show_setup =
                 app_network_setup_should_overlay(
@@ -3747,7 +3721,12 @@ void app_main(void)
             } else if (display_mode == APP_DISPLAY_CALENDAR) {
                 if (display_mode != previous_display_mode ||
                     render_requested || calendar_data_changed) {
-                    display_show_calendar(&dashboard);
+                    const bool image_page_available =
+                        image_bitmap_snapshot != NULL &&
+                        latest_sd_image_status.state ==
+                            SD_IMAGE_STATE_READY;
+                    display_show_calendar(&dashboard,
+                                          image_page_available);
                 }
             } else if (display_mode == APP_DISPLAY_MONOCHROME_IMAGE) {
                 if (display_mode != previous_display_mode ||

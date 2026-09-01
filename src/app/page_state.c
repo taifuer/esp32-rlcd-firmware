@@ -121,12 +121,20 @@ uint32_t app_page_key_hold_threshold_ms(app_page_t page)
     case APP_PAGE_ACTION_OPEN_SETTINGS:
         return APP_PAGE_SETTINGS_HOLD_MS;
     case APP_PAGE_ACTION_CHECK_ONLINE_UPDATE:
-        return APP_PAGE_ONLINE_UPDATE_CHECK_HOLD_MS;
+        return app_page_online_update_hold_threshold_ms(false);
     case APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING:
     case APP_PAGE_ACTION_NONE:
     default:
         return 0U;
     }
+}
+
+uint32_t app_page_online_update_hold_threshold_ms(
+    bool awaiting_install_confirmation)
+{
+    return awaiting_install_confirmation
+               ? APP_PAGE_ONLINE_UPDATE_INSTALL_HOLD_MS
+               : APP_PAGE_ONLINE_UPDATE_CHECK_HOLD_MS;
 }
 
 app_page_action_t app_page_boot_hold_action(app_page_t page)
