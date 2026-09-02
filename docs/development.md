@@ -111,7 +111,7 @@ ESP-SR 从标签为 `model` 的数据区域加载 `srmodels.bin`。v0.18.0 分�
 旧分区表，因此保留 Wi-Fi 和设备偏好。默认模型为 `build/srmodels/srmodels.bin`，必要时
 可用 `--model` 指定同一校验目录中的模型。
 
-从 v0.7.0 或更新版本迁移到当前 v0.23.0 的 USB 验收流程如下；离线语音模型仍是
+从 v0.7.0 或更新版本迁移到当前 v0.24.0 的 USB 验收流程如下；离线语音模型仍是
 v0.18.0 首次引入的同一发布边界：
 
 1. 先执行 `./scripts/build.sh`，再确认 `build/SHA256SUMS` 同时校验应用和
@@ -127,12 +127,12 @@ v0.18.0 首次引入的同一发布边界：
 ```bash
 ./scripts/update-app.sh \
   --port COM5 \
-  --firmware build/release/v0.23.0/esp32-rlcd-firmware-v0.23.0-ota.bin \
-  --model build/release/v0.23.0/esp32-rlcd-firmware-v0.23.0-model.bin \
+  --firmware build/release/v0.24.0/esp32-rlcd-firmware-v0.24.0-ota.bin \
+  --model build/release/v0.24.0/esp32-rlcd-firmware-v0.24.0-model.bin \
   --confirm
 ```
 
-首次安装、完整恢复和需要改写为新分区表时，使用包含模型的 v0.23.0 Factory 镜像；
+首次安装、完整恢复和需要改写为新分区表时，使用包含模型的 v0.24.0 Factory 镜像；
 `build.sh` 必须逐字节确认 Factory 在 `0x610000` 包含同一 `srmodels.bin`。已通过
 `update-app.sh` 或 Factory 安装兼容模型的设备，后续纯应用 OTA 可以继续复用它；改变
 模型内容、区域大小或不兼容 ABI 时，必须再次提供 app+model USB 更新或独立、断电安全且
@@ -168,19 +168,19 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 
 ### 构建版本与更新通道
 
-仓库默认构建版本为 `0.23.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
+仓库默认构建版本为 `0.24.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
 候选构建修改 `CMakeLists.txt`：
 
 ```bash
 RLCD_PROJECT_VERSION=0.24.0-dev.1 ./scripts/build.sh
-RLCD_PROJECT_VERSION=0.23.0 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.24.0 ./scripts/build.sh
 ```
 
 版本必须是固件可比较的 SemVer，且不带文件名使用的前导 `v`：
 
 - 设备默认读取 `https://mcu.taifua.com/esp32-rlcd/firmware/stable.json`；只有设备偏好中
   显式启用开发者测试通道后才读取 `testing.json`；
-- SemVer 不自动选择通道。稳定清单只允许 `0.23.0` 这类正式目标，测试清单用于
+- SemVer 不自动选择通道。稳定清单只允许 `0.24.0` 这类正式目标，测试清单用于
   `0.24.0-dev.1`、`0.24.0-rc.1` 等候选，也可在转正式期间指向正式目标。
 
 预发布验证先上传版本化 `-ota.bin`，核对大小和 SHA-256，再更新 `testing.json`。正式
@@ -833,3 +833,16 @@ Factory 大小为 8,560,811 bytes，SHA-256 为
 `29e156e606a46114b19a3e2f56406bc7045894743ae1e623d0b9e4c5ed1486bf`。正式 OTA 与候选
 长度相同，逐字节比较共有 75 bytes 不同：版本字段 6 bytes、构建时间 4 bytes、ELF
 摘要 32 bytes，以及镜像校验字节和镜像摘要 33 bytes；功能代码没有其他差异。
+
+## v0.24.0 天气 Beta 验收
+
+本轮新增 QWeather 直连、内置省市目录、稳定天气页面和离线缓存。用户通过在线更新安装
+`0.24.0-dev.6`，确认真实地点天气能够正常获取并显示，且修复后的 Gzip 路径不再触发设备
+重启。完整实机证据边界见[实机验证记录](bringup-log.md)，天气仍保留 Beta 标识。
+
+正式版使用同一源码和固定依赖显式构建为 `0.24.0`。OTA 大小为 2,072,304 bytes，
+SHA-256 为 `dd5bfc8d38f6a05f5f34d776bc474bbe766459ca7fe12f376ab193959569e80b`；
+Factory 大小为 8,560,811 bytes，SHA-256 为
+`2e95b53e97b06ec993e0c621ad370026fe96ce5774f50aa38ad9dada5be7314a`；模型大小为
+2,203,819 bytes，SHA-256 为
+`29e156e606a46114b19a3e2f56406bc7045894743ae1e623d0b9e4c5ed1486bf`。

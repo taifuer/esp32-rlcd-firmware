@@ -51,12 +51,14 @@
 #include "voice_command_policy.h"
 #include "voice_backend_policy.h"
 #include "voice_session_state.h"
+#include "weather_service.h"
 
 static const char *TAG = "rlcd_firmware";
 typedef enum {
     APP_DISPLAY_NONE = 0,
     APP_DISPLAY_DASHBOARD,
     APP_DISPLAY_NETWORK_SETUP,
+    APP_DISPLAY_WEATHER,
     APP_DISPLAY_CALENDAR,
     APP_DISPLAY_MONOCHROME_IMAGE,
     APP_DISPLAY_HOLD_PROMPT,
@@ -181,6 +183,8 @@ static esp_err_t apply_runtime_power_transition(
 static const char *page_name(app_page_t page)
 {
     switch (page) {
+    case APP_PAGE_WEATHER:
+        return "weather";
     case APP_PAGE_CALENDAR:
         return "calendar";
     case APP_PAGE_IMAGE:
@@ -242,6 +246,35 @@ static const char *image_delete_error_detail(esp_err_t error)
         return "Not enough memory";
     default:
         return "Image kept; check microSD";
+    }
+}
+
+static const char *weather_error_detail(
+    const weather_service_status_t *status)
+{
+    if (status == NULL ||
+        status->state != WEATHER_SERVICE_STATE_FAILED) {
+        return NULL;
+    }
+    if (status->last_error == ESP_ERR_NOT_ALLOWED) {
+        return "检查 Host 和 Key";
+    }
+    switch (status->failure_stage) {
+    case WEATHER_FAILURE_STAGE_NETWORK:
+        return "检查 Wi-Fi 连接";
+    case WEATHER_FAILURE_STAGE_LOCATION:
+        return status->last_error == ESP_ERR_NOT_FOUND
+                   ? "未找到所选城市"
+                   : "城市解析失败";
+    case WEATHER_FAILURE_STAGE_CURRENT:
+        return "实时天气获取失败";
+    case WEATHER_FAILURE_STAGE_DAILY:
+        return "天气预报获取失败";
+    case WEATHER_FAILURE_STAGE_CACHE:
+        return "天气保存失败";
+    case WEATHER_FAILURE_STAGE_NONE:
+    default:
+        return "天气获取失败";
     }
 }
 
@@ -899,6 +932,108 @@ static esp_err_t write_network_time_to_rtc(const network_time_datetime_t *networ
     return ESP_OK;
 }
 
+static display_weather_freshness_t display_weather_freshness(
+    weather_freshness_t freshness)
+{
+    switch (freshness) {
+    case WEATHER_FRESHNESS_FRESH:
+        return DISPLAY_WEATHER_FRESHNESS_FRESH;
+    case WEATHER_FRESHNESS_STALE:
+        return DISPLAY_WEATHER_FRESHNESS_STALE;
+    case WEATHER_FRESHNESS_EXPIRED:
+        return DISPLAY_WEATHER_FRESHNESS_EXPIRED;
+    case WEATHER_FRESHNESS_UNKNOWN:
+    default:
+        return DISPLAY_WEATHER_FRESHNESS_UNKNOWN;
+    }
+}
+
+static weather_freshness_t combined_weather_freshness(
+    weather_freshness_t current, weather_freshness_t daily)
+{
+    if (current == WEATHER_FRESHNESS_UNKNOWN ||
+        daily == WEATHER_FRESHNESS_UNKNOWN) {
+        return WEATHER_FRESHNESS_UNKNOWN;
+    }
+    return current > daily ? current : daily;
+}
+
+static void make_display_weather(
+    const weather_service_status_t *status,
+    const display_dashboard_t *dashboard, bool fahrenheit,
+    display_weather_t *display_weather)
+{
+    memset(display_weather, 0, sizeof(*display_weather));
+    display_weather->location = status->location_name;
+    display_weather->data_available = status->data_available;
+    display_weather->refreshing =
+        status->state == WEATHER_SERVICE_STATE_REFRESHING;
+    display_weather->status_detail = weather_error_detail(status);
+    display_weather->current_date_valid = dashboard->time_valid;
+    display_weather->current_year = dashboard->year;
+    display_weather->current_month = dashboard->month;
+    display_weather->current_day = dashboard->day;
+    const weather_freshness_t combined_freshness =
+        combined_weather_freshness(status->freshness,
+                                   status->daily_freshness);
+    display_weather->freshness =
+        display_weather_freshness(combined_freshness);
+    display_weather->temperature_fahrenheit = fahrenheit;
+    display_weather->temperature_tenths_celsius =
+        status->snapshot.current.temperature_tenths_celsius;
+    display_weather->feels_like_tenths_celsius =
+        status->snapshot.current.feels_like_tenths_celsius;
+    display_weather->condition_code =
+        status->snapshot.current.condition_code;
+    display_weather->condition_text =
+        status->snapshot.current.condition_text;
+
+    const bool daily_is_older =
+        status->daily_freshness > status->freshness ||
+        (status->daily_freshness == status->freshness &&
+         status->daily_fetched_at_epoch_seconds <
+             status->snapshot.fetched_at_epoch_seconds);
+    const int64_t source_fetched_at =
+        daily_is_older ? status->daily_fetched_at_epoch_seconds
+                       : status->snapshot.fetched_at_epoch_seconds;
+    const time_t fetched_at = (time_t)source_fetched_at;
+    struct tm local = {0};
+    if (fetched_at != (time_t)-1 &&
+        localtime_r(&fetched_at, &local) != NULL &&
+        local.tm_year >= 100 && local.tm_year <= 199) {
+        display_weather->update_time_valid = true;
+        display_weather->update_month = (uint8_t)(local.tm_mon + 1);
+        display_weather->update_day = (uint8_t)local.tm_mday;
+        display_weather->update_hour = (uint8_t)local.tm_hour;
+        display_weather->update_minute = (uint8_t)local.tm_min;
+    }
+
+    display_weather->forecast_day_count =
+        status->snapshot.daily.day_count;
+    if (display_weather->forecast_day_count >
+        DISPLAY_WEATHER_FORECAST_DAY_LIMIT) {
+        display_weather->forecast_day_count =
+            DISPLAY_WEATHER_FORECAST_DAY_LIMIT;
+    }
+    for (size_t index = 0U;
+         index < display_weather->forecast_day_count; ++index) {
+        const weather_forecast_day_t *source =
+            &status->snapshot.daily.days[index];
+        display_weather->forecast[index] =
+            (display_weather_forecast_day_t){
+                .date = source->date,
+                .temperature_high_tenths_celsius =
+                    source->temperature_high_tenths_celsius,
+                .temperature_low_tenths_celsius =
+                    source->temperature_low_tenths_celsius,
+                .condition_code = source->daytime_condition_code,
+                .condition_text = source->daytime_condition_text,
+                .precipitation_probability_percent =
+                    source->precipitation_probability_percent,
+            };
+    }
+}
+
 void app_main(void)
 {
     const esp_app_desc_t *app = esp_app_get_description();
@@ -1158,6 +1293,16 @@ void app_main(void)
         ESP_LOGW(TAG, "gallery service unavailable: %s",
                  esp_err_to_name(gallery_error));
     }
+    const esp_err_t weather_error =
+        storage_error == ESP_OK
+            ? weather_service_init(
+                  network_error == ESP_OK &&
+                  power_policy.automatic_network)
+            : storage_error;
+    if (weather_error != ESP_OK) {
+        ESP_LOGW(TAG, "weather service unavailable: %s",
+                 esp_err_to_name(weather_error));
+    }
     const esp_err_t firmware_update_error = firmware_update_init();
     if (firmware_update_error != ESP_OK) {
         ESP_LOGW(TAG, "firmware update service unavailable: %s",
@@ -1215,6 +1360,19 @@ void app_main(void)
                              BUTTON_LONG_PRESS_DISABLED_MS);
     app_page_state_t page_state;
     app_page_state_init(&page_state);
+    weather_service_status_t weather_status = {0};
+    if (weather_error == ESP_OK) {
+        (void)weather_service_get_status(
+            &weather_status, (int64_t)time(NULL),
+            startup_rtc_readable && startup_datetime.clock_integrity);
+    }
+    app_page_state_set_weather_enabled(
+        &page_state, weather_status.config_enabled);
+    uint32_t previous_weather_revision = weather_status.revision;
+    weather_freshness_t previous_weather_freshness =
+        weather_status.freshness;
+    weather_freshness_t previous_weather_daily_freshness =
+        weather_status.daily_freshness;
     voice_session_state_t voice_session;
     voice_session_state_init(&voice_session);
     audio_voice_status_t voice_status = {0};
@@ -1306,6 +1464,7 @@ void app_main(void)
     bool power_setting_target = settings.manual_saving_requested;
     bool power_setting_apply_pending = false;
     bool power_setting_result_timer_started = false;
+    bool weather_interactive_page_opened = false;
     esp_err_t manual_sync_error = ESP_OK;
     bool first_periodic_update = true;
     bool settings_refresh_requested = false;
@@ -1335,9 +1494,58 @@ void app_main(void)
         bool render_requested = false;
         bool dashboard_data_changed = false;
         bool calendar_data_changed = false;
+        bool weather_data_changed = false;
         bool system_status_data_changed = false;
         bool online_update_data_changed = false;
         bool image_delete_ui_transitioned = false;
+        weather_service_status_t latest_weather_status = weather_status;
+        if (weather_error == ESP_OK &&
+            weather_service_get_status(
+                &latest_weather_status, (int64_t)time(NULL),
+                dashboard.time_valid) == ESP_OK &&
+            (latest_weather_status.revision !=
+                 previous_weather_revision ||
+             latest_weather_status.freshness !=
+                 previous_weather_freshness ||
+             latest_weather_status.daily_freshness !=
+                 previous_weather_daily_freshness)) {
+            weather_status = latest_weather_status;
+            previous_weather_revision = weather_status.revision;
+            previous_weather_freshness = weather_status.freshness;
+            previous_weather_daily_freshness =
+                weather_status.daily_freshness;
+            app_page_state_set_weather_enabled(
+                &page_state, weather_status.config_enabled);
+            weather_data_changed = true;
+            render_requested = true;
+        }
+        if (!weather_status.interactive_refresh) {
+            weather_interactive_page_opened = false;
+        } else if (weather_status.config_enabled &&
+                   !weather_interactive_page_opened) {
+            weather_interactive_page_opened =
+                app_page_state_open_page(&page_state,
+                                         APP_PAGE_WEATHER);
+            render_requested = true;
+        }
+        const bool weather_interactive_loading =
+            weather_status.interactive_refresh &&
+            weather_status.state == WEATHER_SERVICE_STATE_REFRESHING;
+        if (weather_status.interactive_refresh &&
+            !weather_interactive_loading) {
+            const bool weather_page_open =
+                app_page_state_current(&page_state) ==
+                APP_PAGE_WEATHER;
+            if (weather_service_acknowledge_interactive_refresh() ==
+                ESP_OK) {
+                weather_status.interactive_refresh = false;
+                weather_interactive_page_opened = false;
+                if (weather_page_open) {
+                    app_page_state_note_activity(&page_state);
+                }
+            }
+            render_requested = true;
+        }
         sd_image_status_t latest_sd_image_status = {0};
         sd_image_store_get_status(&latest_sd_image_status);
         if (latest_sd_image_status.state != previous_sd_image_state ||
@@ -1595,6 +1803,10 @@ void app_main(void)
                             power_policy.show_seconds;
                         rtc_read_wait_ms = 0U;
                         calendar_data_changed = true;
+                        if (weather_error == ESP_OK) {
+                            (void)weather_service_set_automatic_refresh_enabled(
+                                power_policy.automatic_network);
+                        }
                     }
                     ESP_LOGI(
                         TAG, "USB data host %s%s",
@@ -1684,6 +1896,11 @@ void app_main(void)
                         APP_POWER_STATE_SAVING) {
                         automatic_update_check_pending = false;
                     }
+                    if (effective_mode_changed &&
+                        weather_error == ESP_OK) {
+                        (void)weather_service_set_automatic_refresh_enabled(
+                            power_policy.automatic_network);
+                    }
                     alarm_schedule =
                         alarm_schedule_from_settings(&settings);
                     dashboard.show_seconds = power_policy.show_seconds;
@@ -1694,6 +1911,7 @@ void app_main(void)
                     runtime_settings_changed = true;
                     dashboard_data_changed = true;
                     calendar_data_changed = true;
+                    weather_data_changed = true;
                     system_status_data_changed = true;
                     online_update_data_changed = true;
                     render_requested = true;
@@ -2780,6 +2998,7 @@ void app_main(void)
             power_setting_ui == POWER_SETTING_UI_NONE &&
             !firmware_update_ui_active &&
             !gallery_download_ui_active &&
+            !weather_interactive_loading &&
             !(input_page == APP_PAGE_ONLINE_UPDATE &&
               (online_update_busy ||
                online_update_confirmation_active)) &&
@@ -2843,6 +3062,12 @@ void app_main(void)
                         rtc_read_wait_ms > APP_PERIODIC_UPDATE_MS) {
                         rtc_read_wait_ms = APP_PERIODIC_UPDATE_MS;
                     }
+                    const bool weather_date_changed =
+                        dashboard.time_valid != datetime.clock_integrity ||
+                        (datetime.clock_integrity &&
+                         (dashboard.year != datetime.year ||
+                          dashboard.month != datetime.month ||
+                          dashboard.day != datetime.day));
                     const bool rtc_display_changed =
                         dashboard.time_valid != datetime.clock_integrity ||
                         (datetime.clock_integrity &&
@@ -2886,6 +3111,9 @@ void app_main(void)
                         calendar_data_changed = true;
                         system_status_data_changed = true;
                     }
+                    if (weather_date_changed) {
+                        weather_data_changed = true;
+                    }
                 } else {
                     rtc_read_wait_ms = power_policy.rtc_read_interval_ms;
                     if (settings.alarm_enabled &&
@@ -2903,6 +3131,7 @@ void app_main(void)
                     if (rtc_display_changed) {
                         dashboard_data_changed = true;
                         calendar_data_changed = true;
+                        weather_data_changed = true;
                         system_status_data_changed = true;
                     }
                 }
@@ -3088,6 +3317,10 @@ void app_main(void)
                                     APP_POWER_STATE_SAVING) {
                                     automatic_update_check_pending =
                                         false;
+                                }
+                                if (weather_error == ESP_OK) {
+                                    (void)weather_service_set_automatic_refresh_enabled(
+                                        power_policy.automatic_network);
                                 }
                                 dashboard.show_seconds =
                                     power_policy.show_seconds;
@@ -3687,6 +3920,7 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_SETTINGS ||
                     previous_display_mode == APP_DISPLAY_ALARM ||
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||
+                    previous_display_mode == APP_DISPLAY_WEATHER ||
                     previous_display_mode == APP_DISPLAY_MONOCHROME_IMAGE ||
                     previous_display_mode == APP_DISPLAY_HOLD_PROMPT ||
                     previous_display_mode ==
@@ -3704,7 +3938,9 @@ void app_main(void)
                     setup_screen_dismissed,
                     (uint32_t)provisioning_elapsed * portTICK_PERIOD_MS);
             app_display_mode_t display_mode = APP_DISPLAY_DASHBOARD;
-            if (active_page == APP_PAGE_CALENDAR) {
+            if (active_page == APP_PAGE_WEATHER) {
+                display_mode = APP_DISPLAY_WEATHER;
+            } else if (active_page == APP_PAGE_CALENDAR) {
                 display_mode = APP_DISPLAY_CALENDAR;
             } else if (active_page == APP_PAGE_IMAGE) {
                 display_mode = APP_DISPLAY_MONOCHROME_IMAGE;
@@ -3717,6 +3953,17 @@ void app_main(void)
                 if (display_mode != previous_display_mode ||
                     render_requested || dashboard_data_changed) {
                     display_show_dashboard(&dashboard);
+                }
+            } else if (display_mode == APP_DISPLAY_WEATHER) {
+                if (display_mode != previous_display_mode ||
+                    weather_data_changed) {
+                    display_weather_t display_weather = {0};
+                    make_display_weather(
+                        &weather_status, &dashboard,
+                        settings.temperature_unit ==
+                            APP_TEMPERATURE_UNIT_FAHRENHEIT,
+                        &display_weather);
+                    display_show_weather(&display_weather);
                 }
             } else if (display_mode == APP_DISPLAY_CALENDAR) {
                 if (display_mode != previous_display_mode ||

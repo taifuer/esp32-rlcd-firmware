@@ -1,29 +1,29 @@
 # ESP32 RLCD Firmware
 
 面向 Waveshare ESP32-S3-RLCD-4.2 的原生 ESP-IDF 固件。它以离线可用的 RTC 时钟为
-核心，提供月历、环境信息、microSD 图片、离线语音指令、AI 对话、网络校时和安全的
-双槽固件更新。
+核心，提供月历、环境信息、microSD 图片、离线语音指令、AI 对话、联网天气、网络校时
+和安全的双槽固件更新。
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.23.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.24.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
-以下为 v0.23.0 的界面示意。
+以下为 v0.24.0 的界面示意。
 
-| 首屏 | 月历 |
+| 首屏 | 天气 |
 | :---: | :---: |
-| ![首屏效果图](docs/assets/home-screen.svg) | ![月历页效果图](docs/assets/calendar-screen.svg) |
-| microSD 图片 | 状态 |
-| ![microSD 图片页效果图](docs/assets/image-screen.svg) | ![状态页效果图](docs/assets/status.svg) |
-| 对话 | 设置 |
-| ![AI 对话页效果图](docs/assets/voice.svg) | ![设置页效果图](docs/assets/settings.svg) |
-| 闹钟 | 在线更新 |
-| ![闹钟提醒效果图](docs/assets/alarm.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
+| ![首屏效果图](docs/assets/home-screen.svg) | ![天气页效果图](docs/assets/weather.svg) |
+| 月历 | microSD 图片 |
+| ![月历页效果图](docs/assets/calendar-screen.svg) | ![microSD 图片页效果图](docs/assets/image-screen.svg) |
+| 状态 | 对话 |
+| ![状态页效果图](docs/assets/status.svg) | ![AI 对话页效果图](docs/assets/voice.svg) |
+| 设置 | 在线更新 |
+| ![设置页效果图](docs/assets/settings.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
 
 效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
 
@@ -35,6 +35,11 @@
 - 首次启动使用临时 WPA2 热点配网，凭据保存在 NVS，随后自动 SNTP 校时；
 - 网络不可用时继续使用 RTC、月历、传感器、按键和离线语音；`NORMAL` 保持家庭 Wi-Fi
   连接并在断线后后台退避重试，`SAVING` 空闲时保持离线；
+- 可选的[天气 Beta](docs/weather.md)使用用户自己的 QWeather API Host 和 API Key；
+  设置门户按“省份 → 城市”配置地点，设备直连 QWeather 获取实时天气和
+  三日预报并缓存。功能启用后即加入 `BOOT` 页面环，保存配置后会打开天气页；请求中和
+  失败原因都在固定天气布局内显示，同地点已有缓存时后台刷新失败仍继续显示缓存，
+  `SAVING` 不为天气周期联网；
 - 离线语音使用板载 ES7210 和 ESP-SR 中文模型：“对话”页显示
   `OFFLINE COMMANDS` 和 `Hold KEY 2s for a command`，按住 `KEY` 2 秒并松开后，
   可用“回到主页”“打开日历”“查看状态”“打开图片”“打开设置”等安全指令导航；
@@ -49,8 +54,8 @@
 - 四页系统中心依次为状态、对话、设置和在线更新；页脚直接写出下一目的地或动作，
   不再用泛化的“下一页”“系统”或“门户”代替用户目标；
 - “设置”页支持手动提前省电；设置门户支持时区、温度单位、播放音量、单个每周闹钟、
-  更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、microSD 图片管理和
-  本地 OTA；
+  更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、天气、microSD 图片管理
+  和本地 OTA；
 - 离线闹钟按 RTC 本地时间触发；到点播放提示音并显示大字提醒，支持停止、首次延后
   5 分钟和 60 秒自动停止，断网及 `SAVING` 模式不影响已保存规则；
 - `NORMAL` 保持 `HH:MM:SS` 和家庭 Wi-Fi 连接，并使用 ESP-IDF `WIFI_PS_MIN_MODEM`
@@ -83,7 +88,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.23.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.24.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -91,11 +96,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.23.0
+cd dist/v0.24.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.23.0/esp32-rlcd-firmware-v0.23.0-factory.bin \
+  --firmware dist/v0.24.0/esp32-rlcd-firmware-v0.24.0-factory.bin \
   --confirm
 ```
 
@@ -127,7 +132,8 @@ cd ../..
 │   ├── sensors/         # SHTC3 与环境舒适度判定
 │   ├── settings/        # 持久化偏好、输入校验与省电策略
 │   ├── storage/         # NVS 持久化存储初始化
-│   └── update/          # 在线更新、设置门户、本地 OTA 与双槽回滚
+│   ├── update/          # 在线更新、设置门户、本地 OTA 与双槽回滚
+│   └── weather/         # QWeather 配置、地点解析、天气请求与离线缓存
 ├── tests/               # 主机端纯逻辑测试
 ├── scripts/             # 依赖、测试、构建、烧录与发布脚本
 ├── tools/               # microSD 图片检查与转换工具
@@ -159,6 +165,7 @@ cd ../..
 - [界面与按键](docs/home-screen.md)：首屏、月历、条件图片页、系统中心和实体按键；
 - [AI 对话 Beta](docs/cloud-voice.md)：API Key 获取、多轮交互、离线回退、
   数据与费用边界；
+- [天气 Beta](docs/weather.md)：QWeather 凭据、级联选址、刷新、离线缓存和费用边界；
 - [microSD 图片准备](docs/microsd-images.md)：FAT32、固定目录、图片格式、导入与管理边界；
 - [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉与交互原则；
 - [开发计划](docs/roadmap.md)：已经确定的后续版本范围与验收边界；

@@ -24,5 +24,6 @@ idf_component_register(
         rtc
         sd_image
         settings
+        weather
     PRIV_REQUIRES esp_hw_support
 )

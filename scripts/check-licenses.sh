@@ -231,7 +231,9 @@ expected_fonts="$(printf '%s\n' \
     u8g2_font_helvB14_tf \
     u8g2_font_helvB18_tf \
     u8g2_font_helvB24_tf \
+    u8g2_font_logisoso16_tf \
     u8g2_font_logisoso20_tf \
+    u8g2_font_logisoso42_tf \
     u8g2_font_logisoso78_tn \
     u8g2_font_wqy16_t_gb2312)"
 actual_fonts="$(grep -oE 'u8g2_font_[A-Za-z0-9_]+' \

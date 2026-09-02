@@ -11,6 +11,10 @@ static uint32_t add_saturating(uint32_t value, uint32_t increment)
 static app_page_t next_daily_page(const app_page_state_t *state)
 {
     if (state->current == APP_PAGE_HOME) {
+        return state->weather_enabled ? APP_PAGE_WEATHER
+                                      : APP_PAGE_CALENDAR;
+    }
+    if (state->current == APP_PAGE_WEATHER) {
         return APP_PAGE_CALENDAR;
     }
     if (state->current == APP_PAGE_CALENDAR && state->image_available) {
@@ -52,6 +56,7 @@ bool app_page_state_open_page(app_page_state_t *state, app_page_t page)
 {
     if (state == NULL ||
         (!app_page_is_daily(page) && !app_page_is_system(page)) ||
+        (page == APP_PAGE_WEATHER && !state->weather_enabled) ||
         (page == APP_PAGE_IMAGE && !state->image_available)) {
         return false;
     }
@@ -59,6 +64,18 @@ bool app_page_state_open_page(app_page_state_t *state, app_page_t page)
     state->current = page;
     state->inactive_ms = 0U;
     return true;
+}
+
+void app_page_state_set_weather_enabled(app_page_state_t *state,
+                                        bool enabled)
+{
+    if (state == NULL) {
+        return;
+    }
+    state->weather_enabled = enabled;
+    if (!enabled && state->current == APP_PAGE_WEATHER) {
+        app_page_state_go_home(state);
+    }
 }
 
 void app_page_state_set_image_available(app_page_state_t *state,
@@ -80,8 +97,8 @@ app_page_t app_page_state_current(const app_page_state_t *state)
 
 bool app_page_is_daily(app_page_t page)
 {
-    return page == APP_PAGE_HOME || page == APP_PAGE_CALENDAR ||
-           page == APP_PAGE_IMAGE;
+    return page == APP_PAGE_HOME || page == APP_PAGE_WEATHER ||
+           page == APP_PAGE_CALENDAR || page == APP_PAGE_IMAGE;
 }
 
 bool app_page_is_system(app_page_t page)

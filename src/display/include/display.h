@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "monochrome_image.h"
+#include "weather_display_model.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,6 +47,42 @@ typedef struct {
     bool usb_data_host_connected;
     display_network_state_t network_state;
 } display_dashboard_t;
+
+#define DISPLAY_WEATHER_FORECAST_DAY_LIMIT 3U
+
+typedef struct {
+    const char *date;
+    int16_t temperature_high_tenths_celsius;
+    int16_t temperature_low_tenths_celsius;
+    uint16_t condition_code;
+    const char *condition_text;
+    uint8_t precipitation_probability_percent;
+} display_weather_forecast_day_t;
+
+typedef struct {
+    const char *location;
+    bool data_available;
+    bool refreshing;
+    const char *status_detail;
+    bool current_date_valid;
+    uint16_t current_year;
+    uint8_t current_month;
+    uint8_t current_day;
+    bool update_time_valid;
+    uint8_t update_month;
+    uint8_t update_day;
+    uint8_t update_hour;
+    uint8_t update_minute;
+    display_weather_freshness_t freshness;
+    bool temperature_fahrenheit;
+    int16_t temperature_tenths_celsius;
+    int16_t feels_like_tenths_celsius;
+    uint16_t condition_code;
+    const char *condition_text;
+    size_t forecast_day_count;
+    display_weather_forecast_day_t
+        forecast[DISPLAY_WEATHER_FORECAST_DAY_LIMIT];
+} display_weather_t;
 
 typedef struct {
     bool rtc_ready;
@@ -169,6 +206,7 @@ void display_show_settings_portal_ready(const char *ssid,
 void display_show_hold_prompt(const char *title,
                               uint8_t seconds_remaining);
 void display_show_dashboard(const display_dashboard_t *dashboard);
+void display_show_weather(const display_weather_t *weather);
 void display_show_calendar(const display_dashboard_t *dashboard,
                            bool image_available);
 void display_show_monochrome_image(

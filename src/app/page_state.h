@@ -18,6 +18,7 @@ extern "C" {
 
 typedef enum {
     APP_PAGE_HOME = 0,
+    APP_PAGE_WEATHER,
     APP_PAGE_CALENDAR,
     APP_PAGE_IMAGE,
     APP_PAGE_STATUS,
@@ -39,6 +40,7 @@ typedef enum {
 typedef struct {
     app_page_t current;
     uint32_t inactive_ms;
+    bool weather_enabled;
     bool image_available;
 } app_page_state_t;
 
@@ -47,6 +49,8 @@ void app_page_state_go_home(app_page_state_t *state);
 bool app_page_state_open_page(app_page_state_t *state, app_page_t page);
 void app_page_state_set_image_available(app_page_state_t *state,
                                         bool available);
+void app_page_state_set_weather_enabled(app_page_state_t *state,
+                                        bool enabled);
 app_page_t app_page_state_current(const app_page_state_t *state);
 bool app_page_is_daily(app_page_t page);
 bool app_page_is_system(app_page_t page);

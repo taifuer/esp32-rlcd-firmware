@@ -60,6 +60,8 @@ static void assert_footer_uses_concrete_targets(const char *footer)
 
 static void test_targeted_navigation_footers(void)
 {
+    assert(strcmp(display_interaction_weather_footer(),
+                  "BOOT: CALENDAR | KEY: STATUS") == 0);
     assert(strcmp(display_interaction_calendar_footer(true),
                   "BOOT: IMAGE | KEY: STATUS") == 0);
     assert(strcmp(display_interaction_calendar_footer(false),
@@ -79,6 +81,8 @@ static void test_targeted_navigation_footers(void)
                   "BOOT: HOME | KEY: STATUS | HOLD KEY 2s: REVIEW UPDATE") ==
            0);
 
+    assert_footer_uses_concrete_targets(
+        display_interaction_weather_footer());
     assert_footer_uses_concrete_targets(
         display_interaction_calendar_footer(true));
     assert_footer_uses_concrete_targets(

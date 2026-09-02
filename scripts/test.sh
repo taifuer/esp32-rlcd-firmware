@@ -319,6 +319,67 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   tests/test_voice_display_model.c \
   -o "${RLCD_TEST_TMP}/test_voice_display_model"
 
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/weather \
+  src/weather/weather_config_model.c \
+  tests/test_weather_config.c \
+  -o "${RLCD_TEST_TMP}/test_weather_config"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/weather \
+  src/weather/weather_config_model.c \
+  src/weather/weather_config_record.c \
+  tests/test_weather_config_record.c \
+  -o "${RLCD_TEST_TMP}/test_weather_config_record"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/weather \
+  src/weather/weather_model.c tests/test_weather_model.c \
+  -o "${RLCD_TEST_TMP}/test_weather_model"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=address,undefined -fno-sanitize-recover=all \
+  -Isrc/weather -I"${RLCD_CJSON_DIR}/cJSON" \
+  src/weather/weather_model.c src/weather/weather_response.c \
+  tests/test_weather_response.c "${RLCD_TEST_TMP}/cJSON.o" -lm \
+  -o "${RLCD_TEST_TMP}/test_weather_response"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/weather \
+  src/weather/weather_location_catalog.c \
+  tests/test_weather_location_catalog.c \
+  -o "${RLCD_TEST_TMP}/test_weather_location_catalog"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/weather \
+  src/weather/weather_gzip.c tests/test_weather_gzip.c \
+  -o "${RLCD_TEST_TMP}/test_weather_gzip"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/weather \
+  src/weather/weather_request.c tests/test_weather_request.c \
+  -o "${RLCD_TEST_TMP}/test_weather_request"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/weather \
+  src/weather/weather_cache_record.c \
+  tests/test_weather_cache_record.c \
+  -o "${RLCD_TEST_TMP}/test_weather_cache_record"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/display/include \
+  src/display/weather_display_model.c \
+  tests/test_weather_display_model.c \
+  -o "${RLCD_TEST_TMP}/test_weather_display_model"
+
 "${RLCD_TEST_TMP}/test_chinese_lunar"
 "${RLCD_TEST_TMP}/test_calendar_month"
 "${RLCD_TEST_TMP}/test_battery_level"
@@ -370,4 +431,14 @@ ASAN_OPTIONS=detect_leaks=0 \
 "${RLCD_TEST_TMP}/test_voice_command_policy"
 "${RLCD_TEST_TMP}/test_voice_reliability_metrics"
 "${RLCD_TEST_TMP}/test_voice_display_model"
+"${RLCD_TEST_TMP}/test_weather_config"
+"${RLCD_TEST_TMP}/test_weather_config_record"
+"${RLCD_TEST_TMP}/test_weather_model"
+ASAN_OPTIONS=detect_leaks=0 \
+  "${RLCD_TEST_TMP}/test_weather_response"
+"${RLCD_TEST_TMP}/test_weather_location_catalog"
+"${RLCD_TEST_TMP}/test_weather_gzip"
+"${RLCD_TEST_TMP}/test_weather_request"
+"${RLCD_TEST_TMP}/test_weather_cache_record"
+"${RLCD_TEST_TMP}/test_weather_display_model"
 python3 tests/test_rlcd_image_tool.py

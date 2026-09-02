@@ -27,6 +27,9 @@
 #include "network_time.h"
 #include "sd_image.h"
 #include "settings_portal_policy.h"
+#include "weather_config.h"
+#include "weather_location_catalog.h"
+#include "weather_service.h"
 
 #define UPDATE_EVENT_COMPLETE BIT1
 #define UPDATE_EVENT_FAILED BIT2
@@ -35,10 +38,11 @@
 #define UPDATE_EVENT_MUTATION_ENDED BIT5
 #define UPDATE_EVENT_GALLERY_INSTALL BIT6
 #define UPDATE_EVENT_WIFI_CHANGED BIT7
+#define UPDATE_EVENT_WEATHER_REFRESH BIT8
 #define UPDATE_EVENT_SESSION                                                    \
     (UPDATE_EVENT_COMPLETE | UPDATE_EVENT_FAILED | UPDATE_EVENT_CANCEL |       \
      UPDATE_EVENT_REPROVISION | UPDATE_EVENT_GALLERY_INSTALL |                 \
-     UPDATE_EVENT_WIFI_CHANGED)
+     UPDATE_EVENT_WIFI_CHANGED | UPDATE_EVENT_WEATHER_REFRESH)
 #define UPDATE_EVENT_ALL                                                       \
     (UPDATE_EVENT_SESSION | UPDATE_EVENT_MUTATION_ENDED)
 
@@ -55,6 +59,9 @@
 #define SETTINGS_WIFI_FORM_CAPACITY 385U
 #define SETTINGS_CONVERSATION_FORM_CAPACITY \
     (CONVERSATION_CONFIG_FORM_MAX_LENGTH + 1U)
+#define SETTINGS_WEATHER_FORM_CAPACITY \
+    (WEATHER_CONFIG_FORM_MAX_LENGTH + 1U)
+#define SETTINGS_WEATHER_REGIONS_JSON_CAPACITY 8192U
 #define SETTINGS_WIFI_VALIDATION_TIMEOUT_MS 15000U
 #define SETTINGS_IMAGE_FORM_CAPACITY 96U
 #define SETTINGS_IMAGE_LIST_JSON_CAPACITY                                  \
@@ -62,7 +69,7 @@
 #define SETTINGS_PORTAL_TOKEN_HEADER "X-RLCD-Token"
 #define SETTINGS_JSON_ESCAPE_CAPACITY(maximum_length) \
     ((maximum_length) * 6U + 1U)
-#define SETTINGS_STATE_JSON_CAPACITY 4096U
+#define SETTINGS_STATE_JSON_CAPACITY 6144U
 #define SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "aliyun_realtime"
 #define SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI                              \
     "qwen3-omni-flash-realtime"
@@ -105,6 +112,7 @@ static const char SETTINGS_PAGE[] =
     ".wifi-summary{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;padding:.8rem .9rem;"
     "border-radius:.55rem;background:#f2f3f4}.wifi-summary span{color:#676b70}.wifi-summary strong{min-width:0;overflow-wrap:anywhere;text-align:right}"
     ".wifi-form{margin-top:.9rem;padding-top:.1rem}.wifi-form[hidden]{display:none}.compact{margin-top:.7rem}"
+    ".source-link{color:#255da8;text-decoration:none}.source-link:hover{text-decoration:underline}"
     "@media(max-width:26rem){.button-row{grid-template-columns:1fr}.wifi-summary{align-items:flex-start;flex-direction:column;gap:.25rem}.wifi-summary strong{text-align:left}}"
     "</style></head><body><main><header><h1>设备设置</h1>"
     "<p>普通设置保存后立即生效，无需重启。临时热点最多开放 5 分钟。</p></header>"
@@ -155,6 +163,29 @@ static const char SETTINGS_PAGE[] =
     "<p id=\"maintenanceMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details>"
     "<button type=\"submit\">保存设置</button></form>"
     "<p id=\"settingsMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
+    "<section><h2>天气</h2><div class=\"wifi-summary\"><span>配置状态</span>"
+    "<strong id=\"weatherStatus\">未保存</strong></div>"
+    "<form id=\"weatherForm\" autocomplete=\"off\">"
+    "<label for=\"weatherEnabled\">天气页面</label><select id=\"weatherEnabled\" name=\"enabled\">"
+    "<option value=\"off\">关闭（默认）</option><option value=\"on\">开启</option></select>"
+    "<label for=\"weatherApiHost\">QWeather API Host</label>"
+    "<input id=\"weatherApiHost\" name=\"api_host\" maxlength=\"127\" placeholder=\"abcxyz.qweatherapi.com\" "
+    "autocomplete=\"off\" autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\">"
+    "<p class=\"note\">填写 QWeather 控制台分配的专属 Host，不含 https://、路径或端口。</p>"
+    "<label for=\"weatherKey\">API Key</label><input id=\"weatherKey\" name=\"api_key\" type=\"text\" "
+    "maxlength=\"256\" autocomplete=\"off\" autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\">"
+    "<p class=\"note\">请直接粘贴；保存后立即清空且不会再次显示或预填。已有配置时留空将保留当前 API Key。</p>"
+    "<label for=\"weatherProvince\">省份</label><select id=\"weatherProvince\" name=\"province\"></select>"
+    "<label for=\"weatherCity\">城市</label><select id=\"weatherCity\" name=\"city\"></select>"
+    "<p class=\"note\">先选省份，再选择所在城市。</p>"
+    "<p class=\"note\">设备使用你的凭据直连 QWeather，不经过项目服务器；请求可能计入你的账户用量。"
+    "数据服务：<a class=\"source-link\" href=\"https://www.qweather.com/\" target=\"_blank\" rel=\"noopener noreferrer\">和风天气 QWeather</a>。</p>"
+    "<p class=\"note\">当前固件未启用 Flash/NVS 加密；建议使用本设备专用、最小权限且可随时撤销的 Key。</p>"
+    "<button id=\"weatherSave\" type=\"submit\">保存并获取天气</button></form>"
+    "<p id=\"weatherMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
+    "<details class=\"advanced\"><summary>清除天气配置</summary>"
+    "<p class=\"note\">清除 API Host、API Key、位置和本地天气缓存；其他设置不会改变，设备无需重启。</p>"
+    "<button id=\"weatherClear\" type=\"button\" class=\"danger\">确认清除天气配置</button></details></section>"
     "<section><h2>AI 对话 Beta</h2><div class=\"wifi-summary\"><span>配置状态</span>"
     "<strong id=\"conversationStatus\">未保存</strong></div>"
     "<form id=\"conversationForm\" autocomplete=\"off\">"
@@ -219,7 +250,7 @@ static const char SETTINGS_PAGE[] =
     "<progress id=\"progress\" max=\"100\" value=\"0\"></progress>"
     "<p id=\"updateMessage\" class=\"message\">等待选择固件</p>"
     "<small>写入期间请保持设备供电。校验成功后设备会自动重启。</small></section>"
-    "<script>let token='',initialUpdates='stable',wifiConfigured=false,savedWifi='',wifiBusy=false,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
+    "<script>let token='',initialUpdates='stable',wifiConfigured=false,savedWifi='',wifiBusy=false,weatherAvailable=false,weatherConfigured=false,weatherEnabled=false,initialWeatherEnabled=false,weatherBusy=false,weatherRegionRequest=0,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
     "storedImages=[],storedIndex=0,storedSelected='',storedBusy=false,storedRequest=0;"
     "const $=id=>document.getElementById(id);const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
     "const SOURCE_MAX_BYTES=32*1024*1024,SOURCE_MAX_PIXELS=40000000;"
@@ -235,6 +266,29 @@ static const char SETTINGS_PAGE[] =
     "$('wifiEdit').textContent=wifiConfigured?'更换 Wi-Fi':'配置 Wi-Fi';if($('wifiForm').hidden)$('wifiSsid').value=savedWifi;wifiControls()}"
     "function wifiEditing(value){$('wifiForm').hidden=!value;if(value){$('wifiSsid').value=savedWifi;$('wifiPassword').value='';"
     "$('openWifi').checked=false;$('showWifiPassword').checked=false;$('wifiPassword').type='password';$('wifiSsid').focus()}wifiControls()}"
+    "function weatherControls(){const blocked=weatherBusy||!weatherAvailable,enabled=$('weatherEnabled').value==='on',hasProvince=$('weatherProvince').value!=='';"
+    "$('weatherForm').setAttribute('aria-busy',weatherBusy?'true':'false');$('weatherEnabled').disabled=blocked;$('weatherApiHost').disabled=blocked;"
+    "$('weatherKey').disabled=blocked;$('weatherProvince').disabled=blocked;$('weatherCity').disabled=blocked||!hasProvince;"
+    "$('weatherSave').disabled=blocked;$('weatherSave').textContent=enabled?'保存并获取天气':'保存天气设置';$('weatherClear').disabled=blocked;"
+    "$('weatherApiHost').required=enabled;$('weatherProvince').required=enabled;$('weatherCity').required=enabled}"
+    "function weatherOptions(select,items,placeholder){while(select.firstChild)select.removeChild(select.firstChild);const empty=document.createElement('option');"
+    "empty.value='';empty.textContent=placeholder;select.appendChild(empty);items.forEach(item=>{const option=document.createElement('option');"
+    "option.value=String(item.id);option.textContent=item.name;select.appendChild(option)})}"
+    "async function weatherRegions(province){const suffix=province?'?province='+encodeURIComponent(province):'',response=await fetch('/api/weather/regions'+suffix,{cache:'no-store'});"
+    "if(!response.ok)throw new Error(await response.text()||'无法读取省市列表');const payload=await response.json();if(!payload||!Array.isArray(payload.items)||"
+    "payload.items.some(item=>!item||!Number.isInteger(item.id)||item.id<=0||typeof item.name!=='string'))throw new Error('设备返回的省市列表无效');return payload.items}"
+    "async function setWeatherState(state){const weather=state&&typeof state==='object'?state:null;weatherAvailable=weather!==null&&weather.available===true&&"
+    "typeof weather.enabled==='boolean'&&typeof weather.configured==='boolean'&&typeof weather.key_saved==='boolean'&&typeof weather.api_host==='string'&&"
+    "Number.isInteger(weather.province_id)&&Number.isInteger(weather.city_id);weatherConfigured=weatherAvailable&&weather.configured;"
+    "weatherEnabled=weatherAvailable&&weather.enabled;initialWeatherEnabled=weatherEnabled;$('weatherStatus').textContent=!weatherAvailable?'暂不可用':"
+    "weatherEnabled?(weatherConfigured?'已开启':'需要完善配置'):(weather&&weather.key_saved?'已关闭':'未配置');$('weatherEnabled').value=weatherEnabled?'on':'off';"
+    "$('weatherApiHost').value=weatherAvailable?weather.api_host:'';$('weatherKey').value='';$('weatherKey').placeholder=weatherAvailable&&weather.key_saved?'已保存，留空保留':'粘贴 API Key';"
+    "const requestId=++weatherRegionRequest;const provinces=await weatherRegions('');if(requestId!==weatherRegionRequest)return;"
+    "weatherOptions($('weatherProvince'),provinces,'请选择省份');const province=weatherAvailable&&weather.province_id>0?String(weather.province_id):'';"
+    "$('weatherProvince').value=province;if($('weatherProvince').selectedIndex<0)$('weatherProvince').value='';const selectedProvince=$('weatherProvince').value;"
+    "const cities=selectedProvince?await weatherRegions(selectedProvince):[];if(requestId!==weatherRegionRequest)return;weatherOptions($('weatherCity'),cities,selectedProvince?'请选择城市':'请先选择省份');"
+    "$('weatherCity').value=weatherAvailable&&weather.city_id>0?String(weather.city_id):'';if($('weatherCity').selectedIndex<0)$('weatherCity').value='';"
+    "show('weatherMessage',weatherAvailable?'':'天气设置暂不可用；其他设备设置仍可正常使用。');weatherControls()}"
     "function conversationControls(){const blocked=conversationBusy||!conversationAvailable;$('conversationForm').setAttribute('aria-busy',conversationBusy?'true':'false');"
     "$('conversationEnabled').disabled=blocked;$('conversationModel').disabled=blocked;$('conversationApiHost').disabled=blocked;$('conversationKey').disabled=blocked;"
     "$('conversationSave').disabled=blocked;$('conversationClear').disabled=blocked}"
@@ -323,7 +377,8 @@ static const char SETTINGS_PAGE[] =
     "$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume;$('updates').value=state.updates;"
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
     "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});initialUpdates=state.updates;"
-    "setConversationState(state.conversation);setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}"
+    "setConversationState(state.conversation);try{await setWeatherState(state.weather)}catch(error){weatherAvailable=false;weatherBusy=false;weatherControls();show('weatherMessage',error.message)}"
+    "setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}"
     "$('volume').oninput=()=>{$('volumeValue').value=$('volume').value};"
     "$('settings').onsubmit=async event=>{event.preventDefault();const match=/^(\\d{2}):(\\d{2})$/.exec($('alarmTime').value);"
     "const days=Array.from(alarmDays()).reduce((mask,input)=>input.checked?mask|Number(input.dataset.bit):mask,0);"
@@ -342,6 +397,23 @@ static const char SETTINGS_PAGE[] =
     "if(!open&&!/^[\\x20-\\x7e]{8,63}$/.test(password)){show('wifiMessage','请输入 8—63 位英文字符、数字或符号，开放网络请勾选对应选项。');return}"
     "wifiBusy=true;wifiControls();show('wifiMessage','正在验证新网络，设置热点可能短暂重新连接…');try{const body='ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(open?'':password);"
     "show('wifiMessage',await post('/api/wifi/change',body))}catch(error){show('wifiMessage',error.name==='TypeError'?'设置热点刚刚断开。请查看设备是否已连接新网络；若热点仍在，可刷新页面确认原配置仍保留。':error.message);wifiBusy=false;wifiControls()}};"
+    "$('weatherEnabled').onchange=()=>weatherControls();$('weatherProvince').onchange=async()=>{if(weatherBusy||!weatherAvailable)return;"
+    "const province=$('weatherProvince').value;weatherBusy=true;weatherControls();weatherOptions($('weatherCity'),[],province?'正在读取城市…':'请先选择省份');"
+    "const requestId=++weatherRegionRequest;try{const cities=province?await weatherRegions(province):[];if(requestId!==weatherRegionRequest)return;"
+    "weatherOptions($('weatherCity'),cities,province?'请选择城市':'请先选择省份');show('weatherMessage','')}catch(error){if(requestId===weatherRegionRequest){"
+    "weatherOptions($('weatherCity'),[],'无法读取城市');show('weatherMessage',error.message)}}finally{if(requestId===weatherRegionRequest){weatherBusy=false;weatherControls()}}};"
+    "$('weatherForm').onsubmit=async event=>{event.preventDefault();if(weatherBusy||!weatherAvailable)return;const enabled=$('weatherEnabled').value==='on',"
+    "province=$('weatherProvince').value,city=$('weatherCity').value;"
+    "if(enabled&&(!$('weatherApiHost').value||!province||!city)){show('weatherMessage','请填写 API Host，并依次选择省份和城市。');return}"
+    "if(enabled&&!initialWeatherEnabled&&!confirm('开启天气后，设备会使用你的凭据直连 QWeather，相关请求可能计入你的账户用量。是否继续？'))return;"
+    "const fields=new FormData(event.target);fields.set('district','');if(!enabled&&(!province||!city)){fields.set('province','0');fields.set('city','0')}"
+    "const body=new URLSearchParams(fields).toString();weatherBusy=true;weatherControls();show('weatherMessage',enabled?'正在保存，随后将关闭热点并获取天气…':'正在保存…');"
+    "let closing=false;try{const message=await post('/api/weather/config',body);$('weatherKey').value='';if(enabled){closing=true;show('weatherMessage',message);return}"
+    "await load();show('weatherMessage',message)}catch(error){if(enabled&&error.name==='TypeError'){closing=true;show('weatherMessage','设置热点已关闭，请查看设备屏幕上的天气获取结果。')}"
+    "else show('weatherMessage',error.message)}finally{$('weatherKey').value='';if(!closing){weatherBusy=false;weatherControls()}}};"
+    "$('weatherClear').onclick=async()=>{if(weatherBusy||!weatherAvailable)return;if(!confirm('确认清除天气 API Key、位置和本地缓存？此操作无法撤销。'))return;"
+    "weatherBusy=true;weatherControls();show('weatherMessage','正在清除…');try{const message=await post('/api/weather/clear','confirm=CLEAR_WEATHER');await load();show('weatherMessage',message)}"
+    "catch(error){show('weatherMessage',error.message)}finally{weatherBusy=false;weatherControls()}};"
     "$('conversationForm').onsubmit=async event=>{event.preventDefault();if(conversationBusy||!conversationAvailable)return;"
     "const body=new URLSearchParams(new FormData(event.target)).toString();conversationBusy=true;conversationControls();"
     "show('conversationMessage','正在保存…');try{const message=await post('/api/conversation/config',body);await load();show('conversationMessage',message)}"
@@ -392,7 +464,7 @@ static const char SETTINGS_PAGE[] =
     "progress.value=value;show('updateMessage','正在上传 '+value+'%')}};request.onload=()=>{show('updateMessage',request.responseText||"
     "(request.status===200?'升级成功，设备即将重启':'升级失败'));if(request.status!==200){button.disabled=false;file.disabled=false}};"
     "request.onerror=()=>show('updateMessage','连接中断，请查看设备屏幕');request.send(file.files[0])};"
-    "zones();load().catch(error=>{show('settingsMessage',error.message);setSdState('unknown',0)});</script></main></body></html>";
+    "zones();weatherControls();load().catch(error=>{show('settingsMessage',error.message);setSdState('unknown',0)});</script></main></body></html>";
 
 static const char UPDATE_SUCCESS_PAGE[] =
     "升级成功。固件已校验，设备即将自动重启。";
@@ -1010,6 +1082,139 @@ static const char *settings_sd_state(const sd_image_status_t *status)
     return "ready";
 }
 
+static bool parse_weather_region_id(const char *text, uint32_t *value)
+{
+    if (text == NULL || value == NULL || text[0] == '\0') {
+        return false;
+    }
+    uint32_t parsed = 0U;
+    for (size_t index = 0U; text[index] != '\0'; ++index) {
+        if (text[index] < '0' || text[index] > '9') {
+            return false;
+        }
+        const uint32_t digit = (uint32_t)(text[index] - '0');
+        if (parsed > (UINT32_MAX - digit) / 10U) {
+            return false;
+        }
+        parsed = parsed * 10U + digit;
+    }
+    if (parsed == 0U) {
+        return false;
+    }
+    *value = parsed;
+    return true;
+}
+
+static esp_err_t weather_regions_get_handler(httpd_req_t *request)
+{
+    if (!portal_is_ready()) {
+        return send_page(request, "409 Conflict",
+                         "text/plain; charset=utf-8",
+                         "设置会话已关闭。\n");
+    }
+
+    uint32_t province_id = 0U;
+    const size_t query_length = httpd_req_get_url_query_len(request);
+    if (query_length > 0U) {
+        static const char prefix[] = "province=";
+        char query[32] = {0};
+        if (query_length >= sizeof(query) ||
+            httpd_req_get_url_query_str(request, query,
+                                        sizeof(query)) != ESP_OK ||
+            query_length <= sizeof(prefix) - 1U ||
+            memcmp(query, prefix, sizeof(prefix) - 1U) != 0 ||
+            strchr(query, '&') != NULL ||
+            !parse_weather_region_id(query + sizeof(prefix) - 1U,
+                                     &province_id) ||
+            weather_location_province_by_id(province_id) == NULL) {
+            return send_page(request, "400 Bad Request",
+                             "text/plain; charset=utf-8",
+                             "省份参数无效。\n");
+        }
+    }
+
+    char *const json = heap_caps_calloc(
+        1U, SETTINGS_WEATHER_REGIONS_JSON_CAPACITY,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (json == NULL) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8",
+                         "设备内存不足，暂时无法读取省市列表。\n");
+    }
+    size_t offset = 0U;
+    int written = snprintf(json, SETTINGS_WEATHER_REGIONS_JSON_CAPACITY,
+                           "{\"items\":[");
+    bool valid = written > 0 &&
+                 (size_t)written < SETTINGS_WEATHER_REGIONS_JSON_CAPACITY;
+    if (valid) {
+        offset = (size_t)written;
+    }
+    const size_t count = province_id == 0U
+                             ? weather_location_province_count()
+                             : weather_location_city_count(province_id);
+    for (size_t index = 0U; valid && index < count; ++index) {
+        const weather_province_t *province = NULL;
+        const weather_city_t *city = NULL;
+        uint32_t id = 0U;
+        const char *name = NULL;
+        if (province_id == 0U) {
+            province = weather_location_province_at(index);
+            if (province != NULL) {
+                id = province->id;
+                name = province->name_zh;
+            }
+        } else {
+            city = weather_location_city_at(province_id, index);
+            if (city != NULL) {
+                id = city->id;
+                name = city->name_zh;
+            }
+        }
+        char escaped_name[SETTINGS_JSON_ESCAPE_CAPACITY(64U)] = {0};
+        if (id == 0U || name == NULL ||
+            !settings_portal_json_escape(name, escaped_name,
+                                         sizeof(escaped_name))) {
+            valid = false;
+            break;
+        }
+        written = snprintf(
+            json + offset,
+            SETTINGS_WEATHER_REGIONS_JSON_CAPACITY - offset,
+            "%s{\"id\":%lu,\"name\":\"%s\"}",
+            index == 0U ? "" : ",", (unsigned long)id,
+            escaped_name);
+        if (written <= 0 ||
+            (size_t)written >=
+                SETTINGS_WEATHER_REGIONS_JSON_CAPACITY - offset) {
+            valid = false;
+            break;
+        }
+        offset += (size_t)written;
+    }
+    if (valid) {
+        written = snprintf(json + offset,
+                           SETTINGS_WEATHER_REGIONS_JSON_CAPACITY - offset,
+                           "]}");
+        valid = written > 0 &&
+                (size_t)written <
+                    SETTINGS_WEATHER_REGIONS_JSON_CAPACITY - offset;
+    }
+    if (!valid) {
+        weather_config_clear_sensitive(
+            json, SETTINGS_WEATHER_REGIONS_JSON_CAPACITY);
+        heap_caps_free(json);
+        return send_page(request, "500 Internal Server Error",
+                         "text/plain; charset=utf-8",
+                         "无法生成省市列表。\n");
+    }
+    const esp_err_t error = send_page(
+        request, "200 OK", "application/json; charset=utf-8", json);
+    weather_config_clear_sensitive(
+        json, SETTINGS_WEATHER_REGIONS_JSON_CAPACITY);
+    heap_caps_free(json);
+    return error;
+}
+
 static const char *conversation_service_form_value(
     conversation_service_t service)
 {
@@ -1043,6 +1248,12 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         char escaped_api_host[
             SETTINGS_JSON_ESCAPE_CAPACITY(
                 CONVERSATION_API_HOST_MAX_LENGTH)];
+        char escaped_weather_api_host[
+            SETTINGS_JSON_ESCAPE_CAPACITY(WEATHER_API_HOST_MAX_LENGTH)];
+        char escaped_weather_province[
+            SETTINGS_JSON_ESCAPE_CAPACITY(64U)];
+        char escaped_weather_city[
+            SETTINGS_JSON_ESCAPE_CAPACITY(64U)];
         char json[SETTINGS_STATE_JSON_CAPACITY];
     } settings_state_response_t;
     settings_state_response_t *const response = heap_caps_calloc(
@@ -1085,6 +1296,30 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         conversation_available && conversation_status.configured;
     const bool conversation_enabled =
         conversation_configured && conversation_status.enabled;
+    weather_config_status_t weather_status = {0};
+    const esp_err_t weather_error =
+        weather_config_get_status(&weather_status);
+    const bool weather_available = weather_error == ESP_OK;
+    if (!weather_available) {
+        ESP_LOGW(TAG, "weather settings status unavailable: %s",
+                 esp_err_to_name(weather_error));
+    }
+    const weather_province_t *const weather_province =
+        weather_available
+            ? weather_location_province_by_id(
+                  weather_status.province_id)
+            : NULL;
+    const weather_city_t *const weather_city =
+        weather_available
+            ? weather_location_city_by_id(weather_status.city_id)
+            : NULL;
+    const bool weather_location_valid =
+        weather_province != NULL && weather_city != NULL &&
+        weather_location_city_belongs_to(weather_status.province_id,
+                                         weather_status.city_id);
+    const bool weather_configured =
+        weather_available && weather_status.configured &&
+        weather_location_valid;
     if (network_error != ESP_OK ||
         !settings_portal_json_escape(
             saved_network.ssid, response->escaped_ssid,
@@ -1092,10 +1327,23 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         !settings_portal_json_escape(
             conversation_status.api_host,
             response->escaped_api_host,
-            sizeof(response->escaped_api_host))) {
+            sizeof(response->escaped_api_host)) ||
+        !settings_portal_json_escape(
+            weather_status.api_host,
+            response->escaped_weather_api_host,
+            sizeof(response->escaped_weather_api_host)) ||
+        !settings_portal_json_escape(
+            weather_location_valid ? weather_province->name_zh : "",
+            response->escaped_weather_province,
+            sizeof(response->escaped_weather_province)) ||
+        !settings_portal_json_escape(
+            weather_location_valid ? weather_city->name_zh : "",
+            response->escaped_weather_city,
+            sizeof(response->escaped_weather_city))) {
         conversation_config_clear_sensitive(response, sizeof(*response));
         heap_caps_free(response);
         memset(&conversation_status, 0, sizeof(conversation_status));
+        memset(&weather_status, 0, sizeof(weather_status));
         memset(&saved_network, 0, sizeof(saved_network));
         return send_page(request, "503 Service Unavailable",
                          "text/plain; charset=utf-8",
@@ -1109,6 +1357,11 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         "\"alarm\":\"%s\","
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
         "\"sd_state\":\"%s\",\"image_count\":%u,"
+        "\"weather\":{\"available\":%s,\"configured\":%s,"
+        "\"enabled\":%s,\"key_saved\":%s,"
+        "\"api_host\":\"%s\",\"province_id\":%lu,"
+        "\"province_name\":\"%s\",\"city_id\":%lu,"
+        "\"city_name\":\"%s\"},"
         "\"conversation\":{\"available\":%s,\"configured\":%s,"
         "\"enabled\":%s,"
         "\"model\":\"%s\",\"service\":\"%s\","
@@ -1127,6 +1380,15 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         (unsigned int)settings.alarm_weekdays,
         settings_sd_state(&sd_status),
         (unsigned int)sd_status.image_count,
+        weather_available ? "true" : "false",
+        weather_configured ? "true" : "false",
+        weather_available && weather_status.enabled ? "true" : "false",
+        weather_available && weather_status.key_saved ? "true" : "false",
+        response->escaped_weather_api_host,
+        (unsigned long)weather_status.province_id,
+        response->escaped_weather_province,
+        (unsigned long)weather_status.city_id,
+        response->escaped_weather_city,
         conversation_available ? "true" : "false",
         conversation_configured ? "true" : "false",
         conversation_enabled ? "true" : "false",
@@ -1135,6 +1397,7 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         conversation_status.shared_endpoint ? "true" : "false",
         response->token);
     memset(&conversation_status, 0, sizeof(conversation_status));
+    memset(&weather_status, 0, sizeof(weather_status));
     memset(&saved_network, 0, sizeof(saved_network));
     if (written <= 0 || (size_t)written >= sizeof(response->json)) {
         conversation_config_clear_sensitive(response, sizeof(*response));
@@ -1274,6 +1537,20 @@ static esp_err_t finish_wifi_change_request(httpd_req_t *request,
     return response_error;
 }
 
+static esp_err_t finish_weather_refresh_request(httpd_req_t *request,
+                                                const char *message)
+{
+    const esp_err_t response_error = send_page(
+        request, "200 OK", "text/plain; charset=utf-8", message);
+    portENTER_CRITICAL(&s_status_lock);
+    s_session_closing = true;
+    portEXIT_CRITICAL(&s_status_lock);
+    /* Keep mutation ownership until update_task consumes the terminal bit.
+     * This avoids a false/no-event gap at the fixed session deadline. */
+    xEventGroupSetBits(s_events, UPDATE_EVENT_WEATHER_REFRESH);
+    return response_error;
+}
+
 static esp_err_t finish_broken_portal_request(httpd_req_t *request,
                                               const char *message)
 {
@@ -1343,6 +1620,175 @@ static esp_err_t settings_post_handler(httpd_req_t *request)
     }
     return finish_regular_request(
         request, "200 OK", "设置已保存并立即生效。\n");
+}
+
+static const char *weather_form_error_message(
+    weather_config_result_t result)
+{
+    switch (result) {
+    case WEATHER_CONFIG_RESULT_INVALID_API_HOST:
+        return "API Host 无效；请填写 QWeather 控制台分配的专属 Host，不含协议、路径或端口。\n";
+    case WEATHER_CONFIG_RESULT_API_KEY_REQUIRED:
+        return "开启天气前需要填写 API Key。\n";
+    case WEATHER_CONFIG_RESULT_INVALID_API_KEY:
+        return "API Key 格式无效，请输入可见的英文字符、数字或符号。\n";
+    case WEATHER_CONFIG_RESULT_LOCATION_REQUIRED:
+        return "开启天气前需要依次选择省份和城市。\n";
+    case WEATHER_CONFIG_RESULT_INVALID_LOCATION:
+        return "省份与城市不匹配，请重新选择。\n";
+    case WEATHER_CONFIG_RESULT_MISSING_FIELD:
+        return "天气配置不完整，请填写所有必填项。\n";
+    default:
+        return "天气配置格式无效，请检查后重试。\n";
+    }
+}
+
+static esp_err_t weather_config_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    char *const body = heap_caps_calloc(
+        1U, SETTINGS_WEATHER_FORM_CAPACITY, MALLOC_CAP_8BIT);
+    if (body == NULL) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8",
+                         "设备内存不足，暂时无法保存天气配置。\n");
+    }
+    size_t length = 0U;
+    weather_config_update_t update = {0};
+    const esp_err_t receive_error = receive_form(
+        request, body, SETTINGS_WEATHER_FORM_CAPACITY, &length);
+    weather_config_result_t parse_result =
+        receive_error == ESP_OK
+            ? weather_config_parse_form(body, length, &update)
+            : WEATHER_CONFIG_RESULT_INVALID_FORM;
+    weather_config_clear_sensitive(body,
+                                   SETTINGS_WEATHER_FORM_CAPACITY);
+    heap_caps_free(body);
+    if (receive_error == ESP_ERR_TIMEOUT) {
+        weather_config_clear_sensitive(&update, sizeof(update));
+        return send_deadline_response(request);
+    }
+    if (receive_error == ESP_OK &&
+        parse_result == WEATHER_CONFIG_RESULT_OK) {
+        const bool empty_location = update.province_id == 0U &&
+                                    update.city_id == 0U &&
+                                    update.district[0] == '\0';
+        if (!empty_location &&
+            !weather_location_selection_is_valid(
+                update.province_id, update.city_id)) {
+            parse_result = WEATHER_CONFIG_RESULT_INVALID_LOCATION;
+        }
+    }
+    if (receive_error != ESP_OK ||
+        parse_result != WEATHER_CONFIG_RESULT_OK) {
+        ESP_LOGW(TAG, "rejected weather form: %s",
+                 weather_config_result_name(parse_result));
+        weather_config_clear_sensitive(&update, sizeof(update));
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         weather_form_error_message(parse_result));
+    }
+
+    if (update.enabled && update.api_key[0] == '\0') {
+        weather_config_status_t status = {0};
+        const esp_err_t status_error =
+            weather_config_get_status(&status);
+        const bool has_saved_key =
+            status_error == ESP_OK && status.key_saved;
+        memset(&status, 0, sizeof(status));
+        if (status_error != ESP_OK) {
+            weather_config_clear_sensitive(&update, sizeof(update));
+            return send_page(request, "503 Service Unavailable",
+                             "text/plain; charset=utf-8",
+                             "天气设置暂不可用，请稍后重试。\n");
+        }
+        if (!has_saved_key) {
+            weather_config_clear_sensitive(&update, sizeof(update));
+            return send_page(request, "400 Bad Request",
+                             "text/plain; charset=utf-8",
+                             "开启天气前需要填写 API Key。\n");
+        }
+    }
+    if (!begin_regular_mutation()) {
+        weather_config_clear_sensitive(&update, sizeof(update));
+        return send_mutation_unavailable(request);
+    }
+
+    const bool enabled = update.enabled;
+    const esp_err_t error = weather_config_save(&update);
+    weather_config_clear_sensitive(&update, sizeof(update));
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "weather config save failed: %s",
+                 esp_err_to_name(error));
+        return finish_regular_request(
+            request,
+            error == ESP_ERR_INVALID_ARG ? "400 Bad Request"
+                                         : "500 Internal Server Error",
+            error == ESP_ERR_INVALID_ARG
+                ? "天气配置未通过校验，原配置未更改。\n"
+                : "天气配置未能保存，原配置未更改。\n");
+    }
+    if (!enabled) {
+        const esp_err_t notify_error =
+            weather_service_notify_configuration_changed();
+        if (notify_error != ESP_OK) {
+            ESP_LOGW(TAG, "could not apply disabled weather setting: %s",
+                     esp_err_to_name(notify_error));
+        }
+        return finish_regular_request(
+            request, "200 OK", "天气配置已保存，天气页面已关闭，无需重启。\n");
+    }
+
+    /* update_task consumes this terminal event, stops HTTP/SoftAP, and only
+     * then hands the maintenance-owned network session to the weather
+     * worker. No device restart is involved. */
+    return finish_weather_refresh_request(
+        request,
+        "天气配置已保存。设置热点即将关闭，设备将联网获取天气；请查看设备屏幕。\n");
+}
+
+static esp_err_t weather_clear_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    char body[SETTINGS_PORTAL_SMALL_FORM_CAPACITY] = {0};
+    size_t length = 0U;
+    const esp_err_t receive_error = receive_form(
+        request, body, sizeof(body), &length);
+    const bool confirmed = receive_error == ESP_OK &&
+                           settings_portal_confirmation_matches(
+                               body, length, "CLEAR_WEATHER");
+    weather_config_clear_sensitive(body, sizeof(body));
+    if (receive_error == ESP_ERR_TIMEOUT) {
+        return send_deadline_response(request);
+    }
+    if (!confirmed) {
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         "清除天气配置需要重新确认。\n");
+    }
+    if (!begin_regular_mutation()) {
+        return send_mutation_unavailable(request);
+    }
+
+    esp_err_t error = weather_config_clear();
+    if (error == ESP_OK) {
+        error = weather_service_clear_cache();
+    }
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "weather config or cache clear failed: %s",
+                 esp_err_to_name(error));
+        (void)weather_service_notify_configuration_changed();
+        return finish_regular_request(
+            request, "500 Internal Server Error",
+            "天气配置未能完整清除，请稍后重试。\n");
+    }
+    return finish_regular_request(
+        request, "200 OK",
+        "天气配置与本地缓存已清除，天气页面已关闭，无需重启。\n");
 }
 
 static const char *conversation_form_error_message(
@@ -2103,7 +2549,7 @@ static esp_err_t start_web_server(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192U;
-    config.max_uri_handlers = 18U;
+    config.max_uri_handlers = 22U;
     config.max_open_sockets = 2U;
     config.recv_wait_timeout = 15U;
     config.lru_purge_enable = true;
@@ -2126,6 +2572,21 @@ static esp_err_t start_web_server(void)
         .uri = "/api/settings",
         .method = HTTP_POST,
         .handler = settings_post_handler,
+    };
+    const httpd_uri_t weather_regions_uri = {
+        .uri = "/api/weather/regions",
+        .method = HTTP_GET,
+        .handler = weather_regions_get_handler,
+    };
+    const httpd_uri_t weather_config_uri = {
+        .uri = "/api/weather/config",
+        .method = HTTP_POST,
+        .handler = weather_config_post_handler,
+    };
+    const httpd_uri_t weather_clear_uri = {
+        .uri = "/api/weather/clear",
+        .method = HTTP_POST,
+        .handler = weather_clear_post_handler,
     };
     const httpd_uri_t conversation_config_uri = {
         .uri = "/api/conversation/config",
@@ -2198,6 +2659,18 @@ static esp_err_t start_web_server(void)
     }
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &settings_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &weather_regions_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &weather_config_uri);
+    }
+    if (error == ESP_OK) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &weather_clear_uri);
     }
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server,
@@ -2434,7 +2907,8 @@ static EventBits_t finish_active_request_after_timeout(void)
         wait_for = UPDATE_EVENT_MUTATION_ENDED |
                    UPDATE_EVENT_REPROVISION |
                    UPDATE_EVENT_GALLERY_INSTALL |
-                   UPDATE_EVENT_WIFI_CHANGED;
+                   UPDATE_EVENT_WIFI_CHANGED |
+                   UPDATE_EVENT_WEATHER_REFRESH;
     }
     if (wait_for == 0U) {
         return 0U;
@@ -2475,6 +2949,21 @@ static void update_task(void *argument)
     bits &= UPDATE_EVENT_SESSION;
     if (bits == 0U) {
         bits = finish_active_request_after_timeout();
+    }
+    if ((bits & UPDATE_EVENT_WEATHER_REFRESH) != 0U) {
+        vTaskDelay(pdMS_TO_TICKS(UPDATE_SERVER_STOP_DELAY_MS));
+        stop_web_server();
+        (void)stop_update_ap();
+        set_state(FIRMWARE_UPDATE_STATE_IDLE, ESP_OK);
+        const esp_err_t weather_error =
+            weather_service_request_refresh_from_maintenance();
+        if (weather_error != ESP_OK) {
+            network_time_end_maintenance();
+            ESP_LOGW(TAG, "could not start weather refresh: %s",
+                     esp_err_to_name(weather_error));
+        }
+        vTaskDelete(NULL);
+        return;
     }
     if ((bits & UPDATE_EVENT_GALLERY_INSTALL) != 0U) {
         vTaskDelay(pdMS_TO_TICKS(UPDATE_SERVER_STOP_DELAY_MS));

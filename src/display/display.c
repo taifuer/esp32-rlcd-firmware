@@ -54,6 +54,10 @@ enum {
     DAILY_SIDE_MARGIN = 12,
     DAILY_FOOTER_DIVIDER_Y = 250,
     DAILY_FOOTER_BASELINE_Y = 280,
+    WEATHER_HEADER_BASELINE_Y = 28,
+    WEATHER_HEADER_DIVIDER_Y = 42,
+    WEATHER_CURRENT_DIVIDER_Y = 126,
+    WEATHER_FORECAST_TOP_Y = 136,
     CALENDAR_SIDE_MARGIN = 11,
     CALENDAR_HEADER_BASELINE_Y = 30,
     CALENDAR_HEADER_DIVIDER_Y = 43,
@@ -171,6 +175,183 @@ static void draw_daily_footer(const char *text)
                    BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(DAILY_FOOTER_BASELINE_Y, text);
+}
+
+static void draw_weather_cloud(int center_x, int center_y, int scale)
+{
+    const int left = center_x - 15 * scale;
+    const int right = center_x + 16 * scale;
+    const int base_y = center_y + 5 * scale;
+
+    u8g2_DrawLine(s_u8g2, left, base_y,
+                  left, center_y);
+    u8g2_DrawLine(s_u8g2, left, center_y,
+                  center_x - 11 * scale, center_y - 4 * scale);
+    u8g2_DrawLine(s_u8g2, center_x - 11 * scale,
+                  center_y - 4 * scale,
+                  center_x - 7 * scale, center_y - 5 * scale);
+    u8g2_DrawLine(s_u8g2, center_x - 7 * scale,
+                  center_y - 5 * scale,
+                  center_x - 4 * scale, center_y - 10 * scale);
+    u8g2_DrawLine(s_u8g2, center_x - 4 * scale,
+                  center_y - 10 * scale,
+                  center_x + 1 * scale, center_y - 12 * scale);
+    u8g2_DrawLine(s_u8g2, center_x + 1 * scale,
+                  center_y - 12 * scale,
+                  center_x + 6 * scale, center_y - 10 * scale);
+    u8g2_DrawLine(s_u8g2, center_x + 6 * scale,
+                  center_y - 10 * scale,
+                  center_x + 9 * scale, center_y - 5 * scale);
+    u8g2_DrawLine(s_u8g2, center_x + 9 * scale,
+                  center_y - 5 * scale,
+                  center_x + 13 * scale, center_y - 4 * scale);
+    u8g2_DrawLine(s_u8g2, center_x + 13 * scale,
+                  center_y - 4 * scale,
+                  right, center_y - scale);
+    u8g2_DrawLine(s_u8g2, right, center_y - scale,
+                  right, base_y);
+    u8g2_DrawHLine(s_u8g2, left, base_y, right - left + 1);
+}
+
+static void draw_weather_sun(int center_x, int center_y, int scale)
+{
+    const int radius = 5 * scale;
+    const int ray_inner = 8 * scale;
+    const int ray_outer = 12 * scale;
+
+    u8g2_DrawCircle(s_u8g2, center_x, center_y, radius,
+                    U8G2_DRAW_ALL);
+    if (scale > 1) {
+        u8g2_DrawCircle(s_u8g2, center_x, center_y, radius - 1,
+                        U8G2_DRAW_ALL);
+    }
+    u8g2_DrawLine(s_u8g2, center_x, center_y - ray_inner,
+                  center_x, center_y - ray_outer);
+    u8g2_DrawLine(s_u8g2, center_x, center_y + ray_inner,
+                  center_x, center_y + ray_outer);
+    u8g2_DrawLine(s_u8g2, center_x - ray_inner, center_y,
+                  center_x - ray_outer, center_y);
+    u8g2_DrawLine(s_u8g2, center_x + ray_inner, center_y,
+                  center_x + ray_outer, center_y);
+    u8g2_DrawLine(s_u8g2, center_x - 6 * scale,
+                  center_y - 6 * scale,
+                  center_x - 9 * scale, center_y - 9 * scale);
+    u8g2_DrawLine(s_u8g2, center_x + 6 * scale,
+                  center_y - 6 * scale,
+                  center_x + 9 * scale, center_y - 9 * scale);
+    u8g2_DrawLine(s_u8g2, center_x - 6 * scale,
+                  center_y + 6 * scale,
+                  center_x - 9 * scale, center_y + 9 * scale);
+    u8g2_DrawLine(s_u8g2, center_x + 6 * scale,
+                  center_y + 6 * scale,
+                  center_x + 9 * scale, center_y + 9 * scale);
+}
+
+static void draw_weather_snowflake(int center_x, int center_y, int scale)
+{
+    const int radius = 3 * scale;
+    u8g2_DrawHLine(s_u8g2, center_x - radius, center_y,
+                   2 * radius + 1);
+    u8g2_DrawVLine(s_u8g2, center_x, center_y - radius,
+                   2 * radius + 1);
+    u8g2_DrawLine(s_u8g2, center_x - 2 * scale,
+                  center_y - 2 * scale,
+                  center_x + 2 * scale, center_y + 2 * scale);
+    u8g2_DrawLine(s_u8g2, center_x - 2 * scale,
+                  center_y + 2 * scale,
+                  center_x + 2 * scale, center_y - 2 * scale);
+}
+
+static void draw_weather_icon(int center_x, int center_y, int scale,
+                              display_weather_icon_t icon)
+{
+    switch (icon) {
+    case DISPLAY_WEATHER_ICON_CLEAR:
+        draw_weather_sun(center_x, center_y, scale);
+        break;
+    case DISPLAY_WEATHER_ICON_CLOUDY:
+        draw_weather_sun(center_x - 8 * scale,
+                         center_y - 6 * scale, scale);
+        draw_weather_cloud(center_x + 2 * scale,
+                           center_y + 3 * scale, scale);
+        break;
+    case DISPLAY_WEATHER_ICON_WIND:
+        u8g2_DrawLine(s_u8g2, center_x - 15 * scale,
+                      center_y - 6 * scale,
+                      center_x + 9 * scale, center_y - 6 * scale);
+        u8g2_DrawLine(s_u8g2, center_x + 9 * scale,
+                      center_y - 6 * scale,
+                      center_x + 14 * scale, center_y - 2 * scale);
+        u8g2_DrawLine(s_u8g2, center_x - 11 * scale, center_y,
+                      center_x + 15 * scale, center_y);
+        u8g2_DrawLine(s_u8g2, center_x - 15 * scale,
+                      center_y + 6 * scale,
+                      center_x + 7 * scale, center_y + 6 * scale);
+        u8g2_DrawLine(s_u8g2, center_x + 7 * scale,
+                      center_y + 6 * scale,
+                      center_x + 12 * scale, center_y + 3 * scale);
+        break;
+    case DISPLAY_WEATHER_ICON_RAIN:
+        draw_weather_cloud(center_x, center_y - 4 * scale, scale);
+        for (int index = -1; index <= 1; ++index) {
+            const int x = center_x + index * 8 * scale;
+            u8g2_DrawLine(s_u8g2, x, center_y + 4 * scale,
+                          x - 3 * scale, center_y + 11 * scale);
+        }
+        break;
+    case DISPLAY_WEATHER_ICON_THUNDER:
+        draw_weather_cloud(center_x, center_y - 4 * scale, scale);
+        u8g2_DrawLine(s_u8g2, center_x + 2 * scale,
+                      center_y + 3 * scale,
+                      center_x - 3 * scale, center_y + 10 * scale);
+        u8g2_DrawLine(s_u8g2, center_x - 3 * scale,
+                      center_y + 10 * scale,
+                      center_x + 2 * scale, center_y + 10 * scale);
+        u8g2_DrawLine(s_u8g2, center_x + 2 * scale,
+                      center_y + 10 * scale,
+                      center_x - 4 * scale, center_y + 17 * scale);
+        break;
+    case DISPLAY_WEATHER_ICON_SNOW:
+        draw_weather_cloud(center_x, center_y - 5 * scale, scale);
+        draw_weather_snowflake(center_x - 7 * scale,
+                               center_y + 9 * scale, scale);
+        draw_weather_snowflake(center_x + 7 * scale,
+                               center_y + 9 * scale, scale);
+        break;
+    case DISPLAY_WEATHER_ICON_FOG:
+        draw_weather_cloud(center_x, center_y - 6 * scale, scale);
+        u8g2_DrawHLine(s_u8g2, center_x - 14 * scale,
+                       center_y + 5 * scale, 24 * scale);
+        u8g2_DrawHLine(s_u8g2, center_x - 9 * scale,
+                       center_y + 10 * scale, 24 * scale);
+        break;
+    case DISPLAY_WEATHER_ICON_UNKNOWN:
+    default:
+        u8g2_DrawCircle(s_u8g2, center_x, center_y, 11 * scale,
+                        U8G2_DRAW_ALL);
+        u8g2_SetFont(s_u8g2, scale > 1 ? u8g2_font_helvB24_tf
+                                      : u8g2_font_6x13_tf);
+        const int text_width = (int)u8g2_GetStrWidth(s_u8g2, "?");
+        u8g2_DrawStr(s_u8g2, center_x - text_width / 2,
+                     center_y + (scale > 1 ? 8 : 4), "?");
+        break;
+    }
+}
+
+static void draw_weather_utf8_in_region(
+    int left, int width, int top, int bottom,
+    int baseline_y, const char *text)
+{
+    if (text == NULL || width <= 0) {
+        return;
+    }
+    int x = left + (width - (int)u8g2_GetUTF8Width(s_u8g2, text)) / 2;
+    if (x < left) {
+        x = left;
+    }
+    u8g2_SetClipWindow(s_u8g2, left, top, left + width - 1, bottom);
+    u8g2_DrawUTF8(s_u8g2, x, baseline_y, text);
+    u8g2_SetMaxClipWindow(s_u8g2);
 }
 
 static void draw_image_footer(const char *navigation)
@@ -757,6 +938,194 @@ void display_show_dashboard(const display_dashboard_t *dashboard)
                           : DISPLAY_ENVIRONMENT_COMFORT_UNKNOWN);
     draw_utf8_centered_in_region(BOARD_DISPLAY_WIDTH / 2, BOARD_DISPLAY_WIDTH / 2,
                                  ENVIRONMENT_BASELINE_Y, humidity_text);
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_weather(const display_weather_t *weather)
+{
+    if (s_u8g2 == NULL || weather == NULL) {
+        return;
+    }
+
+    char source[48];
+    char temperature[16];
+    char feels_like[48];
+    const bool failed =
+        weather->status_detail != NULL &&
+        weather->status_detail[0] != '\0';
+    const char *location =
+        weather->location != NULL && weather->location[0] != '\0'
+            ? weather->location
+            : "天气";
+    const char *condition =
+        weather->data_available && weather->condition_text != NULL &&
+                weather->condition_text[0] != '\0'
+            ? weather->condition_text
+            : (weather->refreshing
+                   ? "正在获取"
+                   : (failed ? "获取失败" : "等待获取"));
+
+    if (weather->refreshing) {
+        snprintf(source, sizeof(source), "QWeather | UPDATING");
+    } else if (failed) {
+        snprintf(source, sizeof(source), "QWeather | FAILED");
+    } else if (!weather->data_available) {
+        snprintf(source, sizeof(source), "QWeather | %s",
+                 "WAITING");
+    } else if (!display_weather_format_source(
+            source, sizeof(source), weather->freshness,
+            weather->update_time_valid,
+            weather->update_month, weather->update_day,
+            weather->update_hour, weather->update_minute)) {
+        snprintf(source, sizeof(source), "QWeather | CACHED");
+    }
+    if (!weather->data_available || !display_weather_format_temperature(
+            temperature, sizeof(temperature),
+            weather->temperature_tenths_celsius,
+            weather->temperature_fahrenheit, true)) {
+        snprintf(temperature, sizeof(temperature), "--");
+    }
+    char feels_temperature[16];
+    if (!weather->data_available || !display_weather_format_temperature(
+            feels_temperature, sizeof(feels_temperature),
+            weather->feels_like_tenths_celsius,
+            weather->temperature_fahrenheit, true)) {
+        snprintf(feels_temperature, sizeof(feels_temperature), "--");
+    }
+    if (!weather->data_available || failed) {
+        snprintf(feels_like, sizeof(feels_like), "%s",
+                 failed
+                     ? weather->status_detail
+                     : "等待天气数据");
+    } else {
+        snprintf(feels_like, sizeof(feels_like), "体感 %s",
+                 feels_temperature);
+    }
+
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    const int source_width = (int)u8g2_GetStrWidth(s_u8g2, source);
+    const int source_x = BOARD_DISPLAY_WIDTH - DAILY_SIDE_MARGIN -
+                         source_width;
+    u8g2_DrawStr(s_u8g2, source_x, WEATHER_HEADER_BASELINE_Y, source);
+
+    u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+    const int location_right = source_x - 8;
+    if (location_right > DAILY_SIDE_MARGIN) {
+        u8g2_SetClipWindow(s_u8g2, DAILY_SIDE_MARGIN, 0,
+                           location_right, WEATHER_HEADER_DIVIDER_Y - 1);
+        u8g2_DrawUTF8(s_u8g2, DAILY_SIDE_MARGIN,
+                      WEATHER_HEADER_BASELINE_Y, location);
+        u8g2_SetMaxClipWindow(s_u8g2);
+    }
+    u8g2_DrawHLine(s_u8g2, DAILY_SIDE_MARGIN,
+                   WEATHER_HEADER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN);
+
+    draw_weather_icon(
+        50, 81, 2,
+        display_weather_icon_from_qweather_code(
+            weather->condition_code));
+    u8g2_SetFont(s_u8g2, u8g2_font_logisoso42_tf);
+    draw_weather_utf8_in_region(88, 150, 47, 118, 103,
+                                temperature);
+    u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+    draw_weather_utf8_in_region(245, 143, 49, 86, 76,
+                                condition);
+    draw_weather_utf8_in_region(245, 143, 87, 118, 106,
+                                feels_like);
+
+    u8g2_DrawHLine(s_u8g2, DAILY_SIDE_MARGIN,
+                   WEATHER_CURRENT_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN);
+
+    size_t day_count = weather->forecast_day_count;
+    if (day_count > DISPLAY_WEATHER_FORECAST_DAY_LIMIT) {
+        day_count = DISPLAY_WEATHER_FORECAST_DAY_LIMIT;
+    }
+    if (day_count == 0U) {
+        u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+        draw_weather_utf8_in_region(
+            DAILY_SIDE_MARGIN,
+            BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN,
+            WEATHER_FORECAST_TOP_Y, DAILY_FOOTER_DIVIDER_Y - 1,
+            194, "暂无预报");
+    }
+
+    for (size_t index = 0U; index < day_count; ++index) {
+        const int left = (int)index * BOARD_DISPLAY_WIDTH /
+                         (int)day_count;
+        const int right = (int)(index + 1U) * BOARD_DISPLAY_WIDTH /
+                          (int)day_count;
+        const int width = right - left;
+        const int center_x = left + width / 2;
+        const display_weather_forecast_day_t *day =
+            &weather->forecast[index];
+        char high[12];
+        char low[12];
+        char high_low[32];
+        char precipitation[24];
+        char day_label[16];
+
+        if (index > 0U) {
+            u8g2_DrawVLine(s_u8g2, left, WEATHER_FORECAST_TOP_Y,
+                           DAILY_FOOTER_DIVIDER_Y -
+                               WEATHER_FORECAST_TOP_Y - 6);
+        }
+        u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+        if (!display_weather_format_day_label(
+                day_label, sizeof(day_label), day->date,
+                weather->current_date_valid, weather->current_year,
+                weather->current_month, weather->current_day)) {
+            snprintf(day_label, sizeof(day_label), "--");
+        }
+        draw_weather_utf8_in_region(left, width,
+                                    WEATHER_FORECAST_TOP_Y, 157,
+                                    153, day_label);
+
+        draw_weather_icon(
+            center_x, 174, 1,
+            display_weather_icon_from_qweather_code(
+                day->condition_code));
+        u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+        draw_weather_utf8_in_region(left + 4, width - 8, 186, 204,
+                                    201,
+                                    day->condition_text != NULL &&
+                                            day->condition_text[0] != '\0'
+                                        ? day->condition_text
+                                        : "--");
+
+        if (!display_weather_format_temperature(
+                high, sizeof(high),
+                day->temperature_high_tenths_celsius,
+                weather->temperature_fahrenheit, false)) {
+            snprintf(high, sizeof(high), "--");
+        }
+        if (!display_weather_format_temperature(
+                low, sizeof(low),
+                day->temperature_low_tenths_celsius,
+                weather->temperature_fahrenheit, false)) {
+            snprintf(low, sizeof(low), "--");
+        }
+        snprintf(high_low, sizeof(high_low), "%s / %s", high, low);
+        u8g2_SetFont(s_u8g2, u8g2_font_logisoso16_tf);
+        draw_weather_utf8_in_region(left + 4, width - 8, 205, 225,
+                                    221, high_low);
+
+        const uint8_t probability =
+            day->precipitation_probability_percent > 100U
+                ? 100U
+                : day->precipitation_probability_percent;
+        snprintf(precipitation, sizeof(precipitation),
+                 "降水 %u%%", probability);
+        u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+        draw_weather_utf8_in_region(left + 4, width - 8, 226, 248,
+                                    243, precipitation);
+    }
+
+    draw_daily_footer(display_interaction_weather_footer());
     u8g2_SendBuffer(s_u8g2);
 }
 

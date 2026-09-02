@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware weather page</title>
+  <desc id="description">A white-on-black weather page showing Beijing current conditions, three-day forecast and QWeather update time.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="12" y="28" stroke="none" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="16" font-weight="600">北京</text>
+    <text x="388" y="28" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">QWeather | 09-02 23:20</text>
+    <path d="M12 42H388M12 126H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+
+    <g transform="translate(50 80)" fill="none" stroke-width="2">
+      <circle cx="-10" cy="-8" r="12"/>
+      <path d="M-10-25V-31M-10 9V15M-27-8H-33M7-8H13M-22-20L-27-25M2 4L7 9M2-20L7-25"/>
+      <path d="M-21 8C-20-2-8-6-1 0C5-6 18-2 18 8C26 8 29 20 20 23H-21C-33 20-32 9-21 8Z" fill="#090b0a"/>
+    </g>
+    <text x="163" y="103" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="48">27 °C</text>
+    <text x="316" y="76" stroke="none" text-anchor="middle" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="18" font-weight="600">多云</text>
+    <text x="316" y="106" stroke="none" text-anchor="middle" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="16">体感 29 °C</text>
+
+    <path d="M133 136V244M266 136V244" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+    <g stroke="none" text-anchor="middle" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif">
+      <text x="66" y="156" font-size="16">今天</text>
+      <text x="200" y="156" font-size="16">明天</text>
+      <text x="333" y="156" font-size="16">周五</text>
+      <text x="66" y="200" font-size="17" font-weight="600">多云</text>
+      <text x="200" y="200" font-size="17" font-weight="600">小雨</text>
+      <text x="333" y="200" font-size="17" font-weight="600">晴</text>
+      <text x="66" y="222" font-family="DejaVu Sans, Arial, sans-serif" font-size="16">30 / 22</text>
+      <text x="200" y="222" font-family="DejaVu Sans, Arial, sans-serif" font-size="16">28 / 21</text>
+      <text x="333" y="222" font-family="DejaVu Sans, Arial, sans-serif" font-size="16">31 / 22</text>
+      <text x="66" y="242" font-size="14">降水 20%</text>
+      <text x="200" y="242" font-size="14">降水 70%</text>
+      <text x="333" y="242" font-size="14">降水 10%</text>
+    </g>
+    <g fill="none" stroke-width="1.5">
+      <path d="M56 172h20M60 168h12M62 164h8"/>
+      <path d="M189 168C191 161 199 160 203 166C209 163 216 167 215 173H187C184 170 186 168 189 168Z"/>
+      <path d="M193 178l-3 7M202 178l-3 7M211 178l-3 7"/>
+      <circle cx="333" cy="173" r="9"/>
+      <path d="M333 159V155M333 191V187M319 173H315M351 173H347M323 163L320 160M343 183L346 186M343 163L346 160M323 183L320 186"/>
+    </g>
+    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: CALENDAR | KEY: STATUS</text>
+  </g>
+</svg>

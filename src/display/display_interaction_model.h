@@ -15,6 +15,11 @@ extern "C" {
  */
 #define DISPLAY_INTERACTION_FOOTER_MAX_CHARS 62U
 
+static inline const char *display_interaction_weather_footer(void)
+{
+    return "BOOT: CALENDAR | KEY: STATUS";
+}
+
 static inline const char *display_interaction_calendar_footer(
     bool image_available)
 {

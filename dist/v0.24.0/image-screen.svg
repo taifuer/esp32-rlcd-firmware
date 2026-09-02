@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware microSD image page</title>
+  <desc id="description">A monochrome pixel landscape loaded from microSD, with a black reserved footer showing the Home destination, next-image action, current position and safe delete gesture.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+
+  <g fill="#eef3e8" stroke="#eef3e8" shape-rendering="crispEdges">
+    <g stroke="none">
+      <rect x="29" y="29" width="3" height="3"/>
+      <rect x="71" y="54" width="2" height="2"/>
+      <rect x="105" y="24" width="2" height="2"/>
+      <rect x="146" y="44" width="3" height="3"/>
+      <rect x="190" y="21" width="2" height="2"/>
+      <rect x="225" y="55" width="2" height="2"/>
+      <rect x="258" y="28" width="3" height="3"/>
+      <rect x="344" y="45" width="2" height="2"/>
+      <rect x="373" y="25" width="3" height="3"/>
+
+      <path d="M296 24h24v3h8v4h5v5h4v16h-4v6h-6v4h-9v3h-20v-3h-9v-4h-6v-6h-4V36h4v-5h5v-4h8z"/>
+      <path d="M305 27h15v3h8v5h5v17h-5v5h-8v3h-15z" fill="#090b0a"/>
+    </g>
+
+    <path d="M12 178L63 119L96 150L148 88L211 166L260 111L321 173L354 139L388 179" fill="none" stroke-width="3"/>
+    <path d="M12 181L63 122L96 153L148 91L211 169L260 114L321 176L354 142L388 182V224H12Z" fill="#eef3e8" stroke="none"/>
+    <path d="M12 184L64 131L83 157L96 160L148 102L174 137L190 142L211 175L260 124L286 154L302 158L321 181L354 151L388 186V224H12Z" fill="#090b0a" stroke="none"/>
+
+    <g stroke="none">
+      <path d="M43 128h4v80h-4zM45 133l-22 38h44zM45 151l-28 44h56z"/>
+      <path d="M333 137h4v72h-4zM335 141l-19 33h38zM335 158l-25 42h50z"/>
+      <path d="M92 157h3v54h-3zM93 160l-15 26h30zM93 175l-20 33h40z"/>
+
+      <rect x="12" y="220" width="376" height="2"/>
+      <rect x="24" y="228" width="66" height="2"/>
+      <rect x="110" y="233" width="82" height="2"/>
+      <rect x="215" y="227" width="58" height="2"/>
+      <rect x="292" y="234" width="78" height="2"/>
+      <rect x="51" y="240" width="76" height="2"/>
+      <rect x="155" y="242" width="98" height="2"/>
+      <rect x="281" y="241" width="55" height="2"/>
+    </g>
+  </g>
+
+  <rect x="0" y="250" width="400" height="50" fill="#090b0a"/>
+  <path d="M12 250H388" fill="none" stroke="#eef3e8" stroke-width="1" shape-rendering="crispEdges"/>
+  <text x="200" y="270" fill="#eef3e8" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: HOME | KEY: NEXT IMAGE | 2/6</text>
+  <text x="200" y="294" fill="#eef3e8" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">HOLD KEY 2s: DELETE IMAGE</text>
+</svg>
