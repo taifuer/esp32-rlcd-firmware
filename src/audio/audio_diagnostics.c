@@ -149,6 +149,7 @@ typedef struct {
     bool alert_stop_requested;
     bool music_requested;
     bool music_running;
+    bool music_storage_change;
     uint32_t music_generation;
     audio_music_status_t music_status;
     audio_diagnostics_status_t status;
@@ -2931,7 +2932,7 @@ void audio_music_get_status(audio_music_status_t *status)
 
 static bool music_can_start_locked(void)
 {
-    return s_audio.status.initialized && s_audio.status.speaker_ready &&
+    return !s_audio.music_storage_change && s_audio.status.initialized && s_audio.status.speaker_ready &&
            s_audio.worker_task != NULL && !s_audio.diagnostic_requested &&
            !audio_session_state_is_active(s_audio.status.state) &&
            !s_audio.voice_requested && !s_audio.voice_status.running &&
@@ -2946,6 +2947,7 @@ esp_err_t audio_music_toggle(void)
     if (library.count == 0U) return ESP_ERR_NOT_FOUND;
     lock_context();
     if (!music_can_start_locked()) { unlock_context(); return ESP_ERR_INVALID_STATE; }
+    if (s_audio.music_status.selected_index >= library.count) s_audio.music_status.selected_index = 0;
     if (s_audio.music_status.state == AUDIO_MUSIC_PLAYING) {
         s_audio.music_status.state = AUDIO_MUSIC_PAUSED;
     } else if (s_audio.music_status.state == AUDIO_MUSIC_PAUSED) {
@@ -3001,6 +3003,45 @@ esp_err_t audio_music_stop_and_wait(uint32_t timeout_ms)
         vTaskDelay(pdMS_TO_TICKS(20));
     } while (xTaskGetTickCount() - start < pdMS_TO_TICKS(timeout_ms));
     return ESP_ERR_TIMEOUT;
+}
+
+esp_err_t audio_music_begin_storage_change(uint32_t timeout_ms)
+{
+    lock_context();
+    if (s_audio.music_storage_change) { unlock_context(); return ESP_ERR_INVALID_STATE; }
+    s_audio.music_storage_change = true;
+    unlock_context();
+    const esp_err_t error = audio_music_stop_and_wait(timeout_ms);
+    if (error != ESP_OK) audio_music_end_storage_change();
+    return error;
+}
+
+void audio_music_end_storage_change(void)
+{
+    lock_context();
+    s_audio.music_storage_change = false;
+    unlock_context();
+}
+
+esp_err_t audio_music_select(const char *filename, bool play)
+{
+    size_t index = 0;
+    if (!music_library_find(filename, &index) && play) return ESP_ERR_NOT_FOUND;
+    lock_context();
+    if ((play && !music_can_start_locked()) || (!play && s_audio.music_running)) {
+        unlock_context(); return ESP_ERR_INVALID_STATE;
+    }
+    ++s_audio.music_generation;
+    s_audio.music_requested = play;
+    s_audio.music_status.selected_index = (uint8_t)index;
+    s_audio.music_status.state = play ? AUDIO_MUSIC_PLAYING : AUDIO_MUSIC_STOPPED;
+    s_audio.music_status.elapsed_seconds = 0;
+    s_audio.music_status.error = ESP_OK;
+    ++s_audio.music_status.revision;
+    TaskHandle_t worker = s_audio.worker_task;
+    unlock_context();
+    if (play && worker != NULL) xTaskNotifyGive(worker);
+    return ESP_OK;
 }
 
 typedef struct {

@@ -1489,6 +1489,7 @@ void app_main(void)
         if (music_error != ESP_OK) ESP_LOGW(TAG, "music library unavailable: %s", esp_err_to_name(music_error));
     }
     uint32_t previous_music_revision = 0;
+    uint32_t previous_music_library_revision = 0;
     uint8_t previous_music_count = 0;
     uint8_t previous_music_volume = 0;
     sd_image_status_t initial_sd_image_status = {0};
@@ -1641,10 +1642,12 @@ void app_main(void)
         audio_music_status_t music_status = {0};
         audio_music_get_status(&music_status);
         const bool music_changed = music_status.revision != previous_music_revision ||
+            music_library.revision != previous_music_library_revision ||
             music_library.count != previous_music_count || music_status.volume != previous_music_volume;
         if (music_changed) {
             app_page_state_set_music_available(&page_state, !recovery_mode && music_library.count > 0U);
             previous_music_revision = music_status.revision;
+            previous_music_library_revision = music_library.revision;
             previous_music_count = music_library.count;
             previous_music_volume = music_status.volume;
             if (app_page_state_current(&page_state) == APP_PAGE_MUSIC) render_requested = true;

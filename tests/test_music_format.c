@@ -19,8 +19,30 @@ static bool probe(const uint8_t *data, size_t size, music_format_t format, music
     return valid;
 }
 
+static bool validate(const uint8_t *data, size_t size)
+{
+    FILE *file = tmpfile();
+    music_file_info_t info;
+    assert(file != NULL && fwrite(data, 1, size, file) == size);
+    const bool result = music_file_validate(file, (uint32_t)size, MUSIC_FORMAT_MP3, &info, NULL, NULL);
+    fclose(file);
+    return result;
+}
+
 int main(void)
 {
+    char filename[MUSIC_FILENAME_CAPACITY];
+    const char form[] = "name=%E9%9F%B3%E4%B9%90%20%26%20%2B.mp3&confirm=DELETE";
+    assert(music_parse_name_form(form, strlen(form), true, filename));
+    assert(strcmp(filename, "音乐 & +.mp3") == 0);
+    const char *bad_forms[] = {"name=../x.mp3", "name=%2e%2e%2fx.mp3", "name=a%00.mp3", "name=x.mp3&x=y", "name=%c0%af.mp3", "name=a%.mp3", "name=a%GG.mp3", "name=a%3f.mp3", "name=a%22.mp3", "name=a%252fb.mp3&confirm=DELETE"};
+    for (size_t i = 0; i < sizeof(bad_forms) / sizeof(*bad_forms); ++i) {
+        assert(!music_parse_name_form(bad_forms[i], strlen(bad_forms[i]), false, filename));
+        assert(filename[0] == '\0');
+    }
+    assert(!music_parse_name_form("name=a.mp3", 10, true, filename));
+    assert(music_parse_name_form("name=a+b.mp3", 12, false, filename));
+    assert(strcmp(filename, "a b.mp3") == 0);
     assert(music_filename_format("01-音乐.MP3") == MUSIC_FORMAT_MP3);
     assert(music_filename_format("test.Wav") == MUSIC_FORMAT_WAV);
     assert(music_filename_format("song\xed\xa0\x80.mp3") == MUSIC_FORMAT_NONE);
@@ -38,6 +60,15 @@ int main(void)
     music_file_info_t info;
     assert(probe(mp3, sizeof(mp3), MUSIC_FORMAT_MP3, &info));
     assert(info.data_offset == 10 && info.data_bytes == 834);
+    assert(validate(mp3, sizeof(mp3)));
+    uint8_t longer[844 + 417 + 128] = {0};
+    memcpy(longer, mp3, sizeof(mp3));
+    memcpy(longer + 844, header, 4);
+    memcpy(longer + 844 + 417, "TAG", 3);
+    assert(validate(longer, sizeof(longer)));
+    longer[844] = 0;
+    assert(probe(longer, sizeof(longer), MUSIC_FORMAT_MP3, &info));
+    assert(!validate(longer, sizeof(longer))); /* Initial frames alone are insufficient. */
     mp3[6] = 0x80;
     assert(!probe(mp3, sizeof(mp3), MUSIC_FORMAT_MP3, &info));
     mp3[6] = 0x7f; mp3[7] = 0x7f; mp3[8] = 0x7f; mp3[9] = 0x7f;

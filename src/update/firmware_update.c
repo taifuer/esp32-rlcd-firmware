@@ -287,9 +287,21 @@ static const char SETTINGS_PAGE[] =
     "<button id=\"starterImages\" type=\"button\" class=\"secondary\" disabled>安装演示图集</button>"
     "<p id=\"starterMessage\" class=\"message\"></p>"
     "<small>若当前页面无法选择图片，请在手机系统浏览器中打开 192.168.4.1。</small></section>"
-    "<section><details><summary class=\"section-toggle\">microSD 音乐</summary>"
-    "<p>关机取卡后，用读卡器把 MP3 或 16 位 PCM WAV 复制到 <code>rlcd/music/</code>，再插回设备开机。</p>"
-    "<p class=\"note\">最多显示 32 首，单个文件不超过 256 MiB。不支持热插拔；无卡不影响其他功能。</p>"
+    "<section><details id=\"musicSection\"><summary class=\"section-toggle\">microSD 音乐</summary>"
+    "<p id=\"musicState\" class=\"sd-state\" role=\"status\">正在读取歌曲列表…</p>"
+    "<label for=\"musicTracks\">设备中的歌曲</label><select id=\"musicTracks\" disabled aria-label=\"选择歌曲\"></select>"
+    "<p id=\"musicPlayback\" class=\"note\" role=\"status\"></p>"
+    "<div class=\"button-row\"><button id=\"musicPlay\" type=\"button\" disabled>在设备播放</button>"
+    "<button id=\"musicStop\" type=\"button\" class=\"secondary\" disabled>停止播放</button></div>"
+    "<div class=\"button-row\"><button id=\"musicRefresh\" type=\"button\" class=\"secondary\">刷新列表</button>"
+    "<button id=\"musicDelete\" type=\"button\" class=\"danger\" disabled>删除歌曲</button></div>"
+    "<hr class=\"divider\"><label for=\"musicFile\">从手机或电脑选择歌曲</label>"
+    "<input id=\"musicFile\" type=\"file\" accept=\".mp3,.wav,audio/mpeg,audio/wav\" disabled>"
+    "<p class=\"note\">支持 MP3、16 位 PCM WAV，每次上传一首，最大 32 MB，最多 32 首。文件保存在 SD 卡 rlcd/music/，不上传至服务器。</p>"
+    "<button id=\"musicUpload\" type=\"button\" disabled>上传歌曲</button>"
+    "<progress id=\"musicProgress\" max=\"100\" value=\"0\" hidden></progress>"
+    "<p id=\"musicMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
+    "<p class=\"note\">上传或删除会停止音乐；完成后立即生效，无需重启。同名文件不会覆盖。大文件可通过读卡器复制；不支持热插拔。</p>"
     "<p class=\"note\">音乐页短按 KEY 播放或暂停，按住 2 秒下一首；按住 BOOT 2 秒调整音量，短按返回时钟并继续播放。</p>"
     "</details></section>"
     "<section><details><summary class=\"section-toggle\">本地固件升级</summary><p>请选择本项目发布的 <strong>OTA 固件</strong>。升级不会清除设置。</p>"
@@ -301,6 +313,7 @@ static const char SETTINGS_PAGE[] =
     "<footer>© <span id=\"portalYear\">2026</span> <a href=\"https://mcu.taifua.com/\" target=\"_blank\" rel=\"noopener noreferrer\">ESP32 固件</a></footer>"
     "<script>document.getElementById('portalYear').textContent=String(new Date().getFullYear());let token='',initialUpdates='stable',settingsBusy=false,wifiConfigured=false,savedWifi='',wifiBusy=false,weatherAvailable=false,weatherConfigured=false,weatherEnabled=false,initialWeatherEnabled=false,weatherBusy=false,weatherRegionRequest=0,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
     "storedImages=[],storedIndex=0,storedSelected='',storedBusy=false,storedRequest=0;"
+    "let musicReady=false,musicFull=false,musicBusy=false,musicLoading=false,musicRequest=0,musicTracks=[],musicPlaying=false;"
     "const $=id=>document.getElementById(id);const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
     "const SOURCE_MAX_BYTES=32*1024*1024,SOURCE_MAX_PIXELS=40000000;"
     "const show=(id,text)=>{$(id).textContent=text};const alarmDays=()=>document.querySelectorAll('.alarm-day');"
@@ -352,6 +365,49 @@ static const char SETTINGS_PAGE[] =
     "function imageControls(){const blocked=!sdReady||imageBusy;$('imageFile').disabled=blocked;$('starterImages').disabled=blocked;"
     "$('imageUpload').disabled=blocked||!imagePbm;$('threshold').disabled=imageBusy||!imageGray;$('dither').disabled=imageBusy||!imageGray;storedControls()}"
     "function imageBusyState(value){imageBusy=value;imageControls()}"
+    "function musicControls(){const blocked=musicBusy||!musicReady,empty=musicTracks.length===0;"
+    "$('musicTracks').disabled=blocked||empty;$('musicPlay').disabled=blocked||empty;$('musicDelete').disabled=blocked||empty;"
+    "$('musicStop').disabled=musicBusy||!musicPlaying;$('musicRefresh').disabled=musicBusy;"
+    "$('musicFile').disabled=blocked||musicFull;$('musicUpload').disabled=blocked||musicFull||!$('musicFile').files.length}"
+    "async function loadMusic(preferred){const current=++musicRequest;musicLoading=true;try{"
+    "const response=await fetch('/api/music',{cache:'no-store'});if(!response.ok)throw new Error(await response.text()||'无法读取歌曲列表');"
+    "const data=await response.json();if(current!==musicRequest)return;"
+    "if(!Array.isArray(data.tracks)||data.tracks.length>32||data.tracks.some(track=>typeof track.name!=='string'||!Number.isFinite(track.bytes)))throw new Error('歌曲列表无效');"
+    "const previous=preferred||$('musicTracks').value;musicTracks=data.tracks;musicReady=data.ready===true;musicFull=musicTracks.length>=32||data.truncated===true;"
+    "const select=$('musicTracks');while(select.firstChild)select.removeChild(select.firstChild);"
+    "musicTracks.forEach(track=>{const option=document.createElement('option');option.value=track.name;option.textContent=track.name+' · '+(track.bytes/1000000).toFixed(2)+' MB';select.appendChild(option)});"
+    "select.value=musicTracks.some(track=>track.name===previous)?previous:(musicTracks[data.selected_index]||musicTracks[0]||{name:''}).name;"
+    "show('musicState',!data.scanned?'正在扫描歌曲…':!musicReady?'未检测到可用的 microSD。如需使用音乐，请关机插入 FAT32 卡后开机。':"
+    "data.truncated?'只列出部分歌曲；上传前请关机用读卡器整理目录至 32 首以内，再开机。':musicFull?'歌曲列表已满，请先删除不需要的歌曲。':musicTracks.length?'现有 '+musicTracks.length+' 首歌曲。':'尚无歌曲，可以直接上传。');"
+    "musicPlaying=data.state==='playing'||data.state==='paused';const active=musicTracks[data.selected_index],seconds=Math.max(0,Number(data.elapsed)||0);"
+    "show('musicPlayback',(data.state==='playing'?'正在播放':data.state==='paused'?'已暂停':data.state==='error'?'无法播放，请检查文件格式':'已停止')+"
+    "(active?' · '+active.name:'')+(musicPlaying?' · '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'):''));"
+    "}catch(error){if(current===musicRequest){musicReady=false;show('musicMessage',error.message)}}"
+    "finally{if(current===musicRequest){musicLoading=false;musicControls()}}}"
+    "async function musicCommand(action){if(musicBusy)return;const name=$('musicTracks').value;"
+    "if(action!=='stop'&&!musicTracks.some(track=>track.name===name))return;"
+    "if(action==='delete'&&!confirm('删除歌曲“'+name+'”？此操作无法撤销。'))return;"
+    "musicBusy=true;++musicRequest;musicLoading=false;musicControls();show('musicMessage',action==='delete'?'正在删除…':'正在处理…');"
+    "try{const body=action==='stop'?'confirm=STOP':'name='+encodeURIComponent(name)+(action==='delete'?'&confirm=DELETE':'');"
+    "const message=await post('/api/music/'+action,body);await loadMusic(name);show('musicMessage',message)}"
+    "catch(error){show('musicMessage',error.message)}finally{musicBusy=false;musicControls()}}"
+    "$('musicPlay').onclick=()=>musicCommand('play');$('musicStop').onclick=()=>musicCommand('stop');$('musicDelete').onclick=()=>musicCommand('delete');"
+    "$('musicRefresh').onclick=()=>{if(!musicBusy)return loadMusic()};$('musicFile').onchange=()=>musicControls();"
+    "$('musicSection').ontoggle=()=>{if($('musicSection').open&&!musicBusy&&!musicLoading)loadMusic()};"
+    "setInterval(()=>{if($('musicSection').open&&!document.hidden&&!musicBusy&&!musicLoading)loadMusic()},3000);"
+    "$('musicUpload').onclick=()=>{const file=$('musicFile').files[0];if(musicBusy||!musicReady||musicFull||!file)return;"
+    "if(!/\\.(mp3|wav)$/i.test(file.name)||/[\\x00-\\x1f\\x7f/\\\\:*?\"<>|]/.test(file.name)||file.name.startsWith('.')||new TextEncoder().encode(file.name).length>127||file.size<44||file.size>32000000){"
+    "show('musicMessage','请选择不超过 32 MB 的 MP3 或 PCM WAV，文件名最长 127 个 UTF-8 字节。');return}"
+    "if(musicTracks.some(track=>track.name.toLowerCase()===file.name.toLowerCase())){show('musicMessage','已有同名歌曲，请更换文件名后上传。');return}"
+    "musicBusy=true;++musicRequest;musicLoading=false;musicControls();$('musicProgress').hidden=false;$('musicProgress').value=0;"
+    "show('musicMessage','正在上传，请保持页面打开和设备供电…');const request=new XMLHttpRequest();"
+    "request.open('POST','/api/music/upload?name='+encodeURIComponent(file.name));request.timeout=300000;"
+    "request.setRequestHeader('Content-Type','application/octet-stream');request.setRequestHeader('X-RLCD-Token',token);"
+    "request.upload.onprogress=event=>{if(event.lengthComputable){const percent=Math.round(event.loaded*100/event.total);$('musicProgress').value=percent;"
+    "show('musicMessage',percent===100?'上传完成，正在校验并写入…':'正在上传 '+percent+'%')}};"
+    "request.onload=async()=>{if(request.status===200){$('musicFile').value='';await loadMusic(file.name)}"
+    "show('musicMessage',request.responseText||'上传未完成，请刷新列表确认后重试。');musicBusy=false;musicControls()};"
+    "request.onerror=request.ontimeout=request.onabort=()=>{show('musicMessage','连接中断或上传超时，请重新连接并刷新列表确认结果。');musicBusy=false;musicControls()};request.send(file)};"
     "function setSdState(value,count){const state=String(value||'unknown').toLowerCase(),total=Number.isFinite(Number(count))?Math.max(0,Math.floor(Number(count))):0;"
     "const output=$('sdState');if(state==='ready'||state==='available'||state==='ok'){sdReady=true;output.dataset.state='ready';"
     "output.textContent=total>0?'microSD 可用，现有 '+total+' 张图片。':'microSD 可用，尚无图片。'}"
@@ -428,7 +484,8 @@ static const char SETTINGS_PAGE[] =
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
     "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});initialUpdates=state.updates;}"
     "if(section==='all'||section==='conversation')setConversationState(state.conversation);if(section==='all'||section==='weather'){try{await setWeatherState(state.weather)}catch(error){weatherAvailable=false;weatherBusy=false;weatherControls();show('weatherMessage',error.message)}}"
-    "if(section==='all'||section==='images'){setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}}"
+    "if(section==='all'||section==='images'){setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}"
+    "if(section==='all'||section==='music')await loadMusic(preferred)}"
     "$('volume').oninput=()=>{$('volumeValue').value=$('volume').value};"
     "$('settings').onsubmit=async event=>{event.preventDefault();if(settingsBusy)return;const match=/^(\\d{2}):(\\d{2})$/.exec($('alarmTime').value);"
     "const days=Array.from(alarmDays()).reduce((mask,input)=>input.checked?mask|Number(input.dataset.bit):mask,0);"
@@ -2260,7 +2317,8 @@ static esp_err_t image_select_post_handler(httpd_req_t *request)
         return send_mutation_unavailable(request);
     }
 
-    const esp_err_t error = sd_image_store_select_preferred(filename);
+    esp_err_t error = audio_music_stop_and_wait(1500);
+    if (error == ESP_OK) error = sd_image_store_select_preferred(filename);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "could not select microSD image %s: %s",
                  filename, esp_err_to_name(error));
@@ -2304,7 +2362,8 @@ static esp_err_t image_delete_post_handler(httpd_req_t *request)
         return send_mutation_unavailable(request);
     }
 
-    const esp_err_t error = sd_image_store_delete(filename);
+    esp_err_t error = audio_music_stop_and_wait(1500);
+    if (error == ESP_OK) error = sd_image_store_delete(filename);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "could not delete microSD image %s: %s",
                  filename, esp_err_to_name(error));
@@ -2348,7 +2407,8 @@ static esp_err_t image_upload_post_handler(httpd_req_t *request)
         .verify_sha256 = false,
     };
     sd_image_import_t *import = NULL;
-    esp_err_t error = sd_image_import_begin(&options, &import);
+    esp_err_t error = audio_music_stop_and_wait(1500);
+    if (error == ESP_OK) error = sd_image_import_begin(&options, &import);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "microSD image import unavailable: %s",
                  esp_err_to_name(error));
@@ -2427,6 +2487,138 @@ failed:
             : "图片校验或写入失败，原有图片未受影响。\n");
 }
 
+static esp_err_t music_list_get_handler(httpd_req_t *request)
+{
+    if (!portal_is_ready()) return send_mutation_unavailable(request);
+    music_library_status_t library;
+    music_library_get_status(&library);
+    audio_music_status_t playing;
+    audio_music_get_status(&playing);
+    const size_t capacity = 256U + MUSIC_MAX_TRACKS * (MUSIC_FILENAME_CAPACITY * 6U + 96U);
+    char *json = heap_caps_malloc(capacity, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (json == NULL) return send_page(request, "503 Service Unavailable", "text/plain; charset=utf-8", "设备内存不足，请稍后重试。\n");
+    const char *state = playing.state == AUDIO_MUSIC_PLAYING ? "playing" :
+        playing.state == AUDIO_MUSIC_PAUSED ? "paused" : playing.state == AUDIO_MUSIC_ERROR ? "error" : "stopped";
+    int written = snprintf(json, capacity,
+        "{\"ready\":%s,\"scanned\":%s,\"truncated\":%s,\"state\":\"%s\",\"elapsed\":%lu,\"selected_index\":%u,\"tracks\":[",
+        library.card_available ? "true" : "false", library.scanned ? "true" : "false", library.truncated ? "true" : "false",
+        state, (unsigned long)playing.elapsed_seconds, playing.selected_index);
+    bool valid = written > 0 && (size_t)written < capacity;
+    size_t length = valid ? (size_t)written : 0;
+    for (size_t i = 0; valid && i < library.count; ++i) {
+        music_track_t track;
+        char escaped[MUSIC_FILENAME_CAPACITY * 6U + 1U];
+        if (!music_library_track(i, &track) || !settings_portal_json_escape(track.filename, escaped, sizeof(escaped))) { valid = false; break; }
+        written = snprintf(json + length, capacity - length, "%s{\"name\":\"%s\",\"bytes\":%lu}",
+                           i > 0U ? "," : "", escaped, (unsigned long)track.file_bytes);
+        valid = written > 0 && (size_t)written < capacity - length;
+        if (valid) length += (size_t)written;
+    }
+    if (valid) valid = snprintf(json + length, capacity - length, "]}") == 2;
+    const esp_err_t error = send_page(request, valid ? "200 OK" : "503 Service Unavailable",
+        valid ? "application/json; charset=utf-8" : "text/plain; charset=utf-8", valid ? json : "歌曲列表暂不可用，请重试。\n");
+    heap_caps_free(json);
+    return error;
+}
+
+static esp_err_t music_command_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) return ESP_OK;
+    const bool deleting = strcmp(request->uri, "/api/music/delete") == 0;
+    const bool stopping = strcmp(request->uri, "/api/music/stop") == 0;
+    char body[MUSIC_NAME_FORM_CAPACITY], filename[MUSIC_FILENAME_CAPACITY];
+    size_t length = 0;
+    esp_err_t error = receive_form(request, body, sizeof(body), &length);
+    if (error == ESP_ERR_TIMEOUT) return send_deadline_response(request);
+    const bool valid = error == ESP_OK && (stopping ? strcmp(body, "confirm=STOP") == 0 :
+        music_parse_name_form(body, length, deleting, filename));
+    if (!valid) return send_page(request, "400 Bad Request", "text/plain; charset=utf-8", "歌曲操作无效，请重新选择并确认。\n");
+    if (!stopping && !music_library_find(filename, NULL)) return send_page(request, "404 Not Found", "text/plain; charset=utf-8", "歌曲已不存在，请刷新列表。\n");
+    if (!begin_regular_mutation()) return send_mutation_unavailable(request);
+    if (deleting) {
+        error = audio_music_begin_storage_change(1500);
+        if (error == ESP_OK) {
+            audio_music_status_t status;
+            music_track_t selected = {0};
+            audio_music_get_status(&status);
+            (void)music_library_track(status.selected_index, &selected);
+            error = music_library_delete(filename);
+            (void)audio_music_select(selected.filename, false);
+            audio_music_end_storage_change();
+        }
+    } else if (stopping) error = audio_music_stop_and_wait(1500);
+    else error = audio_music_select(filename, true);
+    return finish_regular_request(request, error == ESP_OK ? "200 OK" : "409 Conflict",
+        error != ESP_OK ? "暂时无法完成，请稍后重试。删除失败时原文件保留。\n" :
+        deleting ? "歌曲已删除，无需重启。\n" : stopping ? "播放已停止。\n" : "已开始在设备扬声器播放。\n");
+}
+
+static bool music_upload_checkpoint(void *context)
+{
+    TickType_t *last_yield = context;
+    if (xTaskGetTickCount() - *last_yield >= pdMS_TO_TICKS(20)) {
+        vTaskDelay(1);
+        *last_yield = xTaskGetTickCount();
+    }
+    return !session_deadline_expired();
+}
+
+static esp_err_t music_upload_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) return ESP_OK;
+    char query[MUSIC_NAME_FORM_CAPACITY], filename[MUSIC_FILENAME_CAPACITY];
+    const size_t query_length = httpd_req_get_url_query_len(request);
+    const size_t total = request->content_len;
+    if (query_length == 0U || query_length >= sizeof(query) ||
+        httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
+        !music_parse_name_form(query, query_length, false, filename) || total < 44U || total > MUSIC_UPLOAD_MAX_BYTES) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8", "请选择不超过 32 MB 的 MP3 或 PCM WAV，文件名最长 127 个 UTF-8 字节。\n");
+    }
+    if (!begin_regular_mutation()) return send_mutation_unavailable(request);
+    esp_err_t error = audio_music_begin_storage_change(1500);
+    if (error != ESP_OK) return finish_regular_request(request, "409 Conflict", "音频正在结束，请稍后再上传。\n");
+    music_track_t selected = {0};
+    audio_music_status_t status;
+    audio_music_get_status(&status);
+    (void)music_library_track(status.selected_index, &selected);
+    music_import_t *transaction = NULL;
+    uint8_t *buffer = NULL;
+    error = music_import_begin(filename, total, &transaction);
+    if (error == ESP_OK) {
+        buffer = malloc(UPDATE_HTTP_BUFFER_SIZE);
+        if (buffer == NULL) error = ESP_ERR_NO_MEM;
+    }
+    size_t received = 0;
+    TickType_t last_yield = xTaskGetTickCount();
+    while (error == ESP_OK && received < total) {
+        if (!music_upload_checkpoint(&last_yield)) { error = ESP_ERR_TIMEOUT; break; }
+        const size_t count = total - received < UPDATE_HTTP_BUFFER_SIZE ? total - received : UPDATE_HTTP_BUFFER_SIZE;
+        const int chunk = httpd_req_recv(request, (char *)buffer, count);
+        /* A stalled client is aborted after one socket timeout (15 s), within
+         * the portal's 35 s shutdown grace. Do not restart that deadline. */
+        if (chunk <= 0) { error = chunk == HTTPD_SOCK_ERR_TIMEOUT ? ESP_ERR_TIMEOUT : ESP_FAIL; break; }
+        error = music_import_write(transaction, buffer, (size_t)chunk);
+        received += (size_t)chunk;
+    }
+    free(buffer);
+    if (error == ESP_OK) {
+        error = music_import_commit(transaction, music_upload_checkpoint, &last_yield);
+        transaction = NULL;
+    }
+    if (transaction != NULL) (void)music_import_abort(transaction);
+    (void)audio_music_select(selected.filename, false);
+    audio_music_end_storage_change();
+    const bool expired = session_deadline_expired();
+    return finish_regular_request(request, error == ESP_OK ? "200 OK" : expired || error == ESP_ERR_TIMEOUT ? "408 Request Timeout" : "409 Conflict",
+        error == ESP_OK ? "歌曲已校验并写入 microSD，可立即播放，无需重启。\n" :
+        expired ? "设置会话已到期，未完成的上传已丢弃。请重新开启设置后重试。\n" :
+        error == ESP_ERR_NOT_ALLOWED ? "已有同名文件，未覆盖。请更换文件名后上传。\n" :
+        error == ESP_ERR_INVALID_SIZE ? "歌曲列表已满或未完整接收，请检查文件和列表后重试。\n" :
+        error == ESP_ERR_NO_MEM ? "存储空间或设备内存不足，原有歌曲未受影响。\n" :
+        error == ESP_ERR_INVALID_RESPONSE ? "文件格式不支持或内容不完整，请选择 MP3 或 16 位 PCM WAV。\n" :
+        "上传未完成，原有歌曲未受影响。请检查连接与 microSD 后重试。\n");
+}
+
 static esp_err_t starter_gallery_post_handler(httpd_req_t *request)
 {
     if (!authorize_post(request)) {
@@ -2471,6 +2663,9 @@ static esp_err_t starter_gallery_post_handler(httpd_req_t *request)
         return send_mutation_unavailable(request);
     }
 
+    if (audio_music_stop_and_wait(1500) != ESP_OK) {
+        return finish_regular_request(request, "409 Conflict", "音频正在结束，请稍后再安装图集。\n");
+    }
     const esp_err_t response_error = send_page(
         request, "200 OK", "text/plain; charset=utf-8",
         "请求已接收。设置热点即将关闭，请查看设备屏幕。\n");
@@ -2548,6 +2743,8 @@ static esp_err_t update_post_handler(httpd_req_t *request)
         error = ESP_ERR_TIMEOUT;
         goto failed;
     }
+    error = audio_music_stop_and_wait(1500);
+    if (error != ESP_OK) goto failed;
     error = esp_ota_begin(partition, total, &update_handle);
     if (error == ESP_OK) {
         update_handle_open = true;
@@ -2661,7 +2858,7 @@ static esp_err_t start_web_server(void)
     const bool recovery_mode = boot_recovery_is_active();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192U;
-    config.max_uri_handlers = 22U;
+    config.max_uri_handlers = 28U;
     config.max_open_sockets = 2U;
     config.recv_wait_timeout = 15U;
     config.lru_purge_enable = true;
@@ -2765,6 +2962,13 @@ static esp_err_t start_web_server(void)
         .method = HTTP_POST,
         .handler = update_post_handler,
     };
+    const httpd_uri_t music_uris[] = {
+        {.uri = "/api/music", .method = HTTP_GET, .handler = music_list_get_handler},
+        {.uri = "/api/music/upload", .method = HTTP_POST, .handler = music_upload_post_handler},
+        {.uri = "/api/music/play", .method = HTTP_POST, .handler = music_command_post_handler},
+        {.uri = "/api/music/stop", .method = HTTP_POST, .handler = music_command_post_handler},
+        {.uri = "/api/music/delete", .method = HTTP_POST, .handler = music_command_post_handler},
+    };
     error = httpd_register_uri_handler(s_http_server, &root_uri);
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &state_uri);
@@ -2830,6 +3034,9 @@ static esp_err_t start_web_server(void)
     }
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &update_uri);
+    }
+    for (size_t i = 0; !recovery_mode && error == ESP_OK && i < sizeof(music_uris) / sizeof(music_uris[0]); ++i) {
+        error = httpd_register_uri_handler(s_http_server, &music_uris[i]);
     }
     if (error == ESP_OK) {
         error = httpd_register_err_handler(s_http_server,

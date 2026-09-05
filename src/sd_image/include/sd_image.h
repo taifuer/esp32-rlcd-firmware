@@ -116,7 +116,7 @@ bool sd_image_import_build_filename(
     char *filename, size_t capacity);
 
 /*
- * A PBM import is the only operation that mounts the card for writing. Calls
+ * PBM imports, confirmed deletes and music imports share the SD write mutex. Calls
  * belonging to one transaction must be made from the same FreeRTOS task.
  * begin() requires an exact, bounded size; write() may be called repeatedly.
  * commit() and abort() both consume the transaction. A successful commit

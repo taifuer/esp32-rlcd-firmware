@@ -29,7 +29,7 @@ music_format_t music_filename_format(const char *name)
     if (length < 5U || length >= MUSIC_FILENAME_CAPACITY) return MUSIC_FORMAT_NONE;
     for (size_t i = 0; i < length; ++i) {
         const unsigned char c = (unsigned char)name[i];
-        if (c < 32U || c == 127U || c == '/' || c == '\\' || c == ':') return MUSIC_FORMAT_NONE;
+        if (c < 32U || c == 127U || strchr("/\\:*?\"<>|", c) != NULL) return MUSIC_FORMAT_NONE;
         if (c >= 128U) {
             unsigned following;
             uint32_t codepoint, minimum;
@@ -163,4 +163,67 @@ bool music_file_probe(FILE *file, uint32_t bytes, music_format_t format, music_f
     if (format == MUSIC_FORMAT_WAV) return probe_wav(file, bytes, info);
     if (format == MUSIC_FORMAT_MP3) return probe_mp3(file, bytes, info);
     return false;
+}
+
+static int hex_digit(unsigned char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+bool music_parse_name_form(const char *body, size_t length, bool deleting,
+                           char filename[MUSIC_FILENAME_CAPACITY])
+{
+    if (filename == NULL) return false;
+    filename[0] = '\0';
+    const char suffix[] = "&confirm=DELETE";
+    if (body == NULL || length < 6U || length >= MUSIC_NAME_FORM_CAPACITY ||
+        memcmp(body, "name=", 5) != 0) return false;
+    if (deleting) {
+        if (length < 6U + sizeof(suffix) - 1U ||
+            memcmp(body + length - sizeof(suffix) + 1U, suffix, sizeof(suffix) - 1U) != 0) return false;
+        length -= sizeof(suffix) - 1U;
+    }
+    size_t used = 0;
+    for (size_t i = 5; i < length; ++i) {
+        unsigned char c = (unsigned char)body[i];
+        if (c == '%' && i + 2U < length) {
+            const int high = hex_digit((unsigned char)body[i + 1U]);
+            const int low = hex_digit((unsigned char)body[i + 2U]);
+            if (high < 0 || low < 0) goto invalid;
+            c = (unsigned char)(high * 16 + low); i += 2U;
+        } else if (c == '%' || c == '&' || c == '=') goto invalid;
+        else if (c == '+') c = ' ';
+        if (c == 0U || used + 1U >= MUSIC_FILENAME_CAPACITY) goto invalid;
+        filename[used++] = (char)c;
+    }
+    filename[used] = '\0';
+    if (music_filename_format(filename) != MUSIC_FORMAT_NONE) return true;
+invalid:
+    filename[0] = '\0';
+    return false;
+}
+
+bool music_file_validate(FILE *file, uint32_t bytes, music_format_t format,
+                         music_file_info_t *info, bool (*checkpoint)(void *), void *context)
+{
+    if (!music_file_probe(file, bytes, format, info)) return false;
+    if (format == MUSIC_FORMAT_WAV) return checkpoint == NULL || checkpoint(context);
+    uint32_t offset = info->data_offset;
+    unsigned frames = 0;
+    while (offset < bytes) {
+        if ((frames % 32U) == 0U && checkpoint != NULL && !checkpoint(context)) return false;
+        uint8_t header[4];
+        if (bytes - offset < sizeof(header) || fseek(file, (long)offset, SEEK_SET) != 0 ||
+            fread(header, 1, sizeof(header), file) != sizeof(header)) return false;
+        if (bytes - offset == 128U && memcmp(header, "TAG", 3) == 0) return frames >= 2U;
+        music_mp3_frame_t frame;
+        if (!music_mp3_parse_header(header, &frame) || frame.frame_bytes > bytes - offset ||
+            frame.sample_rate != info->sample_rate || frame.channels != info->channels) return false;
+        offset += frame.frame_bytes;
+        ++frames;
+    }
+    return frames >= 2U;
 }

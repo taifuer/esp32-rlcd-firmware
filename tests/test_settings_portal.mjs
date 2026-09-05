@@ -27,6 +27,7 @@ assert.doesNotMatch(javascript, /localStorage|sessionStorage|navigator\.clipboar
 class Element {
   value = ''; checked = false; disabled = false; hidden = false;
   dataset = {}; children = []; selectedIndex = 0; textContent = '';
+  files = []; open = false;
   appendChild(child) { this.children.push(child); }
   removeChild(child) { this.children.splice(this.children.indexOf(child), 1); }
   get firstChild() { return this.children[0] || null; }
@@ -50,6 +51,15 @@ let state = {
     model: 'qwen3-omni-flash-realtime', api_host: 'dashscope.aliyuncs.com', shared_endpoint: true},
 };
 let failPost = false, lastBody = '', pendingPost;
+let lastPath = '', confirmed = true, lastConfirmation = '', request;
+let music = {ready: true, scanned: true, truncated: false, state: 'stopped', elapsed: 0,
+  selected_index: 0, tracks: [{name: '01 - 音乐 & 测试.mp3', bytes: 1234567}, {name: '02.wav', bytes: 5678}]};
+class FakeRequest {
+  constructor() { request = this; this.headers = {}; this.upload = {}; }
+  open(method, path) { this.method = method; this.path = path; }
+  setRequestHeader(key, value) { this.headers[key] = value; }
+  send(body) { this.body = body; }
+}
 const context = vm.createContext({
   document: {
     getElementById(id) { assert.ok(elements[id], 'missing element ' + id); return elements[id]; },
@@ -58,12 +68,14 @@ const context = vm.createContext({
   },
   fetch: async (path, options = {}) => {
     if (options.method === 'POST') {
+      lastPath = path;
       lastBody = options.body;
       if (pendingPost) await pendingPost;
       return {ok: !failPost, text: async () => failPost ? '保存失败' : '已保存'};
     }
     if (path === '/api/state') return {ok: true, json: async () => structuredClone(state)};
     if (path === '/api/images') return {ok: true, json: async () => ({images: [], selected: ''})};
+    if (path === '/api/music') return {ok: true, json: async () => structuredClone(music)};
     if (path.startsWith('/api/weather/regions')) return {ok: true, json: async () => ({items: [{id: 1, name: '测试'}]})};
     assert.fail('unexpected request ' + path);
   },
@@ -76,7 +88,8 @@ const context = vm.createContext({
       }
     }
   },
-  URLSearchParams, TextEncoder, confirm: () => true,
+  URLSearchParams, TextEncoder, confirm: message => { lastConfirmation = message; return confirmed; },
+  setInterval() {}, XMLHttpRequest: FakeRequest,
 });
 vm.runInContext(javascript, context);
 await new Promise(resolve => setImmediate(resolve));
@@ -123,4 +136,55 @@ await elements.settings.onsubmit({preventDefault() {}, target: elements.settings
 assert.equal(elements.volume.value, 42, 'failed save keeps the submitted draft');
 assert.equal(elements.volume.disabled, false);
 assert.equal(elements.settingsMessage.textContent, '保存失败');
-console.log('Settings portal: exact JS, scoped refresh, draft isolation, failure and footer passed.');
+failPost = false;
+await vm.runInContext("load('music')", context);
+assert.equal(elements.volume.value, 42, 'music refresh preserves settings draft');
+assert.equal(elements.conversationKey.value, 'edited-while-other-form-saves');
+assert.match(elements.musicTracks.children[0].textContent, /1\.23 MB/);
+assert.equal(elements.musicPlay.disabled, false);
+await elements.musicPlay.onclick();
+assert.equal(lastPath, '/api/music/play');
+assert.equal(lastBody, 'name=' + encodeURIComponent(music.tracks[0].name));
+confirmed = false;
+await elements.musicDelete.onclick();
+assert.equal(lastPath, '/api/music/play', 'cancelled deletion makes no POST');
+assert.match(lastConfirmation, /01 - 音乐 & 测试\.mp3/);
+confirmed = true;
+await elements.musicDelete.onclick();
+assert.equal(lastPath, '/api/music/delete');
+assert.match(lastBody, /&confirm=DELETE$/);
+elements.musicFile.files = [{name: '新歌 + a.mp3', size: 9000}];
+elements.musicFile.onchange();
+assert.equal(elements.musicUpload.disabled, false);
+elements.musicUpload.onclick();
+assert.equal(request.path, '/api/music/upload?name=' + encodeURIComponent('新歌 + a.mp3'));
+assert.equal(request.headers['X-RLCD-Token'], 'test-token');
+assert.equal(elements.musicPlay.disabled, true);
+request.upload.onprogress({lengthComputable: true, loaded: 9000, total: 9000});
+assert.match(elements.musicMessage.textContent, /校验/);
+request.onerror();
+assert.equal(elements.musicPlay.disabled, false, 'connection failure releases controls');
+assert.equal(elements.musicFile.files.length, 1, 'failed upload keeps chosen file');
+elements.musicUpload.onclick();
+request.status = 200; request.responseText = '歌曲已写入';
+await request.onload();
+assert.equal(elements.musicMessage.textContent, '歌曲已写入');
+assert.equal(elements.conversationKey.value, 'edited-while-other-form-saves');
+request = null;
+elements.musicFile.files = [{name: 'large.mp3', size: 32000001}];
+elements.musicUpload.onclick();
+assert.equal(request, null, 'oversized upload never sent');
+elements.musicFile.files = [{name: '01 - 音乐 & 测试.MP3', size: 9000}];
+elements.musicUpload.onclick();
+assert.equal(request, null, 'case-insensitive duplicate not sent');
+music.truncated = true;
+await vm.runInContext('loadMusic()', context);
+assert.equal(elements.musicUpload.disabled, true);
+assert.equal(elements.musicDelete.disabled, false, 'full library still deletable');
+music = {...music, ready: false, tracks: []};
+await vm.runInContext('loadMusic()', context);
+assert.equal(elements.musicFile.disabled, true);
+assert.equal(elements.musicPlay.disabled, true);
+assert.match(elements.musicState.textContent, /未检测到/);
+assert.doesNotMatch(source.split('static const char RECOVERY_SETTINGS_PAGE[] =')[1].split('static const char SETTINGS_PAGE[] =')[0], /api\/music|musicTracks/);
+console.log('Settings portal: exact JS, scoped drafts, music CRUD, cancellation, upload errors, no card and recovery isolation passed.');

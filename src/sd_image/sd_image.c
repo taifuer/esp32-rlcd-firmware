@@ -250,6 +250,16 @@ esp_err_t sd_media_end_read(sd_media_read_t *session)
     return error;
 }
 
+esp_err_t sd_media_begin_write(sd_media_write_t **session, uint32_t wait_ms)
+{
+    return sd_media_begin_read(session, wait_ms);
+}
+
+esp_err_t sd_media_end_write(sd_media_write_t *session)
+{
+    return sd_media_end_read(session);
+}
+
 static bool read_and_decode(const char *path,
                             mono_image_format_t expected_format,
                             uint8_t *bitmap,
