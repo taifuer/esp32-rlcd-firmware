@@ -299,19 +299,6 @@ static bool image_delete_target_matches_status(
     return app_image_delete_target_matches(target, &current);
 }
 
-static app_page_t default_display_page(app_default_display_t display)
-{
-    switch (display) {
-    case APP_DEFAULT_DISPLAY_WEATHER:
-        return APP_PAGE_WEATHER;
-    case APP_DEFAULT_DISPLAY_IMAGE:
-        return APP_PAGE_IMAGE;
-    case APP_DEFAULT_DISPLAY_CLOCK:
-    default:
-        return APP_PAGE_HOME;
-    }
-}
-
 static uint32_t alarm_schedule_revision(const app_settings_t *settings)
 {
     if (settings == NULL) {
@@ -1427,8 +1414,6 @@ void app_main(void)
                              BUTTON_LONG_PRESS_DISABLED_MS);
     app_page_state_t page_state;
     app_page_state_init(&page_state);
-    (void)app_page_state_set_default(
-        &page_state, default_display_page(settings.default_display));
     app_page_state_set_recovery_mode(&page_state, recovery_mode);
     quick_settings_t quick_settings = {0};
     char recovery_reset[32] = {0};
@@ -1500,12 +1485,6 @@ void app_main(void)
         &page_state,
         image_bitmap_snapshot != NULL &&
             initial_sd_image_status.state == SD_IMAGE_STATE_READY);
-    if (!recovery_mode) {
-        app_page_state_go_default(&page_state);
-    }
-    bool startup_image_pending = !recovery_mode &&
-        settings.default_display == APP_DEFAULT_DISPLAY_IMAGE &&
-        initial_sd_image_status.state == SD_IMAGE_STATE_LOADING;
     sd_image_state_t previous_sd_image_state =
         initial_sd_image_status.state;
     uint32_t previous_sd_image_revision =
@@ -1638,16 +1617,10 @@ void app_main(void)
             weather_status.state == WEATHER_SERVICE_STATE_REFRESHING;
         if (weather_status.interactive_refresh &&
             !weather_interactive_loading) {
-            const bool weather_page_open =
-                app_page_state_current(&page_state) ==
-                APP_PAGE_WEATHER;
             if (weather_service_acknowledge_interactive_refresh() ==
                 ESP_OK) {
                 weather_status.interactive_refresh = false;
                 weather_interactive_page_opened = false;
-                if (weather_page_open) {
-                    app_page_state_note_activity(&page_state);
-                }
             }
             render_requested = true;
         }
@@ -1660,13 +1633,6 @@ void app_main(void)
                 image_bitmap_snapshot != NULL &&
                 latest_sd_image_status.state == SD_IMAGE_STATE_READY;
             app_page_state_set_image_available(&page_state, image_ready);
-            if (startup_image_pending &&
-                latest_sd_image_status.state != SD_IMAGE_STATE_LOADING) {
-                if (app_page_state_current(&page_state) == APP_PAGE_HOME) {
-                    app_page_state_go_default(&page_state);
-                }
-                startup_image_pending = false;
-            }
             const bool state_changed =
                 latest_sd_image_status.state != previous_sd_image_state;
             previous_sd_image_state = latest_sd_image_status.state;
@@ -2011,9 +1977,6 @@ void app_main(void)
                 if (apply_error == ESP_OK) {
                     settings = snapshot.settings;
                     settings_generation = snapshot.generation;
-                    (void)app_page_state_set_default(
-                        &page_state,
-                        default_display_page(settings.default_display));
                     power_runtime = next_power_runtime;
                     power_policy = next_power_policy;
                     if (configured_power_changed) {
@@ -2159,9 +2122,6 @@ void app_main(void)
             key_pressed || key_debounced_pressed;
         const bool boot_pressed_or_debounced =
             boot_pressed || boot_debounced_pressed;
-        if (key_pressed_or_debounced || boot_pressed_or_debounced) {
-            startup_image_pending = false;
-        }
         if (key_pressed_or_debounced &&
             boot_pressed_or_debounced) {
             dual_button_release_gate = true;
@@ -2288,7 +2248,6 @@ void app_main(void)
             alarm_input_gate_arm(&alarm_input_gate,
                                  key_pressed_or_debounced,
                                  boot_pressed_or_debounced);
-            app_page_state_note_activity(&page_state);
             render_requested = true;
             ESP_LOGI(TAG, "alarm ringing%s",
                      alarm_result.snooze_available ? ""
@@ -2304,7 +2263,6 @@ void app_main(void)
             alarm_input_gate_arm(&alarm_input_gate,
                                  key_pressed_or_debounced,
                                  boot_pressed_or_debounced);
-            app_page_state_note_activity(&page_state);
             render_requested = true;
             ESP_LOGI(TAG, "alarm stopped%s",
                      alarm_result.state == ALARM_SCHEDULER_SNOOZED
@@ -2343,17 +2301,9 @@ void app_main(void)
         }
 
         if (alarm_button_events_suppressed) {
-            if (key_event != BUTTON_EVENT_NONE ||
-                boot_event != BUTTON_EVENT_NONE) {
-                app_page_state_note_activity(&page_state);
-            }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
         } else if (dual_button_release_gate) {
-            if (key_event != BUTTON_EVENT_NONE ||
-                boot_event != BUTTON_EVENT_NONE) {
-                app_page_state_note_activity(&page_state);
-            }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
             if (!key_pressed_or_debounced &&
@@ -2363,10 +2313,6 @@ void app_main(void)
                          "both buttons released; input restored");
             }
         } else if (voice_button_release_gate) {
-            if (key_event != BUTTON_EVENT_NONE ||
-                boot_event != BUTTON_EVENT_NONE) {
-                app_page_state_note_activity(&page_state);
-            }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
             if (!key_pressed_or_debounced &&
@@ -2376,10 +2322,6 @@ void app_main(void)
                          "voice-session button release consumed");
             }
         } else if (image_delete_release_gate_was_active) {
-            if (key_event != BUTTON_EVENT_NONE ||
-                boot_event != BUTTON_EVENT_NONE) {
-                app_page_state_note_activity(&page_state);
-            }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
         } else if (voice_session_active) {
@@ -2513,26 +2455,14 @@ void app_main(void)
                 }
                 render_requested = true;
             }
-            if (key_event != BUTTON_EVENT_NONE ||
-                boot_event != BUTTON_EVENT_NONE) {
-                app_page_state_note_activity(&page_state);
-            }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
         }
         if (gallery_download_ui_active) {
-            if (key_event != BUTTON_EVENT_NONE ||
-                boot_event != BUTTON_EVENT_NONE) {
-                app_page_state_note_activity(&page_state);
-            }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
         }
         if (power_setting_ui != POWER_SETTING_UI_NONE) {
-            if (key_event != BUTTON_EVENT_NONE ||
-                boot_event != BUTTON_EVENT_NONE) {
-                app_page_state_note_activity(&page_state);
-            }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
         }
@@ -2588,10 +2518,6 @@ void app_main(void)
                     render_requested = true;
                 }
             }
-            if (key_event != BUTTON_EVENT_NONE ||
-                boot_event != BUTTON_EVENT_NONE) {
-                app_page_state_note_activity(&page_state);
-            }
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
         }
@@ -2616,8 +2542,7 @@ void app_main(void)
                                   : QUICK_SETTINGS_ACTIVATE;
                     action = quick_settings_input(
                         &quick_settings, menu_input,
-                        settings_readable ? &latest_settings : NULL,
-                        page_state.weather_enabled, page_state.image_available);
+                        settings_readable ? &latest_settings : NULL);
                 }
                 if (action == QUICK_SETTINGS_ACTION_SAVE) {
                     app_setting_field_t field = APP_SETTING_VOLUME;
@@ -2630,14 +2555,6 @@ void app_main(void)
                                                 save_error == ESP_OK);
                     if (save_error == ESP_OK) {
                         settings_refresh_requested = true;
-                        if (field == APP_SETTING_DEFAULT_DISPLAY) {
-                            (void)app_page_state_set_default(
-                                &page_state, default_display_page(
-                                    (app_default_display_t)value));
-                            quick_settings_close(&quick_settings);
-                            dual_button_release_gate = true;
-                            app_page_state_go_default(&page_state);
-                        }
                     }
                     ESP_LOGI(TAG, "quick setting field=%u save: %s",
                              (unsigned)field, esp_err_to_name(save_error));
@@ -2659,7 +2576,6 @@ void app_main(void)
                     ESP_LOGI(TAG, "quick settings web portal: %s",
                              esp_err_to_name(start_error));
                 }
-                app_page_state_note_activity(&page_state);
                 render_requested = true;
             }
             key_event = BUTTON_EVENT_NONE;
@@ -2706,7 +2622,6 @@ void app_main(void)
                                  "selected: %s",
                                  esp_err_to_name(preferred_error));
                     }
-                    app_page_state_note_activity(&page_state);
                 } else {
                     app_page_state_key_short_press(&page_state);
                     if (app_page_state_current(&page_state) ==
@@ -2720,7 +2635,6 @@ void app_main(void)
                 render_requested = true;
             }
         } else if (key_event == BUTTON_EVENT_HOLD_CANCELLED) {
-            app_page_state_note_activity(&page_state);
             render_requested = true;
             if (input_page == APP_PAGE_SETTINGS) {
                 ESP_LOGI(TAG,
@@ -2732,7 +2646,6 @@ void app_main(void)
                 ESP_LOGI(TAG, "KEY hold released without an action");
             }
         } else if (key_event == BUTTON_EVENT_LONG_PRESS) {
-            app_page_state_note_activity(&page_state);
             const app_page_action_t key_action =
                 app_page_key_hold_action(input_page);
             if (key_action == APP_PAGE_ACTION_DELETE_IMAGE &&
@@ -2951,7 +2864,6 @@ void app_main(void)
         }
 
         if (boot_event == BUTTON_EVENT_HOLD_CANCELLED) {
-            app_page_state_note_activity(&page_state);
             render_requested = true;
             if (input_page == APP_PAGE_SETTINGS) {
                 ESP_LOGI(TAG,
@@ -2961,7 +2873,6 @@ void app_main(void)
                          "BOOT hold released without an action");
             }
         } else if (boot_event == BUTTON_EVENT_LONG_PRESS) {
-            app_page_state_note_activity(&page_state);
             const app_page_action_t boot_action =
                 recovery_mode ? APP_PAGE_ACTION_NONE
                               : app_page_boot_hold_action(input_page);
@@ -3133,12 +3044,8 @@ void app_main(void)
             key_pressed || boot_pressed ||
             button_state_is_pressed(&key_button_state) ||
             button_state_is_pressed(&boot_button_state);
-        if (button_interaction_active) {
-            app_page_state_note_activity(&page_state);
-        }
         if (quick_settings_tick(&quick_settings, button_elapsed_ms,
                                  button_interaction_active)) {
-            app_page_state_go_default(&page_state);
             render_requested = true;
         }
 
@@ -3169,7 +3076,6 @@ void app_main(void)
              * the restored SETTINGS page and trigger another action. */
             power_setting_ui = POWER_SETTING_UI_NONE;
             power_setting_result_timer_started = false;
-            app_page_state_note_activity(&page_state);
             render_requested = true;
         }
         const app_image_delete_ui_state_t image_delete_state_before_tick =
@@ -3258,25 +3164,6 @@ void app_main(void)
                 voice_session_error = ESP_OK;
                 render_requested = true;
             }
-        }
-        if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
-            !quick_settings.active &&
-            !hold_prompt_active &&
-            !app_image_delete_ui_is_active(&image_delete_ui) &&
-            power_setting_ui == POWER_SETTING_UI_NONE &&
-            !firmware_update_ui_active &&
-            !gallery_download_ui_active &&
-            !weather_interactive_loading &&
-            !(input_page == APP_PAGE_ONLINE_UPDATE &&
-              (online_update_busy ||
-               online_update_confirmation_active)) &&
-            !alarm_button_events_suppressed && !alarm_modal_active &&
-            !voice_session_state_is_active(&voice_session) &&
-            !button_interaction_active &&
-            app_page_state_tick(&page_state, button_elapsed_ms)) {
-            render_requested = true;
-            ESP_LOGI(TAG, "page timeout: returning to %s",
-                     page_name(app_page_state_current(&page_state)));
         }
 
         const bool startup_milestones_complete =
@@ -3753,8 +3640,7 @@ void app_main(void)
                     display_show_quick_settings(
                         &quick_settings, &saved.settings,
                         saved.generation != settings_generation,
-                        dashboard.time_valid,
-                        page_state.weather_enabled, page_state.image_available);
+                        dashboard.time_valid);
                 }
                 previous_display_mode = APP_DISPLAY_QUICK_SETTINGS;
                 previous_portal_seconds = 0U;
@@ -4183,10 +4069,9 @@ void app_main(void)
                         .power_apply_pending =
                             power_setting_apply_pending,
                         .utc_offset_minutes = settings.utc_offset_minutes,
-                        .default_display = settings.default_display,
-                        .default_display_available =
-                            app_page_state_default(&page_state) ==
-                            default_display_page(settings.default_display),
+                        .temperature_fahrenheit =
+                            settings.temperature_unit ==
+                            APP_TEMPERATURE_UNIT_FAHRENHEIT,
                         .playback_volume_percent =
                             settings.audio_playback_volume,
                         .alarm_enabled = settings.alarm_enabled,

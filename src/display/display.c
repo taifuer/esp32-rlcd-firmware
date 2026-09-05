@@ -1645,10 +1645,8 @@ void display_show_settings(const display_settings_status_t *status)
     draw_system_row(72, "POWER", power);
     format_utc_offset(value, sizeof(value), status->utc_offset_minutes);
     draw_system_row(108, "TIME ZONE", value);
-    snprintf(value, sizeof(value), "%s%s",
-             app_default_display_name(status->default_display),
-             status->default_display_available ? "" : " | NO DATA");
-    draw_system_row(144, "DISPLAY", value);
+    draw_system_row(144, "TEMP UNIT",
+                    status->temperature_fahrenheit ? "FAHRENHEIT" : "CELSIUS");
     if (status->playback_volume_percent <= 100U) {
         snprintf(value, sizeof(value), "%u %%",
                  status->playback_volume_percent);
@@ -1673,8 +1671,7 @@ void display_show_settings(const display_settings_status_t *status)
 
 void display_show_quick_settings(const quick_settings_t *menu,
                                  const app_settings_t *saved,
-                                 bool apply_pending, bool rtc_valid,
-                                 bool weather_enabled, bool image_available)
+                                 bool apply_pending, bool rtc_valid)
 {
     if (s_u8g2 == NULL || menu == NULL || !menu->active || saved == NULL) {
         return;
@@ -1685,11 +1682,8 @@ void display_show_quick_settings(const quick_settings_t *menu,
     if (menu->editing) {
         if (menu->item == QUICK_SETTINGS_VOLUME) {
             snprintf(value, sizeof(value), "%u %%", menu->draft);
-        } else if (menu->item == QUICK_SETTINGS_ALARM) {
-            snprintf(value, sizeof(value), "%s", menu->draft ? "ON" : "OFF");
         } else {
-            snprintf(value, sizeof(value), "%s",
-                     app_default_display_name((app_default_display_t)menu->draft));
+            snprintf(value, sizeof(value), "%s", menu->draft ? "ON" : "OFF");
         }
         u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
         draw_centered(137, value);
@@ -1704,15 +1698,10 @@ void display_show_quick_settings(const quick_settings_t *menu,
             draw_centered(188, value);
             draw_centered(212, rtc_valid ? "CHANGE SCHEDULE IN WEB SETTINGS"
                                         : "SET RTC TIME IN WEB SETTINGS");
-        } else {
-            draw_centered(188, "AT STARTUP AND AFTER 30s IDLE");
-            draw_centered(212, !weather_enabled && !image_available
-                ? "ENABLE WEATHER OR ADD AN SD IMAGE"
-                : "UNAVAILABLE PAGES FALL BACK TO CLOCK");
         }
     } else {
         for (unsigned index = 0U; index < QUICK_SETTINGS_ITEM_COUNT; ++index) {
-            const int baseline = 80 + (int)index * 44;
+            const int baseline = 90 + (int)index * 54;
             if ((unsigned)menu->item == index) {
                 u8g2_DrawBox(s_u8g2, 12, baseline - 25, 376, 36);
                 u8g2_SetDrawColor(s_u8g2, 0);
@@ -1726,9 +1715,6 @@ void display_show_quick_settings(const quick_settings_t *menu,
                 snprintf(value, sizeof(value), "%s %02u:%02u",
                          saved->alarm_enabled ? "ON" : "OFF",
                          saved->alarm_hour, saved->alarm_minute);
-            } else if (index == QUICK_SETTINGS_DISPLAY) {
-                snprintf(value, sizeof(value), "%s",
-                         app_default_display_name(saved->default_display));
             } else {
                 snprintf(value, sizeof(value), ">");
             }

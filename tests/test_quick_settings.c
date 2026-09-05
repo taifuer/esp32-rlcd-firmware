@@ -4,6 +4,7 @@
 
 #include "button_state.h"
 #include "display_interaction_model.h"
+#include "page_state.h"
 #include "quick_settings.h"
 
 static app_settings_t saved;
@@ -18,7 +19,7 @@ static void release(quick_settings_t *menu)
 static quick_settings_action_t input(quick_settings_t *menu,
                                      quick_settings_input_t action)
 {
-    return quick_settings_input(menu, action, &saved, true, true);
+    return quick_settings_input(menu, action, &saved);
 }
 
 static void test_edit_cancel_save_and_latest_values(void)
@@ -83,56 +84,39 @@ static void test_edit_cancel_save_and_latest_values(void)
     assert(!menu.active);
 }
 
-static void test_display_availability_and_web(void)
+static void test_three_items_and_web(void)
 {
+    assert(QUICK_SETTINGS_ITEM_COUNT == 3);
     quick_settings_t menu;
     quick_settings_open(&menu);
     release(&menu);
     input(&menu, QUICK_SETTINGS_NEXT);
     input(&menu, QUICK_SETTINGS_NEXT);
-    assert(menu.item == QUICK_SETTINGS_DISPLAY);
-    saved.default_display = APP_DEFAULT_DISPLAY_CLOCK;
-    input(&menu, QUICK_SETTINGS_ACTIVATE);
-    release(&menu);
-    input(&menu, QUICK_SETTINGS_NEXT);
-    assert(menu.draft == APP_DEFAULT_DISPLAY_WEATHER);
-    input(&menu, QUICK_SETTINGS_NEXT);
-    assert(menu.draft == APP_DEFAULT_DISPLAY_IMAGE);
-    assert(quick_settings_input(&menu, QUICK_SETTINGS_ACTIVATE,
-                                &saved, true, false) == QUICK_SETTINGS_ACTION_NONE);
-    assert(menu.editing && menu.notice == QUICK_SETTINGS_NOTICE_UNAVAILABLE);
-    release(&menu);
-    quick_settings_input(&menu, QUICK_SETTINGS_NEXT, &saved, false, false);
-    assert(menu.draft == APP_DEFAULT_DISPLAY_CLOCK);
-    quick_settings_input(&menu, QUICK_SETTINGS_NEXT, &saved, false, false);
-    assert(menu.draft == APP_DEFAULT_DISPLAY_CLOCK);
-    quick_settings_input(&menu, QUICK_SETTINGS_NEXT, &saved, false, true);
-    assert(menu.draft == APP_DEFAULT_DISPLAY_IMAGE);
     app_setting_field_t field;
     uint8_t value;
-    assert(input(&menu, QUICK_SETTINGS_ACTIVATE) == QUICK_SETTINGS_ACTION_SAVE);
-    assert(quick_settings_save_request(&menu, &field, &value));
-    assert(field == APP_SETTING_DEFAULT_DISPLAY && value == APP_DEFAULT_DISPLAY_IMAGE);
-    quick_settings_save_result(&menu, true);
-    release(&menu);
-    input(&menu, QUICK_SETTINGS_NEXT);
     assert(menu.item == QUICK_SETTINGS_WEB);
     assert(input(&menu, QUICK_SETTINGS_ACTIVATE) == QUICK_SETTINGS_ACTION_OPEN_WEB);
     assert(!quick_settings_save_request(&menu, &field, &value));
     release(&menu);
     input(&menu, QUICK_SETTINGS_NEXT);
     assert(menu.item == QUICK_SETTINGS_VOLUME);
-    assert(quick_settings_input(&menu, QUICK_SETTINGS_ACTIVATE, NULL,
-                                true, true) == QUICK_SETTINGS_ACTION_NONE);
+    assert(quick_settings_input(&menu, QUICK_SETTINGS_ACTIVATE, NULL) ==
+           QUICK_SETTINGS_ACTION_NONE);
     assert(!menu.editing && menu.notice == QUICK_SETTINGS_NOTICE_UNAVAILABLE);
 }
 
 static void test_timeout_and_preemption(void)
 {
+    app_page_state_t page;
+    app_page_state_init(&page);
+    assert(app_page_state_open_page(&page, APP_PAGE_SETTINGS));
     quick_settings_t menu;
     quick_settings_open(&menu);
     assert(!quick_settings_tick(&menu, UINT32_MAX, false));
     release(&menu);
+    assert(!quick_settings_tick(&menu, UINT32_MAX, false));
+    assert(menu.active && !menu.editing); /* browsing never expires */
+    const uint8_t saved_volume = saved.audio_playback_volume;
     input(&menu, QUICK_SETTINGS_ACTIVATE);
     release(&menu);
     input(&menu, QUICK_SETTINGS_NEXT);
@@ -140,8 +124,17 @@ static void test_timeout_and_preemption(void)
     assert(!quick_settings_tick(&menu, UINT32_MAX, true));
     assert(!quick_settings_tick(&menu, 29999U, false));
     assert(quick_settings_tick(&menu, 1U, false));
-    assert(!menu.active && !menu.editing && menu.draft == 0U);
+    assert(menu.active && !menu.editing && menu.draft == 0U);
+    assert(menu.item == QUICK_SETTINGS_VOLUME);
+    assert(saved.audio_playback_volume == saved_volume);
+    assert(app_page_state_current(&page) == APP_PAGE_SETTINGS);
     assert(!quick_settings_tick(&menu, UINT32_MAX, false));
+    input(&menu, QUICK_SETTINGS_ACTIVATE);
+    assert(menu.editing && menu.draft == saved_volume);
+    release(&menu);
+    assert(quick_settings_tick(&menu, UINT32_MAX, false));
+    input(&menu, QUICK_SETTINGS_BACK);
+    assert(!menu.active && app_page_state_current(&page) == APP_PAGE_SETTINGS);
     quick_settings_open(&menu);
     release(&menu);
     input(&menu, QUICK_SETTINGS_ACTIVATE);
@@ -150,7 +143,8 @@ static void test_timeout_and_preemption(void)
     assert(input(&menu, QUICK_SETTINGS_ACTIVATE) == QUICK_SETTINGS_ACTION_NONE);
     quick_settings_open(&menu);
     release(&menu);
-    assert(quick_settings_tick(&menu, UINT32_MAX, false));
+    assert(!quick_settings_tick(&menu, UINT32_MAX, false));
+    assert(menu.active && !menu.editing);
 }
 
 static void test_real_button_release_and_timing(void)
@@ -203,7 +197,7 @@ static void test_copy_and_invalid_arguments(void)
     assert(!quick_settings_tick(NULL, 100U, false));
     assert(!quick_settings_save_request(NULL, NULL, NULL));
     quick_settings_save_result(NULL, true);
-    assert(quick_settings_input(NULL, QUICK_SETTINGS_NEXT, &saved, true, true) ==
+    assert(quick_settings_input(NULL, QUICK_SETTINGS_NEXT, &saved) ==
            QUICK_SETTINGS_ACTION_NONE);
 }
 
@@ -211,7 +205,7 @@ int main(void)
 {
     app_settings_defaults(&saved);
     test_edit_cancel_save_and_latest_values();
-    test_display_availability_and_web();
+    test_three_items_and_web();
     test_timeout_and_preemption();
     test_real_button_release_and_timing();
     test_copy_and_invalid_arguments();

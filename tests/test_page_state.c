@@ -4,58 +4,44 @@
 
 #include "page_state.h"
 
-static void test_persistent_display(void)
+static void test_browsing_stays_and_background_discovery_never_navigates(void)
 {
     app_page_state_t state;
     app_page_state_init(&state);
-    assert(app_page_state_default(&state) == APP_PAGE_HOME);
-    assert(!app_page_state_set_default(NULL, APP_PAGE_HOME));
-    assert(!app_page_state_set_default(&state, APP_PAGE_CALENDAR));
-    assert(!app_page_state_set_default(&state, APP_PAGE_SETTINGS));
-    assert(app_page_state_set_default(&state, APP_PAGE_WEATHER));
-    app_page_state_go_default(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
-    assert(!app_page_state_tick(&state, UINT32_MAX));
     app_page_state_set_weather_enabled(&state, true);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME); /* no forced jump */
-    assert(!app_page_state_tick(&state, 29999U));
-    assert(app_page_state_tick(&state, 1U));
-    assert(app_page_state_current(&state) == APP_PAGE_WEATHER);
-    assert(!app_page_state_tick(&state, UINT32_MAX));
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-    assert(app_page_state_tick(&state, 30000U));
-    app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_STATUS);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME); /* BOOT: HOME */
-    assert(app_page_state_tick(&state, 30000U));
-    app_page_state_set_weather_enabled(&state, false);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-    assert(state.default_page == APP_PAGE_WEATHER);
-
-    assert(app_page_state_set_default(&state, APP_PAGE_IMAGE));
-    app_page_state_go_default(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
     app_page_state_set_image_available(&state, true);
-    app_page_state_go_default(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
-    assert(!app_page_state_tick(&state, UINT32_MAX));
-    app_page_state_set_image_available(&state, false);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
-    assert(state.default_page == APP_PAGE_IMAGE);
+    /* There is intentionally no clock/tick API in the page model. Repeated
+     * background availability updates must also preserve every chosen page. */
+    for (app_page_t page = APP_PAGE_HOME; page <= APP_PAGE_ONLINE_UPDATE; ++page) {
+        assert(app_page_state_open_page(&state, page));
+        for (unsigned poll = 0U; poll < 3600U; ++poll) {
+            app_page_state_set_weather_enabled(&state, true);
+            app_page_state_set_image_available(&state, true);
+            assert(app_page_state_current(&state) == page);
+        }
+        app_page_state_init(&state); /* reboot does not remember this page */
+        assert(app_page_state_current(&state) == APP_PAGE_HOME);
+        app_page_state_set_weather_enabled(&state, true);
+        app_page_state_set_image_available(&state, true);
+    }
+    assert(app_page_state_open_page(&state, APP_PAGE_CALENDAR));
+    app_page_state_set_image_available(&state, false);
+    app_page_state_set_weather_enabled(&state, false);
+    app_page_state_set_image_available(&state, true);
+    app_page_state_set_weather_enabled(&state, true);
+    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
     app_page_state_set_recovery_mode(&state, true);
     app_page_state_set_image_available(&state, true);
-    app_page_state_go_default(&state);
     assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
     app_page_state_key_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
-    assert(!app_page_state_tick(&state, UINT32_MAX));
 }
 
 int main(void)
 {
-    test_persistent_display();
+    test_browsing_stays_and_background_discovery_never_navigates();
     app_page_state_t state;
     app_page_state_init(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
@@ -143,9 +129,7 @@ int main(void)
     assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
     app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
-    assert(!app_page_state_tick(&state,
-                                APP_PAGE_SECONDARY_TIMEOUT_MS - 1U));
-    assert(app_page_state_tick(&state, 1U));
+    app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
     app_page_state_set_weather_enabled(&state, true);
@@ -195,12 +179,7 @@ int main(void)
         &state, (app_page_t)(APP_PAGE_ONLINE_UPDATE + 1)));
     assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
 
-    assert(!app_page_state_tick(&state,
-                                APP_PAGE_SECONDARY_TIMEOUT_MS - 1U));
-    assert(app_page_state_open_page(&state, APP_PAGE_CALENDAR));
-    assert(!app_page_state_tick(&state,
-                                APP_PAGE_SECONDARY_TIMEOUT_MS - 1U));
-    assert(app_page_state_tick(&state, 1U));
+    app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
     assert(app_page_state_open_page(&state, APP_PAGE_STATUS));
@@ -224,12 +203,8 @@ int main(void)
     app_page_state_set_image_available(&state, false);
 
     app_page_state_boot_short_press(&state);
-    assert(!app_page_state_tick(&state,
-                                APP_PAGE_SECONDARY_TIMEOUT_MS - 1U));
-    app_page_state_note_activity(&state);
-    assert(!app_page_state_tick(&state,
-                                APP_PAGE_SECONDARY_TIMEOUT_MS - 1U));
-    assert(app_page_state_tick(&state, 1U));
+    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
+    app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
     app_page_state_key_short_press(&state);
@@ -242,9 +217,7 @@ int main(void)
     assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
     app_page_state_key_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_STATUS);
-    assert(!app_page_state_tick(&state,
-                                APP_PAGE_SECONDARY_TIMEOUT_MS - 1U));
-    assert(app_page_state_tick(&state, 1U));
+    app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
     app_page_state_boot_short_press(&state);
@@ -268,7 +241,6 @@ int main(void)
     assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
     app_page_state_go_home(&state);
     assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
-    assert(!app_page_state_tick(&state, UINT32_MAX));
     assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
     app_page_state_key_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
@@ -287,8 +259,6 @@ int main(void)
     app_page_state_set_recovery_mode(NULL, true);
     app_page_state_boot_short_press(NULL);
     app_page_state_key_short_press(NULL);
-    app_page_state_note_activity(NULL);
-    assert(!app_page_state_tick(NULL, UINT32_MAX));
     assert(app_page_state_current(NULL) == APP_PAGE_HOME);
 
     puts("page state tests passed");

@@ -742,8 +742,7 @@ static bool settings_equal(const app_settings_t *left,
            left->alarm_enabled == right->alarm_enabled &&
            left->alarm_hour == right->alarm_hour &&
            left->alarm_minute == right->alarm_minute &&
-           left->alarm_weekdays == right->alarm_weekdays &&
-           left->default_display == right->default_display;
+           left->alarm_weekdays == right->alarm_weekdays;
 }
 
 static esp_err_t migrate_to_current_schema(

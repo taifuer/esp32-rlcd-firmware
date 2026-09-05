@@ -140,6 +140,21 @@ static void simulate_restart(void)
     pending_schema = 0U;
 }
 
+static void update_test_checksum(test_blob_t *blob)
+{
+    uint32_t crc = UINT32_MAX;
+    for (size_t byte = 0U; byte < 28U; ++byte) {
+        crc ^= blob->bytes[byte];
+        for (unsigned bit = 0U; bit < 8U; ++bit) {
+            crc = (crc >> 1U) ^ (UINT32_C(0xedb88320) & (0U - (crc & 1U)));
+        }
+    }
+    crc ^= UINT32_MAX;
+    for (unsigned byte = 0U; byte < 4U; ++byte) {
+        blob->bytes[28U + byte] = (uint8_t)(crc >> (8U * byte));
+    }
+}
+
 static void seed_schema6(void)
 {
     memset(blobs, 0, sizeof(blobs));
@@ -163,17 +178,7 @@ static void seed_schema6(void)
         assert(settings_record_encode(19U + index, &settings, blob->bytes, blob->size));
         blob->bytes[4] = 5U;
         blob->bytes[12] = 6U;
-        uint32_t crc = UINT32_MAX;
-        for (size_t byte = 0U; byte < 28U; ++byte) {
-            crc ^= blob->bytes[byte];
-            for (unsigned bit = 0U; bit < 8U; ++bit) {
-                crc = (crc >> 1U) ^ (UINT32_C(0xedb88320) & (0U - (crc & 1U)));
-            }
-        }
-        crc ^= UINT32_MAX;
-        for (unsigned byte = 0U; byte < 4U; ++byte) {
-            blob->bytes[28U + byte] = (uint8_t)(crc >> (8U * byte));
-        }
+        update_test_checksum(blob);
     }
 }
 
@@ -188,7 +193,6 @@ static void assert_migrated(void)
     assert(settings.alarm_enabled && settings.alarm_hour == 23U);
     assert(settings.alarm_minute == 42U &&
            settings.alarm_weekdays == APP_SETTINGS_ALARM_WEEKENDS_MASK);
-    assert(settings.default_display == APP_DEFAULT_DISPLAY_CLOCK);
     assert(find_blob("cfg6_b", false)->bytes[12] == 6U); /* old slots untouched */
 }
 
@@ -231,17 +235,14 @@ static void test_scoped_save_failure_noop_and_restart(void)
     fail_commit = 0U;
     assert(app_settings_save_field(APP_SETTING_ALARM_ENABLED, 0U) == ESP_OK);
     assert(app_settings_save_field(APP_SETTING_VOLUME, 70U) == ESP_OK);
-    assert(app_settings_save_field(APP_SETTING_DEFAULT_DISPLAY,
-                                   APP_DEFAULT_DISPLAY_WEATHER) == ESP_OK);
     simulate_restart();
     assert(app_settings_init() == ESP_OK);
     assert(app_settings_get_snapshot(&after) == ESP_OK);
     assert(after.settings.audio_playback_volume == 70U && !after.settings.alarm_enabled);
     assert(after.settings.alarm_hour == 23U && after.settings.alarm_minute == 42U);
-    assert(after.settings.default_display == APP_DEFAULT_DISPLAY_WEATHER);
     assert(after.settings.manual_saving_requested && after.settings.utc_offset_minutes == -300);
     previous_commits = commits;
-    assert(app_settings_save_field(APP_SETTING_DEFAULT_DISPLAY, 3U) == ESP_ERR_INVALID_ARG);
+    assert(app_settings_save_field((app_setting_field_t)2, 1U) == ESP_ERR_INVALID_ARG);
     assert(commits == previous_commits);
 
     persisted_schema = 8U;
@@ -251,9 +252,45 @@ static void test_scoped_save_failure_noop_and_restart(void)
     assert(commits == previous_commits && persisted_schema == 8U);
 }
 
+static void test_dev1_display_is_ignored_without_reset_or_startup_writes(void)
+{
+    for (uint8_t old_display = 0U; old_display <= 2U; ++old_display) {
+        seed_schema6();
+        assert(app_settings_init() == ESP_OK);
+        app_settings_snapshot_t before, after;
+        assert(app_settings_get_snapshot(&before) == ESP_OK);
+        test_blob_t *slot_a = find_blob("cfg7_a", false);
+        test_blob_t *slot_b = find_blob("cfg7_b", false);
+        assert(slot_a != NULL && slot_b != NULL);
+        slot_a->bytes[25] = old_display;
+        slot_b->bytes[25] = old_display;
+        update_test_checksum(slot_a);
+        update_test_checksum(slot_b);
+
+        const unsigned previous_commits = commits;
+        simulate_restart();
+        assert(app_settings_init() == ESP_OK);
+        assert(app_settings_get_snapshot(&after) == ESP_OK);
+        assert(commits == previous_commits && persisted_schema == 7U);
+        assert(after.generation == before.generation);
+        assert(settings_equal(&before.settings, &after.settings));
+        assert(slot_a->bytes[25] == old_display && slot_b->bytes[25] == old_display);
+
+        assert(app_settings_save_field(APP_SETTING_VOLUME, 50U) == ESP_OK);
+        test_blob_t *written = s_active_slot == SETTINGS_RECORD_SLOT_A ? slot_a : slot_b;
+        assert(written->bytes[25] == 0U);
+        simulate_restart();
+        assert(app_settings_init() == ESP_OK);
+        assert(app_settings_get_snapshot(&after) == ESP_OK);
+        before.settings.audio_playback_volume = 50U;
+        assert(settings_equal(&before.settings, &after.settings));
+    }
+}
+
 int main(void)
 {
     test_migration_retry();
     test_scoped_save_failure_noop_and_restart();
+    test_dev1_display_is_ignored_without_reset_or_startup_writes();
     puts("settings service migration, fault injection and scoped persistence tests passed");
 }

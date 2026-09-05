@@ -118,9 +118,9 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
-  -Isrc/settings/include -Isrc/input/include -Isrc/display \
+  -Isrc/settings/include -Isrc/input/include -Isrc/display -Isrc/app \
   src/settings/settings_model.c src/settings/quick_settings.c \
-  src/input/button_state.c tests/test_quick_settings.c \
+  src/input/button_state.c src/app/page_state.c tests/test_quick_settings.c \
   -o "${RLCD_TEST_TMP}/test_quick_settings"
 
 cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \

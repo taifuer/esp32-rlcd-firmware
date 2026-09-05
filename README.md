@@ -29,7 +29,7 @@
 
 ## 当前功能
 
-以下为正式版功能；v0.26.0 Beta 的常驻显示与屏幕快捷设置见[设备设置](docs/device-settings.md)。
+以下为正式版功能；v0.26.0 Beta 的页面停留规则与屏幕快捷设置见[设备设置](docs/device-settings.md)。
 
 - 三段式首屏显示公历、农历、星期、温湿度、三态环境舒适度、电量和网络结果；`NORMAL`
   等大显示 `HH:MM:SS`，`SAVING` 显示 `HH:MM`；

@@ -39,7 +39,6 @@ void app_settings_defaults(app_settings_t *settings)
         .alarm_hour = APP_SETTINGS_DEFAULT_ALARM_HOUR,
         .alarm_minute = APP_SETTINGS_DEFAULT_ALARM_MINUTE,
         .alarm_weekdays = APP_SETTINGS_ALARM_WEEKDAYS_MASK,
-        .default_display = APP_DEFAULT_DISPLAY_CLOCK,
     };
 }
 
@@ -59,8 +58,6 @@ bool app_settings_validate(const app_settings_t *settings)
             settings->temperature_unit ==
                 APP_TEMPERATURE_UNIT_FAHRENHEIT) &&
            settings->audio_playback_volume <= 100U &&
-           settings->default_display >= APP_DEFAULT_DISPLAY_CLOCK &&
-           settings->default_display <= APP_DEFAULT_DISPLAY_IMAGE &&
            (settings->update_channel == APP_UPDATE_CHANNEL_STABLE ||
             settings->update_channel == APP_UPDATE_CHANNEL_BETA) &&
            settings->alarm_hour < 24U &&
@@ -87,9 +84,6 @@ bool app_settings_set_field(app_settings_t *settings,
         }
         updated.alarm_enabled = value != 0U;
         break;
-    case APP_SETTING_DEFAULT_DISPLAY:
-        updated.default_display = (app_default_display_t)value;
-        break;
     default:
         return false;
     }
@@ -98,19 +92,6 @@ bool app_settings_set_field(app_settings_t *settings,
     }
     *settings = updated;
     return true;
-}
-
-const char *app_default_display_name(app_default_display_t display)
-{
-    switch (display) {
-    case APP_DEFAULT_DISPLAY_WEATHER:
-        return "WEATHER";
-    case APP_DEFAULT_DISPLAY_IMAGE:
-        return "IMAGE";
-    case APP_DEFAULT_DISPLAY_CLOCK:
-    default:
-        return "CLOCK";
-    }
 }
 
 bool app_manual_saving_from_legacy_power(uint16_t schema_version,

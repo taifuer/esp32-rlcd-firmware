@@ -38,7 +38,6 @@ static void assert_settings_equal(const app_settings_t *actual,
     assert(actual->alarm_hour == expected->alarm_hour);
     assert(actual->alarm_minute == expected->alarm_minute);
     assert(actual->alarm_weekdays == expected->alarm_weekdays);
-    assert(actual->default_display == expected->default_display);
 }
 
 static void test_codec_round_trip_and_layout(void)
@@ -70,6 +69,7 @@ static void test_codec_round_trip_and_layout(void)
     assert(encoded[22] == 45U);
     assert(encoded[23] == APP_SETTINGS_ALARM_WEEKENDS_MASK);
     assert(encoded[24] == 0U);
+    assert(encoded[25] == 0U); /* retired DISPLAY: canonical CLOCK on write */
 
     settings_record_t decoded = {0};
     assert(settings_record_decode(encoded, sizeof(encoded), &decoded));
@@ -150,17 +150,23 @@ static void make_schema5_record(uint8_t legacy_power,
     put_legacy_u32(encoded, 28U, legacy_checksum(encoded, 28U));
 }
 
-static void test_schema6_migration_and_display_roundtrip(void)
+static void test_schema6_and_dev1_compatibility(void)
 {
-    for (uint8_t value = 0U; value <= APP_DEFAULT_DISPLAY_IMAGE; ++value) {
+    for (uint8_t value = 0U; value <= 2U; ++value) {
         app_settings_t settings = make_settings(39U, APP_UPDATE_CHANNEL_BETA);
-        settings.default_display = (app_default_display_t)value;
         uint8_t encoded[SETTINGS_RECORD_ENCODED_SIZE];
         assert(settings_record_encode(100U, &settings, encoded, sizeof(encoded)));
-        assert(encoded[25] == value);
+        assert(encoded[25] == 0U);
+        /* dev.1 used 0=CLOCK, 1=WEATHER, 2=IMAGE. Ignore only this preference,
+         * retaining every real setting and the record generation. */
+        encoded[25] = value;
+        put_legacy_u32(encoded, 28U, legacy_checksum(encoded, 28U));
         settings_record_t decoded = {0};
         assert(settings_record_decode(encoded, sizeof(encoded), &decoded));
         assert_settings_equal(&decoded.settings, &settings);
+        assert(decoded.generation == 100U);
+        assert(settings_record_encode(101U, &decoded.settings, encoded, sizeof(encoded)));
+        assert(encoded[25] == 0U);
         assert(!settings_record_decode_schema6(encoded, sizeof(encoded), &decoded));
         encoded[25] = 3U;
         put_legacy_u32(encoded, 28U, legacy_checksum(encoded, 28U));
@@ -171,9 +177,8 @@ static void test_schema6_migration_and_display_roundtrip(void)
         encoded[12] = 6U;
         put_legacy_u32(encoded, 28U, legacy_checksum(encoded, 28U));
         assert(settings_record_decode_schema6(encoded, sizeof(encoded), &decoded));
-        settings.default_display = APP_DEFAULT_DISPLAY_CLOCK;
         assert_settings_equal(&decoded.settings, &settings);
-        assert(decoded.generation == 100U);
+        assert(decoded.generation == 101U);
         assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
         encoded[18] ^= 1U;
         assert(!settings_record_decode_schema6(encoded, sizeof(encoded), &decoded));
@@ -651,7 +656,7 @@ static void test_migration_source_priority(void)
 
 int main(void)
 {
-    test_schema6_migration_and_display_roundtrip();
+    test_schema6_and_dev1_compatibility();
     test_codec_round_trip_and_layout();
     test_current_manual_saving_round_trip();
     test_schema5_record_migration();

@@ -119,8 +119,7 @@ typedef struct {
     bool usb_data_host_connected;
     bool power_apply_pending;
     int16_t utc_offset_minutes;
-    app_default_display_t default_display;
-    bool default_display_available;
+    bool temperature_fahrenheit;
     uint8_t playback_volume_percent;
     bool alarm_enabled;
     uint8_t alarm_hour;
@@ -227,8 +226,7 @@ void display_show_voice(const display_voice_status_t *status);
 void display_show_settings(const display_settings_status_t *status);
 void display_show_quick_settings(const quick_settings_t *menu,
                                  const app_settings_t *saved,
-                                 bool apply_pending, bool rtc_valid,
-                                 bool weather_enabled, bool image_available);
+                                 bool apply_pending, bool rtc_valid);
 void display_show_alarm(const display_alarm_status_t *status);
 void display_show_online_update(const display_online_update_status_t *status);
 

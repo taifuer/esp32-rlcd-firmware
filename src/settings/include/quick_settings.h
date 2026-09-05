@@ -7,12 +7,11 @@ extern "C" {
 #endif
 
 #define QUICK_SETTINGS_HOLD_MS 2000U
-#define QUICK_SETTINGS_TIMEOUT_MS 30000U
+#define QUICK_SETTINGS_EDIT_TIMEOUT_MS 30000U
 
 typedef enum {
     QUICK_SETTINGS_VOLUME = 0,
     QUICK_SETTINGS_ALARM,
-    QUICK_SETTINGS_DISPLAY,
     QUICK_SETTINGS_WEB,
     QUICK_SETTINGS_ITEM_COUNT,
 } quick_settings_item_t;
@@ -53,10 +52,11 @@ void quick_settings_close(quick_settings_t *menu);
 bool quick_settings_release_gate(quick_settings_t *menu, bool any_pressed);
 quick_settings_action_t quick_settings_input(
     quick_settings_t *menu, quick_settings_input_t input,
-    const app_settings_t *latest, bool weather_enabled, bool image_available);
+    const app_settings_t *latest);
 bool quick_settings_save_request(const quick_settings_t *menu,
                                   app_setting_field_t *field, uint8_t *value);
 void quick_settings_save_result(quick_settings_t *menu, bool success);
+/* Only an unsaved editor expires, returning to the menu. Browsing stays. */
 bool quick_settings_tick(quick_settings_t *menu, uint32_t elapsed_ms,
                           bool any_pressed);
 const char *quick_settings_item_name(quick_settings_item_t item);

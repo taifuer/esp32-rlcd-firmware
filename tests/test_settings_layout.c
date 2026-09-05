@@ -13,7 +13,7 @@ int main(void)
         app_hold_prompt_title(APP_PAGE_ACTION_OPEN_SETTINGS, APP_HOLD_UPDATE_CHECK, false),
         "OPEN WEB SETTINGS",
         "EDIT VOLUME", "SAVE VOLUME", "EDIT ALARM", "SAVE ALARM",
-        "EDIT DISPLAY", "SAVE DISPLAY", "WEATHER", "100 %"};
+        "100 %"};
     for (unsigned index = 0U; index < sizeof(titles) / sizeof(titles[0]); ++index) {
         const unsigned width = u8g2_GetStrWidth(&screen, titles[index]);
         assert(width <= 376U);
@@ -29,8 +29,10 @@ int main(void)
         }
     }
     u8g2_SetFont(&screen, u8g2_font_helvB14_tf);
-    const char *values[] = {"100 %", "OFF 23:59", "WEATHER", ">"};
-    for (unsigned index = 0U; index < 4U; ++index) {
+    const char *values[] = {"100 %", "OFF 23:59", ">"};
+    _Static_assert(sizeof(values) / sizeof(values[0]) == QUICK_SETTINGS_ITEM_COUNT,
+                   "test a value for every menu item");
+    for (unsigned index = 0U; index < QUICK_SETTINGS_ITEM_COUNT; ++index) {
         unsigned label = u8g2_GetStrWidth(&screen, quick_settings_item_name(index));
         unsigned value = u8g2_GetStrWidth(&screen, values[index]);
         assert(label + 16U + value <= 358U);
@@ -44,7 +46,7 @@ int main(void)
         display_interaction_quick_action(false, false),
         display_interaction_quick_action(false, true),
         display_interaction_quick_action(true, false),
-        "UNAVAILABLE PAGES FALL BACK TO CLOCK", "SAVE FAILED | TRY AGAIN OR CANCEL"};
+        "SAVE FAILED | TRY AGAIN OR CANCEL"};
     for (unsigned index = 0U; index < sizeof(footers) / sizeof(footers[0]); ++index) {
         unsigned width = u8g2_GetStrWidth(&screen, footers[index]);
         assert(width <= 376U);

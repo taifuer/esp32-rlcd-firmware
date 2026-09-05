@@ -7,7 +7,6 @@
 extern "C" {
 #endif
 
-#define APP_PAGE_SECONDARY_TIMEOUT_MS 30000U
 #define APP_PAGE_WEATHER_REFRESH_HOLD_MS 2000U
 #define APP_PAGE_MANUAL_SYNC_HOLD_MS 2000U
 #define APP_PAGE_VOICE_HOLD_MS 2000U
@@ -41,8 +40,6 @@ typedef enum {
 
 typedef struct {
     app_page_t current;
-    app_page_t default_page;
-    uint32_t inactive_ms;
     bool weather_enabled;
     bool image_available;
     bool recovery_mode;
@@ -50,11 +47,8 @@ typedef struct {
 
 void app_page_state_init(app_page_state_t *state);
 void app_page_state_go_home(app_page_state_t *state);
-/* Only CLOCK/HOME, WEATHER and IMAGE may be persistent. Preference is kept
- * when temporarily unavailable; the effective destination is HOME. */
-bool app_page_state_set_default(app_page_state_t *state, app_page_t page);
-app_page_t app_page_state_default(const app_page_state_t *state);
-void app_page_state_go_default(app_page_state_t *state);
+/* Browsing has no idle timer or persisted destination. Only explicit
+ * navigation, recovery entry, or loss of the current page changes it. */
 bool app_page_state_open_page(app_page_state_t *state, app_page_t page);
 void app_page_state_set_image_available(app_page_state_t *state,
                                         bool available);
@@ -73,8 +67,6 @@ app_page_action_t app_page_boot_hold_action(app_page_t page);
 uint32_t app_page_boot_hold_threshold_ms(app_page_t page);
 void app_page_state_boot_short_press(app_page_state_t *state);
 void app_page_state_key_short_press(app_page_state_t *state);
-void app_page_state_note_activity(app_page_state_t *state);
-bool app_page_state_tick(app_page_state_t *state, uint32_t elapsed_ms);
 
 #ifdef __cplusplus
 }

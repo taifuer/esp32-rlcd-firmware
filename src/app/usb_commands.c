@@ -136,7 +136,7 @@ static void process_line(const char *line, bool rtc_available)
             ESP_LOGI(TAG,
                      "SETTINGS manual_saving=%s utc_offset_minutes=%d unit=%s "
                      "playback_volume=%u updates=%s alarm=%s "
-                     "alarm_time=%02u:%02u alarm_days=0x%02x default_display=%s",
+                     "alarm_time=%02u:%02u alarm_days=0x%02x",
                      settings.manual_saving_requested ? "on" : "off",
                      settings.utc_offset_minutes,
                      settings.temperature_unit ==
@@ -150,8 +150,7 @@ static void process_line(const char *line, bool rtc_available)
                      settings.alarm_enabled ? "on" : "off",
                      (unsigned int)settings.alarm_hour,
                      (unsigned int)settings.alarm_minute,
-                     (unsigned int)settings.alarm_weekdays,
-                     app_default_display_name(settings.default_display));
+                     (unsigned int)settings.alarm_weekdays);
         } else {
             ESP_LOGW(TAG, "SETTINGS_ERROR %s", esp_err_to_name(error));
         }

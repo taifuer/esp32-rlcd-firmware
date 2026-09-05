@@ -31,7 +31,9 @@ enum {
     ALARM_WEEKDAYS_OFFSET = 23,
     /* Schema v4 used this byte for the now-obsolete image rotation mode. */
     LEGACY_IMAGE_ROTATION_OFFSET = 24,
-    DEFAULT_DISPLAY_OFFSET = 25,
+    /* v0.26.0-dev.1 used this byte for CLOCK/WEATHER/IMAGE. Decode valid
+     * legacy values but ignore them; keep schema/slots stable for upgrades. */
+    LEGACY_DEFAULT_DISPLAY_OFFSET = 25,
     CHECKSUM_OFFSET = 28,
     SCHEMA3_CHECKSUM_OFFSET = 24,
     SCHEMA2_CHECKSUM_OFFSET = 20,
@@ -116,7 +118,7 @@ bool settings_record_encode(uint32_t generation,
     encoded[ALARM_WEEKDAYS_OFFSET] = settings->alarm_weekdays;
     /* Canonical legacy value: fixed image. */
     encoded[LEGACY_IMAGE_ROTATION_OFFSET] = 0U;
-    encoded[DEFAULT_DISPLAY_OFFSET] = (uint8_t)settings->default_display;
+    encoded[LEGACY_DEFAULT_DISPLAY_OFFSET] = 0U;
     put_u32(encoded, CHECKSUM_OFFSET,
             record_checksum(encoded, CHECKSUM_OFFSET));
     return true;
@@ -146,7 +148,8 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
             : (int32_t)raw_utc_offset - INT32_C(65536);
     if (encoded[MANUAL_SAVING_OFFSET] > 1U ||
         encoded[ALARM_ENABLED_OFFSET] > 1U ||
-        encoded[LEGACY_IMAGE_ROTATION_OFFSET] > 2U) {
+        encoded[LEGACY_IMAGE_ROTATION_OFFSET] > 2U ||
+        (!schema6 && encoded[LEGACY_DEFAULT_DISPLAY_OFFSET] > 2U)) {
         return false;
     }
     const app_settings_t settings = {
@@ -163,8 +166,6 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
         .alarm_hour = encoded[ALARM_HOUR_OFFSET],
         .alarm_minute = encoded[ALARM_MINUTE_OFFSET],
         .alarm_weekdays = encoded[ALARM_WEEKDAYS_OFFSET],
-        .default_display = schema6 ? APP_DEFAULT_DISPLAY_CLOCK
-            : (app_default_display_t)encoded[DEFAULT_DISPLAY_OFFSET],
     };
     if (!app_settings_validate(&settings)) {
         return false;
