@@ -84,23 +84,19 @@ bool display_weather_format_source(
     }
 
     int written;
-    if (freshness == DISPLAY_WEATHER_FRESHNESS_FRESH &&
-        update_time_valid) {
-        written = snprintf(buffer, capacity, "QWeather %02u:%02u",
-                           update_hour, update_minute);
-    } else if (freshness == DISPLAY_WEATHER_FRESHNESS_STALE &&
-               update_time_valid) {
+    if (update_time_valid) {
+        const char *label =
+            freshness == DISPLAY_WEATHER_FRESHNESS_FRESH
+                ? "更新"
+                : (freshness == DISPLAY_WEATHER_FRESHNESS_EXPIRED
+                       ? "已过期"
+                       : "缓存");
         written = snprintf(buffer, capacity,
-                           "QWeather | CACHED %02u:%02u",
-                           update_hour, update_minute);
-    } else if (freshness == DISPLAY_WEATHER_FRESHNESS_EXPIRED &&
-               update_time_valid) {
-        written = snprintf(buffer, capacity,
-                           "QWeather | OLD %02u-%02u %02u:%02u",
-                           update_month, update_day,
+                           "QWeather | %s %02u-%02u %02u:%02u",
+                           label, update_month, update_day,
                            update_hour, update_minute);
     } else {
-        written = snprintf(buffer, capacity, "QWeather | CACHED");
+        written = snprintf(buffer, capacity, "QWeather | 缓存时间未知");
     }
 
     if (written < 0 || (size_t)written >= capacity) {
@@ -179,6 +175,38 @@ static int64_t civil_day_number(uint16_t year, uint8_t month, uint8_t day)
         year_of_era * 365U + year_of_era / 4U - year_of_era / 100U +
         day_of_year;
     return era * 146097 + (int64_t)day_of_era;
+}
+
+bool display_weather_format_current_date(
+    char *buffer, size_t capacity, bool current_date_valid,
+    uint16_t current_year, uint8_t current_month, uint8_t current_day)
+{
+    if (buffer == NULL || capacity == 0U) {
+        return false;
+    }
+
+    int written;
+    if (current_date_valid &&
+        valid_date(current_year, current_month, current_day)) {
+        static const char *const WEEKDAYS[] = {
+            "周日", "周一", "周二", "周三", "周四", "周五", "周六",
+        };
+        /* 1970-01-01 was Thursday; use the RTC date, never the cache date. */
+        const int64_t elapsed_days =
+            civil_day_number(current_year, current_month, current_day) -
+            civil_day_number(1970U, 1U, 1U);
+        const size_t weekday = (size_t)((elapsed_days + 4) % 7);
+        written = snprintf(buffer, capacity, "%u月%u日  %s",
+                           current_month, current_day, WEEKDAYS[weekday]);
+    } else {
+        written = snprintf(buffer, capacity, "--月--日  周-");
+    }
+
+    if (written < 0 || (size_t)written >= capacity) {
+        buffer[0] = '\0';
+        return false;
+    }
+    return true;
 }
 
 bool display_weather_format_day_label(

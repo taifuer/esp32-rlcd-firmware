@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
   <title id="title">ESP32 RLCD Firmware weather page</title>
-  <desc id="description">A white-on-black weather page showing Beijing current conditions, three-day forecast and QWeather update time.</desc>
+  <desc id="description">A white-on-black weather page showing Beijing, the current RTC date and weekday, current conditions and a three-day forecast. QWeather's data update date and time are shown separately above the button instructions.</desc>
   <rect width="400" height="300" rx="3" fill="#090b0a"/>
   <g fill="#eef3e8" stroke="#eef3e8">
     <text x="12" y="28" stroke="none" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="16" font-weight="600">北京</text>
-    <text x="388" y="28" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">QWeather | 09-02 23:20</text>
+    <text x="388" y="28" stroke="none" text-anchor="end" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="16">9月5日　周六</text>
     <path d="M12 42H388M12 126H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
 
     <g transform="translate(50 80)" fill="none" stroke-width="2">
@@ -20,7 +20,7 @@
     <g stroke="none" text-anchor="middle" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif">
       <text x="66" y="156" font-size="16">今天</text>
       <text x="200" y="156" font-size="16">明天</text>
-      <text x="333" y="156" font-size="16">周五</text>
+      <text x="333" y="156" font-size="16">后天</text>
       <text x="66" y="200" font-size="17" font-weight="600">多云</text>
       <text x="200" y="200" font-size="17" font-weight="600">小雨</text>
       <text x="333" y="200" font-size="17" font-weight="600">晴</text>
@@ -38,6 +38,7 @@
       <circle cx="333" cy="173" r="9"/>
       <path d="M333 159V155M333 191V187M319 173H315M351 173H347M323 163L320 160M343 183L346 186M343 163L346 160M323 183L320 186"/>
     </g>
-    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: CALENDAR | KEY: STATUS</text>
+    <text x="200" y="270" stroke="none" text-anchor="middle" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="16">QWeather | 更新 09-05 10:20</text>
+    <text x="200" y="293" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="10">BOOT: CALENDAR | KEY: STATUS | HOLD KEY 2s: REFRESH</text>
   </g>
 </svg>

@@ -58,6 +58,8 @@ enum {
     WEATHER_HEADER_DIVIDER_Y = 42,
     WEATHER_CURRENT_DIVIDER_Y = 126,
     WEATHER_FORECAST_TOP_Y = 136,
+    WEATHER_SOURCE_BASELINE_Y = 270,
+    WEATHER_FOOTER_BASELINE_Y = 293,
     CALENDAR_SIDE_MARGIN = 11,
     CALENDAR_HEADER_BASELINE_Y = 30,
     CALENDAR_HEADER_DIVIDER_Y = 43,
@@ -950,7 +952,8 @@ void display_show_weather(const display_weather_t *weather)
         return;
     }
 
-    char source[48];
+    char current_date[32];
+    char source[80];
     char temperature[16];
     char feels_like[48];
     const bool failed =
@@ -968,19 +971,30 @@ void display_show_weather(const display_weather_t *weather)
                    ? "正在获取"
                    : (failed ? "获取失败" : "等待获取"));
 
-    if (weather->refreshing) {
-        snprintf(source, sizeof(source), "QWeather | UPDATING");
+    if (!display_weather_format_current_date(
+            current_date, sizeof(current_date), weather->current_date_valid,
+            weather->current_year, weather->current_month,
+            weather->current_day)) {
+        snprintf(current_date, sizeof(current_date), "--月--日  周-");
+    }
+    if (weather->data_available) {
+        if (!display_weather_format_source(
+                source, sizeof(source), weather->freshness,
+                weather->update_time_valid,
+                weather->update_month, weather->update_day,
+                weather->update_hour, weather->update_minute)) {
+            snprintf(source, sizeof(source), "QWeather | 缓存时间未知");
+        }
+        if (weather->refreshing) {
+            const size_t length = strlen(source);
+            snprintf(source + length, sizeof(source) - length, " | 更新中");
+        }
+    } else if (weather->refreshing) {
+        snprintf(source, sizeof(source), "QWeather | 正在获取");
     } else if (failed) {
-        snprintf(source, sizeof(source), "QWeather | FAILED");
-    } else if (!weather->data_available) {
-        snprintf(source, sizeof(source), "QWeather | %s",
-                 "WAITING");
-    } else if (!display_weather_format_source(
-            source, sizeof(source), weather->freshness,
-            weather->update_time_valid,
-            weather->update_month, weather->update_day,
-            weather->update_hour, weather->update_minute)) {
-        snprintf(source, sizeof(source), "QWeather | CACHED");
+        snprintf(source, sizeof(source), "QWeather | 获取失败");
+    } else {
+        snprintf(source, sizeof(source), "QWeather | 等待获取");
     }
     if (!weather->data_available || !display_weather_format_temperature(
             temperature, sizeof(temperature),
@@ -1008,14 +1022,12 @@ void display_show_weather(const display_weather_t *weather)
     u8g2_ClearBuffer(s_u8g2);
     u8g2_SetDrawColor(s_u8g2, 1);
 
-    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    const int source_width = (int)u8g2_GetStrWidth(s_u8g2, source);
-    const int source_x = BOARD_DISPLAY_WIDTH - DAILY_SIDE_MARGIN -
-                         source_width;
-    u8g2_DrawStr(s_u8g2, source_x, WEATHER_HEADER_BASELINE_Y, source);
-
     u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
-    const int location_right = source_x - 8;
+    const int date_width = (int)u8g2_GetUTF8Width(s_u8g2, current_date);
+    const int date_x = BOARD_DISPLAY_WIDTH - DAILY_SIDE_MARGIN - date_width;
+    u8g2_DrawUTF8(s_u8g2, date_x, WEATHER_HEADER_BASELINE_Y, current_date);
+
+    const int location_right = date_x - 12;
     if (location_right > DAILY_SIDE_MARGIN) {
         u8g2_SetClipWindow(s_u8g2, DAILY_SIDE_MARGIN, 0,
                            location_right, WEATHER_HEADER_DIVIDER_Y - 1);
@@ -1128,7 +1140,17 @@ void display_show_weather(const display_weather_t *weather)
                                     243, precipitation);
     }
 
-    draw_daily_footer(display_interaction_weather_footer());
+    u8g2_DrawHLine(s_u8g2, DAILY_SIDE_MARGIN,
+                   DAILY_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN);
+    u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+    draw_weather_utf8_in_region(
+        DAILY_SIDE_MARGIN, BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN,
+        DAILY_FOOTER_DIVIDER_Y + 1, WEATHER_SOURCE_BASELINE_Y + 4,
+        WEATHER_SOURCE_BASELINE_Y, source);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(WEATHER_FOOTER_BASELINE_Y,
+                  display_interaction_weather_footer());
     u8g2_SendBuffer(s_u8g2);
 }
 

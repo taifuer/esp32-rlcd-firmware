@@ -41,6 +41,10 @@ bool display_weather_format_source(
     uint8_t update_month, uint8_t update_day,
     uint8_t update_hour, uint8_t update_minute);
 
+bool display_weather_format_current_date(
+    char *buffer, size_t capacity, bool current_date_valid,
+    uint16_t current_year, uint8_t current_month, uint8_t current_day);
+
 bool display_weather_format_day_label(
     char *buffer, size_t capacity, const char *forecast_date,
     bool current_date_valid, uint16_t current_year,
