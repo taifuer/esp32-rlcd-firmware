@@ -17,18 +17,19 @@ extern "C" {
 
 static inline const char *display_interaction_weather_footer(void)
 {
-    return "BOOT: CALENDAR | KEY: STATUS | HOLD KEY 2s: REFRESH";
+    return "BOOT: CALENDAR | KEY: CHAT | HOLD KEY 2s: REFRESH";
 }
 
 static inline const char *display_interaction_calendar_footer(
-    bool image_available)
+    bool image_available, bool music_available)
 {
-    return image_available ? "BOOT: IMAGE | KEY: STATUS"
-                           : "BOOT: HOME | KEY: STATUS";
+    return image_available ? "BOOT: IMAGE | KEY: CHAT"
+         : music_available ? "BOOT: MUSIC | KEY: CHAT"
+                           : "BOOT: HOME | KEY: CHAT";
 }
 
 static inline bool display_interaction_format_image_navigation(
-    char *buffer, size_t capacity, size_t selected_index, size_t image_count)
+    char *buffer, size_t capacity, size_t selected_index, size_t image_count, bool music_available)
 {
     if (buffer == NULL || capacity == 0U) {
         return false;
@@ -40,12 +41,13 @@ static inline bool display_interaction_format_image_navigation(
             selected_index = 0U;
         }
         written = snprintf(buffer, capacity,
-                           "BOOT: HOME | KEY: NEXT IMAGE | %u/%u",
+                           "BOOT: %s | KEY: NEXT IMAGE | %u/%u",
+                           music_available ? "MUSIC" : "HOME",
                            (unsigned)(selected_index + 1U),
                            (unsigned)image_count);
     } else {
         written = snprintf(buffer, capacity,
-                           "BOOT: HOME | KEY: STATUS");
+                           "BOOT: %s | KEY: CHAT", music_available ? "MUSIC" : "HOME");
     }
 
     if (written < 0 || (size_t)written >= capacity) {
@@ -84,8 +86,8 @@ static inline const char *display_interaction_settings_action_footer(
     bool manual_saving_requested)
 {
     return manual_saving_requested
-               ? "HOLD BOOT 2s: MANUAL SAVING OFF | HOLD KEY 3s: QUICK SETTINGS"
-               : "HOLD BOOT 2s: MANUAL SAVING ON | HOLD KEY 3s: QUICK SETTINGS";
+               ? "HOLD BOOT 2s: MANUAL SAVING OFF | HOLD KEY 2s: QUICK SETTINGS"
+               : "HOLD BOOT 2s: MANUAL SAVING ON | HOLD KEY 2s: QUICK SETTINGS";
 }
 
 static inline const char *display_interaction_quick_navigation(bool editing)

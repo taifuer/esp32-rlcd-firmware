@@ -55,7 +55,7 @@ int main(void)
     assert(update_for(&key, true, 300U) == BUTTON_EVENT_NONE);
     assert(update_for(&key, false, 60U) == BUTTON_EVENT_SHORT_PRESS);
     app_page_state_key_short_press(&page);
-    assert(app_page_state_current(&page) == APP_PAGE_STATUS);
+    assert(app_page_state_current(&page) == APP_PAGE_VOICE);
 
     assert(app_page_state_open_page(&page, APP_PAGE_WEATHER));
     app_page_state_boot_short_press(&page);

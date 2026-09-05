@@ -39,6 +39,6 @@
       <path d="M333 159V155M333 191V187M319 173H315M351 173H347M323 163L320 160M343 183L346 186M343 163L346 160M323 183L320 186"/>
     </g>
     <text x="200" y="270" stroke="none" text-anchor="middle" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="16">QWeather | 更新 09-05 10:20</text>
-    <text x="200" y="293" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="10">BOOT: CALENDAR | KEY: STATUS | HOLD KEY 2s: REFRESH</text>
+    <text x="200" y="293" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="10">BOOT: CALENDAR | KEY: CHAT | HOLD KEY 2s: REFRESH</text>
   </g>
 </svg>

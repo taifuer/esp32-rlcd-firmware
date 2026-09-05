@@ -32,6 +32,8 @@ bool app_hold_prompt_allowed(const app_hold_prompt_context_t *context,
     case APP_PAGE_ACTION_SYNC_TIME:
         return !context->manual_sync_active;
     case APP_PAGE_ACTION_START_VOICE:
+    case APP_PAGE_ACTION_NEXT_TRACK:
+    case APP_PAGE_ACTION_MUSIC_VOLUME:
     case APP_PAGE_ACTION_OPEN_SETTINGS:
     case APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING:
         return context->manual_sync_idle &&
@@ -53,6 +55,10 @@ const char *app_hold_prompt_title(app_page_action_t action,
         return "REFRESH WEATHER";
     case APP_PAGE_ACTION_DELETE_IMAGE:
         return "DELETE IMAGE";
+    case APP_PAGE_ACTION_NEXT_TRACK:
+        return "NEXT TRACK";
+    case APP_PAGE_ACTION_MUSIC_VOLUME:
+        return "EDIT VOLUME";
     case APP_PAGE_ACTION_SYNC_TIME:
         return "SYNC TIME";
     case APP_PAGE_ACTION_START_VOICE:

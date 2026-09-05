@@ -9,6 +9,21 @@ trap 'rm -rf -- "${RLCD_TEST_TMP}"' EXIT
 
 cd "${RLCD_PROJECT_DIR}"
 
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/music/include src/music/music_format.c tests/test_music_format.c \
+  -o "${RLCD_TEST_TMP}/test_music_format"
+"${RLCD_TEST_TMP}/test_music_format"
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -DSD_MEDIA_MOUNT_PATH="\"${RLCD_TEST_TMP}\"" \
+  -Itests/music_stubs -Isrc/music/include \
+  src/music/music_format.c src/music/music_stream.c tests/test_music_stream.c \
+  -o "${RLCD_TEST_TMP}/test_music_stream"
+"${RLCD_TEST_TMP}/test_music_stream"
+node tests/test_recovery_portal.mjs
+node tests/test_settings_portal.mjs
+
 if [[ ! -f "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" ]]; then
   echo "未找到固定版本的 U8g2 字体测试依赖，请先执行: ./scripts/bootstrap.sh" >&2
   exit 1

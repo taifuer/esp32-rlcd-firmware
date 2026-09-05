@@ -72,6 +72,7 @@ required_files=(
     "LICENSES/cJSON.txt"
     "LICENSES/dl_fft-MIT.txt"
     "LICENSES/ESP-SR.txt"
+    "LICENSES/ESP-Audio-Codec.txt"
     "LICENSES/FreeRTOS.txt"
     "LICENSES/GCC-Runtime-Library-Exception-3.1.txt"
     "LICENSES/GPL-2.0-only.txt"
@@ -116,6 +117,12 @@ compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
     "ESP WebSocket Client"
 compare_text_file "${RLCD_PROJECT_DIR}/LICENSES/ESP-SR.txt" \
     "${RLCD_ESP_SR_DIR}/LICENSE" "ESP-SR"
+compare_text_file "${RLCD_PROJECT_DIR}/LICENSES/ESP-Audio-Codec.txt" \
+    "${RLCD_ESP_AUDIO_CODEC_DIR}/LICENSE" "ESP Audio Codec"
+require_manifest_entry "${RLCD_ESP_AUDIO_CODEC_DIR}/idf_component.yml" \
+    "version: ${ESP_AUDIO_CODEC_VERSION}" "ESP Audio Codec"
+require_manifest_entry "${RLCD_ESP_AUDIO_CODEC_DIR}/idf_component.yml" \
+    "  commit_sha: f9110cbb471b4017b0faf9bd48fcac84c61ecb6d" "ESP Audio Codec"
 compare_file "${RLCD_PROJECT_DIR}/LICENSE" \
     "${RLCD_ESP_DSP_DIR}/LICENSE" "ESP-DSP"
 require_manifest_entry "${RLCD_ESP_SR_DIR}/idf_component.yml" \

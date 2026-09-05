@@ -9,6 +9,7 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES
         app_update
+        audio
         esp_app_format
         esp_event
         esp_http_client

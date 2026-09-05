@@ -1,4 +1,5 @@
 #include "sd_image.h"
+#include "sd_media.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -210,6 +211,43 @@ static esp_err_t mount_card(sdmmc_card_t **card)
     sdmmc_slot_config_t slot = make_slot_config();
     return esp_vfs_fat_sdmmc_mount(SD_IMAGE_MOUNT_PATH, &host, &slot,
                                    &mount_config, card);
+}
+
+struct sd_media_read {
+    TaskHandle_t owner;
+    sdmmc_card_t *card;
+};
+
+esp_err_t sd_media_begin_read(sd_media_read_t **session, uint32_t wait_ms)
+{
+    if (session == NULL) return ESP_ERR_INVALID_ARG;
+    *session = NULL;
+    if (s_io_mutex == NULL ||
+        xSemaphoreTake(s_io_mutex, pdMS_TO_TICKS(wait_ms)) != pdTRUE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    sd_media_read_t *lease = calloc(1, sizeof(*lease));
+    esp_err_t error = lease == NULL ? ESP_ERR_NO_MEM : mount_card(&lease->card);
+    if (error != ESP_OK) {
+        free(lease);
+        xSemaphoreGive(s_io_mutex);
+        return error;
+    }
+    lease->owner = xTaskGetCurrentTaskHandle();
+    *session = lease;
+    return ESP_OK;
+}
+
+esp_err_t sd_media_end_read(sd_media_read_t *session)
+{
+    if (session == NULL || session->owner != xTaskGetCurrentTaskHandle()) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    const esp_err_t error = esp_vfs_fat_sdcard_unmount(
+        SD_IMAGE_MOUNT_PATH, session->card);
+    free(session);
+    xSemaphoreGive(s_io_mutex);
+    return error;
 }
 
 static bool read_and_decode(const char *path,

@@ -69,11 +69,8 @@ static void test_edit_cancel_save_and_latest_values(void)
     input(&menu, QUICK_SETTINGS_NEXT);
     assert(menu.item == QUICK_SETTINGS_ALARM);
     saved.alarm_enabled = false;
-    input(&menu, QUICK_SETTINGS_ACTIVATE);
-    release(&menu);
-    input(&menu, QUICK_SETTINGS_NEXT);
-    assert(menu.draft == 1U && !saved.alarm_enabled);
     assert(input(&menu, QUICK_SETTINGS_ACTIVATE) == QUICK_SETTINGS_ACTION_SAVE);
+    assert(menu.draft == 1U && !saved.alarm_enabled && menu.release_required);
     assert(quick_settings_save_request(&menu, &field, &value));
     assert(field == APP_SETTING_ALARM_ENABLED && value == 1U);
     assert(app_settings_set_field(&saved, field, value));
@@ -150,10 +147,10 @@ static void test_timeout_and_preemption(void)
 static void test_real_button_release_and_timing(void)
 {
     button_state_t key;
-    button_state_init_custom(&key, false, 1000U, 3000U);
+    button_state_init_custom(&key, false, 1000U, APP_PAGE_SETTINGS_HOLD_MS);
     assert(button_state_update(&key, true, 20U) == BUTTON_EVENT_NONE);
     assert(button_state_update(&key, true, 40U) == BUTTON_EVENT_NONE);
-    assert(button_state_update(&key, true, 2960U) == BUTTON_EVENT_LONG_PRESS);
+    assert(button_state_update(&key, true, 1960U) == BUTTON_EVENT_LONG_PRESS);
     quick_settings_t menu;
     quick_settings_open(&menu);
     assert(!button_state_set_action_timing(&key, QUICK_SETTINGS_HOLD_MS));
@@ -183,6 +180,25 @@ static void test_real_button_release_and_timing(void)
 
 static void test_copy_and_invalid_arguments(void)
 {
+    quick_settings_t volume;
+    assert(quick_settings_open_volume(&volume, &saved));
+    assert(volume.active && volume.editing && volume.volume_only);
+    release(&volume);
+    input(&volume, QUICK_SETTINGS_BACK);
+    assert(!volume.active);
+    assert(quick_settings_open_volume(&volume, &saved));
+    release(&volume);
+    assert(input(&volume, QUICK_SETTINGS_ACTIVATE) == QUICK_SETTINGS_ACTION_SAVE);
+    quick_settings_save_result(&volume, false);
+    assert(volume.active && volume.editing);
+    quick_settings_save_result(&volume, true);
+    assert(!volume.active);
+    assert(quick_settings_open_volume(&volume, &saved));
+    release(&volume);
+    assert(quick_settings_tick(&volume, 30000, false));
+    assert(!volume.active);
+    assert(!quick_settings_open_volume(NULL, &saved));
+    assert(!quick_settings_open_volume(&volume, NULL));
     for (unsigned editing = 0U; editing < 2U; ++editing) {
         assert(strlen(display_interaction_quick_navigation(editing != 0U)) <=
                DISPLAY_INTERACTION_FOOTER_MAX_CHARS);

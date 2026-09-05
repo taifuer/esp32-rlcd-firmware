@@ -5,6 +5,8 @@
 #include "audio_conversation_flow.h"
 #include "audio_response_watchdog.h"
 #include "audio_voice.h"
+#include "audio_music.h"
+#include "music_stream.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -69,9 +71,9 @@ enum {
     AUDIO_PLAYBACK_TARGET_PEAK = 12000,
     AUDIO_PLAYBACK_GAIN_ONE = 4096,
     AUDIO_PLAYBACK_MAX_GAIN = AUDIO_PLAYBACK_GAIN_ONE * 4,
-    /* Espressif's MultiNet task examples reserve 8 KiB. The same worker also
-     * owns codec arbitration, so do not reuse the smaller loopback stack. */
-    AUDIO_WORKER_STACK_SIZE = 12288,
+    /* The same worker owns speech and MP3 decoding. Espressif recommends at
+     * least 20 KiB for audio decoders; leave margin for our bounded SD calls. */
+    AUDIO_WORKER_STACK_SIZE = 24576,
     AUDIO_WORKER_PRIORITY = 4,
     AUDIO_VOICE_PREPARE_STACK_SIZE = 8192,
     AUDIO_VOICE_PREPARE_PRIORITY = 1,
@@ -116,6 +118,7 @@ typedef enum {
     AUDIO_WORK_VOICE,
     AUDIO_WORK_CONVERSATION,
     AUDIO_WORK_ALERT,
+    AUDIO_WORK_MUSIC,
 } audio_work_t;
 
 typedef struct {
@@ -144,6 +147,10 @@ typedef struct {
     bool alert_requested;
     bool alert_running;
     bool alert_stop_requested;
+    bool music_requested;
+    bool music_running;
+    uint32_t music_generation;
+    audio_music_status_t music_status;
     audio_diagnostics_status_t status;
     audio_voice_status_t voice_status;
     audio_conversation_status_t conversation_status;
@@ -2899,6 +2906,208 @@ static void run_audio_session(void)
     }
 }
 
+static void music_stop_locked(void)
+{
+    if (s_audio.music_requested || s_audio.music_running ||
+        s_audio.music_status.state == AUDIO_MUSIC_PLAYING ||
+        s_audio.music_status.state == AUDIO_MUSIC_PAUSED) {
+        ++s_audio.music_generation;
+        s_audio.music_requested = false;
+        s_audio.music_status.state = AUDIO_MUSIC_STOPPED;
+        s_audio.music_status.elapsed_seconds = 0;
+        ++s_audio.music_status.revision;
+    }
+}
+
+void audio_music_get_status(audio_music_status_t *status)
+{
+    if (status == NULL) return;
+    lock_context();
+    *status = s_audio.music_status;
+    status->volume = s_playback_volume;
+    status->busy = s_audio.music_requested || s_audio.music_running;
+    unlock_context();
+}
+
+static bool music_can_start_locked(void)
+{
+    return s_audio.status.initialized && s_audio.status.speaker_ready &&
+           s_audio.worker_task != NULL && !s_audio.diagnostic_requested &&
+           !audio_session_state_is_active(s_audio.status.state) &&
+           !s_audio.voice_requested && !s_audio.voice_status.running &&
+           !s_audio.conversation_requested && !s_audio.conversation_status.running &&
+           !s_audio.alert_requested && !s_audio.alert_running;
+}
+
+esp_err_t audio_music_toggle(void)
+{
+    music_library_status_t library;
+    music_library_get_status(&library);
+    if (library.count == 0U) return ESP_ERR_NOT_FOUND;
+    lock_context();
+    if (!music_can_start_locked()) { unlock_context(); return ESP_ERR_INVALID_STATE; }
+    if (s_audio.music_status.state == AUDIO_MUSIC_PLAYING) {
+        s_audio.music_status.state = AUDIO_MUSIC_PAUSED;
+    } else if (s_audio.music_status.state == AUDIO_MUSIC_PAUSED) {
+        s_audio.music_status.state = AUDIO_MUSIC_PLAYING;
+    } else {
+        ++s_audio.music_generation;
+        s_audio.music_requested = true;
+        s_audio.music_status.state = AUDIO_MUSIC_PLAYING;
+        s_audio.music_status.elapsed_seconds = 0;
+        s_audio.music_status.error = ESP_OK;
+    }
+    ++s_audio.music_status.revision;
+    unlock_context();
+    xTaskNotifyGive(s_audio.worker_task);
+    return ESP_OK;
+}
+
+esp_err_t audio_music_next(void)
+{
+    music_library_status_t library;
+    music_library_get_status(&library);
+    if (library.count == 0U) return ESP_ERR_NOT_FOUND;
+    lock_context();
+    if (!music_can_start_locked()) { unlock_context(); return ESP_ERR_INVALID_STATE; }
+    const bool playing = s_audio.music_status.state == AUDIO_MUSIC_PLAYING;
+    ++s_audio.music_generation;
+    s_audio.music_requested = playing;
+    s_audio.music_status.selected_index = (s_audio.music_status.selected_index + 1U) % library.count;
+    s_audio.music_status.elapsed_seconds = 0;
+    s_audio.music_status.error = ESP_OK;
+    s_audio.music_status.state = playing ? AUDIO_MUSIC_PLAYING : AUDIO_MUSIC_STOPPED;
+    ++s_audio.music_status.revision;
+    unlock_context();
+    xTaskNotifyGive(s_audio.worker_task);
+    return ESP_OK;
+}
+
+void audio_music_stop(void)
+{
+    lock_context();
+    music_stop_locked();
+    unlock_context();
+}
+
+esp_err_t audio_music_stop_and_wait(uint32_t timeout_ms)
+{
+    audio_music_stop();
+    const TickType_t start = xTaskGetTickCount();
+    do {
+        audio_music_status_t status;
+        audio_music_get_status(&status);
+        if (!status.busy) return ESP_OK;
+        vTaskDelay(pdMS_TO_TICKS(20));
+    } while (xTaskGetTickCount() - start < pdMS_TO_TICKS(timeout_ms));
+    return ESP_ERR_TIMEOUT;
+}
+
+typedef struct {
+    uint32_t generation;
+    bool opened;
+    bool muted;
+    bool cpu_locked;
+    uint8_t volume;
+} music_output_t;
+
+static bool music_output_ready(void *context)
+{
+    music_output_t *output = context;
+    while (true) {
+        lock_context();
+        const bool current = output->generation == s_audio.music_generation;
+        const bool paused = s_audio.music_status.state == AUDIO_MUSIC_PAUSED;
+        unlock_context();
+        if (!current) return false;
+        if (paused && output->cpu_locked) {
+            (void)esp_pm_lock_release(s_audio.voice_cpu_lock);
+            output->cpu_locked = false;
+        } else if (!paused && !output->cpu_locked && s_audio.voice_cpu_lock != NULL) {
+            output->cpu_locked = esp_pm_lock_acquire(s_audio.voice_cpu_lock) == ESP_OK;
+        }
+        if (output->opened && output->muted != paused) {
+            (void)esp_codec_dev_set_out_mute(s_audio.speaker_device, paused);
+            output->muted = paused;
+        }
+        if (!paused) return true;
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+
+static esp_err_t music_output_write(void *context, uint32_t rate, const int16_t *mono, size_t frames)
+{
+    music_output_t *output = context;
+    lock_context();
+    const uint8_t volume = s_playback_volume;
+    unlock_context();
+    if (!output->opened) {
+        const esp_err_t error = open_speaker_at_rate(rate, volume);
+        if (error != ESP_OK) return error;
+        output->opened = true;
+        output->volume = volume;
+    } else if (volume != output->volume) {
+        const esp_err_t error = codec_error(esp_codec_dev_set_out_vol(s_audio.speaker_device, volume));
+        if (error != ESP_OK) return error;
+        output->volume = volume;
+    }
+    return codec_error(esp_codec_dev_write(s_audio.speaker_device, (void *)mono, (int)(frames * sizeof(*mono))));
+}
+
+static void music_output_progress(void *context, uint32_t seconds)
+{
+    const music_output_t *output = context;
+    lock_context();
+    if (output->generation == s_audio.music_generation && seconds != s_audio.music_status.elapsed_seconds) {
+        s_audio.music_status.elapsed_seconds = seconds;
+        ++s_audio.music_status.revision;
+    }
+    unlock_context();
+}
+
+static void run_music(uint32_t generation, size_t index)
+{
+    music_output_t output = {.generation = generation};
+    music_track_t track;
+    const music_stream_sink_t sink = {.context = &output, .ready = music_output_ready,
+        .write = music_output_write, .progress = music_output_progress};
+    esp_err_t error = music_library_track(index, &track)
+        ? music_stream_run(&track, &sink) : ESP_ERR_NOT_FOUND;
+    if (error == ESP_OK && output.opened) {
+        /* Let the final DMA descriptors drain. Cancellation still takes
+         * precedence; never add this tail delay to alarm/OTA handoffs. */
+        for (unsigned tick = 0; tick < 8U; ++tick) {
+            lock_context();
+            const bool current = output.generation == s_audio.music_generation;
+            unlock_context();
+            if (!current) break;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+    if (output.opened) {
+        const esp_err_t close_error = close_speaker();
+        if (error == ESP_OK) error = close_error;
+    }
+    if (output.cpu_locked) (void)esp_pm_lock_release(s_audio.voice_cpu_lock);
+    music_library_status_t library;
+    music_library_get_status(&library);
+    lock_context();
+    s_audio.music_running = false;
+    if (output.generation == s_audio.music_generation) {
+        s_audio.music_status.error = error;
+        if (error == ESP_OK && s_audio.music_status.state == AUDIO_MUSIC_PLAYING && index + 1U < library.count) {
+            ++s_audio.music_status.selected_index;
+            s_audio.music_status.elapsed_seconds = 0;
+            ++s_audio.music_generation;
+            s_audio.music_requested = true;
+        } else {
+            s_audio.music_status.state = error == ESP_OK ? AUDIO_MUSIC_STOPPED : AUDIO_MUSIC_ERROR;
+        }
+        ++s_audio.music_status.revision;
+    }
+    unlock_context();
+}
+
 static void audio_worker_task(void *argument)
 {
     (void)argument;
@@ -2906,6 +3115,8 @@ static void audio_worker_task(void *argument)
         (void)ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
         while (true) {
             audio_work_t work = AUDIO_WORK_NONE;
+            uint32_t music_generation = 0;
+            size_t music_index = 0;
             lock_context();
             /* If an alert arrives with a session request, let the session
              * observe its cancellation first so codec/I2S ownership is
@@ -2923,6 +3134,12 @@ static void audio_worker_task(void *argument)
                 s_audio.alert_requested = false;
                 s_audio.alert_running = true;
                 work = AUDIO_WORK_ALERT;
+            } else if (s_audio.music_requested) {
+                s_audio.music_requested = false;
+                s_audio.music_running = true;
+                music_generation = s_audio.music_generation;
+                music_index = s_audio.music_status.selected_index;
+                work = AUDIO_WORK_MUSIC;
             }
             unlock_context();
 
@@ -2934,6 +3151,8 @@ static void audio_worker_task(void *argument)
                 run_conversation_session();
             } else if (work == AUDIO_WORK_ALERT) {
                 run_audio_alert();
+            } else if (work == AUDIO_WORK_MUSIC) {
+                run_music(music_generation, music_index);
             } else {
                 break;
             }
@@ -3135,6 +3354,7 @@ esp_err_t audio_diagnostics_start(void)
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
     s_audio.alert_cancelled_session = false;
+    music_stop_locked();
     s_audio.diagnostic_requested = true;
     s_audio.status.running = true;
     s_audio.status.test_completed = false;
@@ -3181,6 +3401,7 @@ esp_err_t audio_alert_start(void)
             !s_audio.cancel_requested;
         s_audio.cancel_requested = true;
     }
+    music_stop_locked();
     s_audio.alert_requested = true;
     s_audio.alert_stop_requested = false;
     unlock_context();
@@ -3307,6 +3528,7 @@ esp_err_t audio_voice_start(uint32_t generation)
     s_audio.stop_requested = false;
     s_audio.cancel_requested = false;
     s_audio.alert_cancelled_session = false;
+    music_stop_locked();
     s_audio.voice_requested = true;
     s_audio.voice_status.running = true;
     s_audio.voice_status.speech_detected = false;
@@ -3393,6 +3615,7 @@ esp_err_t audio_conversation_start(uint32_t generation)
     s_audio.conversation_release_requested = false;
     s_audio.conversation_accepting_commands = true;
     audio_conversation_control_reset(&s_audio.conversation_control);
+    music_stop_locked();
     s_audio.conversation_requested = true;
     s_audio.conversation_status.running = true;
     s_audio.conversation_status.generation = generation;

@@ -1,5 +1,23 @@
 # 开发与发布流程
 
+## v0.27.0 候选构建记录
+
+2026-09-05：音乐、设备菜单与设置门户合并为 `0.27.0-dev.1`，尚未实机验收。
+固定流程 `bootstrap.sh --check`、`check-repository.sh`、`check-licenses.sh`、`test.sh`、
+`build.sh` 通过。新增测试运行真实 WAV 流式读取与内嵌门户脚本；MP3 桩测试仅覆盖接口
+和资源回收，不等于目标板解码验证。完整验收清单见 [microSD 音乐播放](music-player.md)。
+
+- OTA：2,154,096 字节（2.15 MB），SHA-256
+  `879c5b032f193fb88ef7733790c565b990d625bc8ddcc7583400f5f3ce12a0c8`。
+- 两个应用槽仍各为 3 MiB；分区表 SHA-256
+  `45337ee2266e86948bf6c9680ce1bc7de3056a75f9b7581e5dd14c34074ed446`。
+- 模型仍为 2,203,819 字节，SHA-256
+  `29e156e606a46114b19a3e2f56406bc7045894743ae1e623d0b9e4c5ed1486bf`，已装兼容模型的设备
+  仅应用 OTA 即可，不重写模型、分区或 NVS。
+- 音频工作任务栈为 24 KiB，MP3/PCM 使用有界分块缓冲；暂停释放音乐额外申请的最高
+  CPU 频率锁。实际栈余量、长期播放和响铃/对话接管时序仍需要板上验证。
+- 仅准备测试通道，不写入 `dist/`，不创建正式 GitHub Release。正式发布仍须用户验收。
+
 ## 技术栈
 
 - 只使用原生 ESP-IDF，不维护 Arduino 构建路线。
@@ -19,6 +37,10 @@
 - 音频驱动、维护诊断与离线语音位于 `src/audio/`，使用板载 ES8311、ES7210、
   ESP-IDF I2S 和 Espressif ESP-SR MultiNet；16 kHz 单声道音频直接送入 MultiNet，
   不使用 AFE，也不创建第二套直接操作 codec 的采集链路。
+- v0.27.0 候选的 `src/music/` 提供有界歌曲目录和流式 MP3/PCM WAV；MP3 使用固定
+  ESP Audio Codec v2.6.2 的直接帧接口，只链接 MP3，不注册全格式编解码器或引入 ESP-ADF。
+  文件读取与图片共用 SDMMC 互斥，播放仍由同一个 audio worker 拥有。具体见
+  [microSD 音乐播放](music-player.md)。
 - 可选 AI 语音 Beta 位于 `src/conversation/`，负责启用状态、API Key、受控模型与官方
   API Host 配置、双槽持久化、Realtime 事件和 WebSocket 客户端；scheme、路径与模型参数
   由固件按白名单组成，不接受完整用户 URL。同一有界会话复用一条 WebSocket
@@ -39,7 +61,7 @@
 
 ## 依赖与版本控制
 
-版本库只保存项目源码、文档、辅助脚本，以及由这些源码和固定开源依赖构建并经过实机
+版本库只保存项目源码、文档、辅助脚本，以及由这些源码和固定版本依赖构建并经过实机
 验证的发布固件。以下内容
 由开发环境按需准备，不提交到版本库：
 
@@ -142,6 +164,11 @@ v0.18.0 首次引入的同一发布边界：
 可回滚的模型更新机制，首版不提供在线模型更新。
 
 ## 常用命令
+
+主机测试需要系统 C 编译器、Python 3 和 Node.js（用于执行设备内嵌门户的原始脚本），
+不安装浏览器或额外 npm 包。v0.27.0 从旧工作区构建时，若已有本机 `sdkconfig`，需在
+FatFs 设置中启用 `CONFIG_FATFS_API_ENCODING_UTF_8=y`、`CONFIG_FATFS_MAX_LFN=127`；
+新工作区由 `sdkconfig.defaults` 自动提供。不要因此重置其他已经验证的本机配置。
 
 ```bash
 ./scripts/bootstrap.sh --check

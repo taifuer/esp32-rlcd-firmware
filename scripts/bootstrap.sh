@@ -108,6 +108,13 @@ if [[ "${check_only}" == true ]]; then
         "${DL_FFT_ARCHIVE_SHA256}" "dl_fft v${DL_FFT_VERSION} archive"
     verify_file_sha256 "${RLCD_CJSON_ARCHIVE}" \
         "${CJSON_ARCHIVE_SHA256}" "cJSON v${CJSON_VERSION} archive"
+    verify_file_sha256 "${RLCD_ESP_AUDIO_CODEC_ARCHIVE}" \
+        "${ESP_AUDIO_CODEC_ARCHIVE_SHA256}" "ESP Audio Codec v${ESP_AUDIO_CODEC_VERSION} archive"
+    if [[ ! -f "${RLCD_ESP_AUDIO_CODEC_DIR}/include/decoder/impl/esp_mp3_dec.h" ||
+          ! -f "${RLCD_ESP_AUDIO_CODEC_DIR}/lib/esp32s3/libesp_audio_codec.a" ]]; then
+        echo "ESP Audio Codec 源码或 ESP32-S3 库不完整" >&2
+        exit 1
+    fi
     verify_checkout "${RLCD_ESP_PROTOCOLS_DIR}" \
         "${ESP_WEBSOCKET_CLIENT_COMMIT}" \
         "ESP WebSocket Client v${ESP_WEBSOCKET_CLIENT_VERSION}"
@@ -204,6 +211,9 @@ install_component_archive "${RLCD_DL_FFT_ARCHIVE}" \
 install_component_archive "${RLCD_CJSON_ARCHIVE}" \
     "${CJSON_ARCHIVE_URL}" "${CJSON_ARCHIVE_SHA256}" \
     "${RLCD_CJSON_DIR}" "cJSON v${CJSON_VERSION}"
+install_component_archive "${RLCD_ESP_AUDIO_CODEC_ARCHIVE}" \
+    "${ESP_AUDIO_CODEC_ARCHIVE_URL}" "${ESP_AUDIO_CODEC_ARCHIVE_SHA256}" \
+    "${RLCD_ESP_AUDIO_CODEC_DIR}" "ESP Audio Codec v${ESP_AUDIO_CODEC_VERSION}"
 if [[ ! -d "${RLCD_ESP_PROTOCOLS_DIR}/.git" ]]; then
     git clone --filter=blob:none --no-checkout \
         "${ESP_PROTOCOLS_REPOSITORY_URL}" "${RLCD_ESP_PROTOCOLS_DIR}"

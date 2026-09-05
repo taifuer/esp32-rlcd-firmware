@@ -11,19 +11,22 @@
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
+当前源码为 **v0.27.0 候选**，将 microSD 音乐、设备菜单和设置门户优化合并为一版。
+音乐使用与实机验收见 [microSD 音乐播放](docs/music-player.md)；正式版仍为 v0.26.0。
+
 ## 效果预览
 
-以下为 v0.26.0 的界面示意。
+以下为当前源码的界面示意。
 
 | 首屏 | 天气 |
 | :---: | :---: |
 | ![首屏效果图](docs/assets/home-screen.svg) | ![天气页效果图](docs/assets/weather.svg) |
 | 月历 | microSD 图片 |
 | ![月历页效果图](docs/assets/calendar-screen.svg) | ![microSD 图片页效果图](docs/assets/image-screen.svg) |
-| 状态 | 对话 |
-| ![状态页效果图](docs/assets/status.svg) | ![AI 对话页效果图](docs/assets/voice.svg) |
+| microSD 音乐 | 对话 |
+| ![音乐播放页效果图](docs/assets/music.svg) | ![AI 对话页效果图](docs/assets/voice.svg) |
 | 设置 | 在线更新 |
-| ![设置页效果图](dist/v0.26.0/settings.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
+| ![设置页效果图](docs/assets/settings.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
 | 快捷设置 | 闹钟 |
 | ![快捷设置菜单](docs/assets/quick-settings.svg) | ![闹钟提醒](docs/assets/alarm.svg) |
 
@@ -54,9 +57,11 @@
   完整结束。回答默认简短，回复文字会跟随本地播放进度滚动显示最新 4 行。停用、离线、
   省电或未配置时自动使用本地 MultiNet；默认模型为 `qwen3-omni-flash-realtime`，无需创建百炼应用或填写
   Workspace ID、App ID，也不使用唤醒词或后台监听；
-- 四页系统中心依次为状态、对话、设置和在线更新；页脚直接写出下一目的地或动作，
+- 四页系统中心依次为对话、设置、在线更新和状态；页脚直接写出下一目的地或动作，
   不再用泛化的“下一页”“系统”或“门户”代替用户目标；
 - 日常页、系统页与快捷菜单停留在用户选中的页面，不自动返回；正常开机仍进入时钟；
+- v0.27.0 候选新增 microSD 音乐：歌曲放入卡内的 rlcd/music/ 目录，支持 MP3 和
+  16 位 PCM WAV；可播放、暂停、切歌及直接调音量，返回时钟后继续播放；
 - “设置”页支持手动提前省电，设备端[快捷设置](docs/device-settings.md)可调音量、开关
   闹钟和打开网页；设置门户支持时区、温度单位、播放音量、单个每周闹钟、
   更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、天气、microSD 图片管理
@@ -90,6 +95,7 @@ v0.7.0—v0.16.0 若要保留 NVS、Wi-Fi 和设备偏好，应通过 USB 使用
 使用 Factory 固件完整安装。
 microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 [microSD 图片准备](docs/microsd-images.md)。
+音乐文件与图片分开，准备方法见 [microSD 音乐播放](docs/music-player.md)。
 
 ## 安装使用
 
@@ -133,6 +139,7 @@ cd ../..
 │   ├── display/         # ST7305 界面
 │   ├── gallery/         # 公共演示图清单与 HTTPS 下载
 │   ├── image/           # PBM/BMP 单色图片校验与解码
+│   ├── music/           # 歌曲目录、MP3/WAV 校验与流式解码
 │   ├── network/         # 配网、NVS、SNTP 与联网会话
 │   ├── recovery/        # 启动异常记录、恢复模式与 OTA 健康判定
 │   ├── rtc/             # PCF85063 与备用电池保持判定
@@ -176,6 +183,7 @@ cd ../..
   数据与费用边界；
 - [天气 Beta](docs/weather.md)：QWeather 凭据、级联选址、刷新、离线缓存和费用边界；
 - [microSD 图片准备](docs/microsd-images.md)：FAT32、固定目录、图片格式、导入与管理边界；
+- [microSD 音乐播放](docs/music-player.md)：歌曲准备、按键和候选验收；
 - [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉与交互原则；
 - [开发计划](docs/roadmap.md)：已经确定的后续版本范围与验收边界；
 - [开发与发布指南](docs/development.md)：依赖、版本、测试和 Release 流程；

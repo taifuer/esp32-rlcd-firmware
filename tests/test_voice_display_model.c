@@ -61,12 +61,12 @@ static void assert_footer_uses_concrete_targets(const char *footer)
 static void test_targeted_navigation_footers(void)
 {
     assert(strcmp(display_interaction_weather_footer(),
-                  "BOOT: CALENDAR | KEY: STATUS | HOLD KEY 2s: REFRESH") ==
+                  "BOOT: CALENDAR | KEY: CHAT | HOLD KEY 2s: REFRESH") ==
            0);
-    assert(strcmp(display_interaction_calendar_footer(true),
-                  "BOOT: IMAGE | KEY: STATUS") == 0);
-    assert(strcmp(display_interaction_calendar_footer(false),
-                  "BOOT: HOME | KEY: STATUS") == 0);
+    assert(strcmp(display_interaction_calendar_footer(true, false),
+                  "BOOT: IMAGE | KEY: CHAT") == 0);
+    assert(strcmp(display_interaction_calendar_footer(false, false),
+                  "BOOT: HOME | KEY: CHAT") == 0);
     assert(strcmp(display_interaction_status_footer(),
                   "BOOT: HOME | KEY: CHAT | HOLD KEY 2s: SYNC TIME") == 0);
     assert(strcmp(display_interaction_chat_footer(),
@@ -93,9 +93,9 @@ static void test_targeted_navigation_footers(void)
     assert_footer_uses_concrete_targets(
         display_interaction_weather_footer());
     assert_footer_uses_concrete_targets(
-        display_interaction_calendar_footer(true));
+        display_interaction_calendar_footer(true, false));
     assert_footer_uses_concrete_targets(
-        display_interaction_calendar_footer(false));
+        display_interaction_calendar_footer(false, false));
     assert_footer_uses_concrete_targets(display_interaction_status_footer());
     assert_footer_uses_concrete_targets(display_interaction_chat_footer());
     assert_footer_uses_concrete_targets(
@@ -119,29 +119,36 @@ static void test_image_navigation_footer(void)
     char footer[64];
     char short_footer[12] = "stale";
 
+    assert(strcmp(display_interaction_calendar_footer(false, true),
+                  "BOOT: MUSIC | KEY: CHAT") == 0);
     assert(display_interaction_format_image_navigation(
-        footer, sizeof(footer), 1U, 6U));
+        footer, sizeof(footer), 0U, 2U, true));
+    assert(strcmp(footer, "BOOT: MUSIC | KEY: NEXT IMAGE | 1/2") == 0);
+    assert_footer_fits(footer);
+
+    assert(display_interaction_format_image_navigation(
+        footer, sizeof(footer), 1U, 6U, false));
     assert(strcmp(footer,
                   "BOOT: HOME | KEY: NEXT IMAGE | 2/6") == 0);
     assert_footer_uses_concrete_targets(footer);
 
     assert(display_interaction_format_image_navigation(
-        footer, sizeof(footer), 99U, 6U));
+        footer, sizeof(footer), 99U, 6U, false));
     assert(strcmp(footer,
                   "BOOT: HOME | KEY: NEXT IMAGE | 1/6") == 0);
 
     assert(display_interaction_format_image_navigation(
-        footer, sizeof(footer), 0U, 1U));
-    assert(strcmp(footer, "BOOT: HOME | KEY: STATUS") == 0);
+        footer, sizeof(footer), 0U, 1U, false));
+    assert(strcmp(footer, "BOOT: HOME | KEY: CHAT") == 0);
     assert_footer_uses_concrete_targets(footer);
 
     assert(!display_interaction_format_image_navigation(
-        short_footer, sizeof(short_footer), 0U, 32U));
+        short_footer, sizeof(short_footer), 0U, 32U, false));
     assert(short_footer[0] == '\0');
     assert(!display_interaction_format_image_navigation(
-        NULL, sizeof(footer), 0U, 1U));
+        NULL, sizeof(footer), 0U, 1U, false));
     assert(!display_interaction_format_image_navigation(
-        footer, 0U, 0U, 1U));
+        footer, 0U, 0U, 1U, false));
     assert_footer_uses_concrete_targets(
         display_interaction_image_action_footer());
 }
@@ -155,11 +162,11 @@ static void test_settings_footer_names_next_saving_action(void)
 
     assert(strcmp(
                turn_on,
-               "HOLD BOOT 2s: MANUAL SAVING ON | HOLD KEY 3s: QUICK SETTINGS") ==
+               "HOLD BOOT 2s: MANUAL SAVING ON | HOLD KEY 2s: QUICK SETTINGS") ==
            0);
     assert(strcmp(
                turn_off,
-               "HOLD BOOT 2s: MANUAL SAVING OFF | HOLD KEY 3s: QUICK SETTINGS") ==
+               "HOLD BOOT 2s: MANUAL SAVING OFF | HOLD KEY 2s: QUICK SETTINGS") ==
            0);
     assert(strstr(turn_on, "QUICK SETTINGS") != NULL);
     assert(strstr(turn_off, "QUICK SETTINGS") != NULL);

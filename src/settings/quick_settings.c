@@ -9,6 +9,16 @@ void quick_settings_open(quick_settings_t *menu)
     }
 }
 
+bool quick_settings_open_volume(quick_settings_t *menu, const app_settings_t *latest)
+{
+    if (menu == NULL || !app_settings_validate(latest)) return false;
+    quick_settings_open(menu);
+    menu->volume_only = true;
+    menu->editing = true;
+    menu->draft = latest->audio_playback_volume;
+    return true;
+}
+
 void quick_settings_close(quick_settings_t *menu)
 {
     if (menu != NULL) {
@@ -37,7 +47,9 @@ quick_settings_action_t quick_settings_input(
     menu->inactive_ms = 0U;
     menu->notice = QUICK_SETTINGS_NOTICE_NONE;
     if (input == QUICK_SETTINGS_BACK) {
-        if (menu->editing) {
+        if (menu->volume_only) {
+            quick_settings_close(menu);
+        } else if (menu->editing) {
             menu->editing = false;
             menu->draft = 0U;
         } else {
@@ -69,6 +81,10 @@ quick_settings_action_t quick_settings_input(
             ? latest->audio_playback_volume
             : (latest->alarm_enabled ? 1U : 0U);
         menu->editing = true;
+        if (menu->item == QUICK_SETTINGS_ALARM) {
+            menu->draft = latest->alarm_enabled ? 0U : 1U;
+            return QUICK_SETTINGS_ACTION_SAVE;
+        }
     }
     return QUICK_SETTINGS_ACTION_NONE;
 }
@@ -100,6 +116,10 @@ void quick_settings_save_result(quick_settings_t *menu, bool success)
         menu->notice = success ? QUICK_SETTINGS_NOTICE_SAVED
                                : QUICK_SETTINGS_NOTICE_SAVE_FAILED;
         if (success) {
+            if (menu->volume_only) {
+                quick_settings_close(menu);
+                return;
+            }
             menu->editing = false;
             menu->draft = 0U;
         }
@@ -120,6 +140,10 @@ bool quick_settings_tick(quick_settings_t *menu, uint32_t elapsed_ms,
         ? UINT32_MAX : menu->inactive_ms + elapsed_ms;
     if (menu->inactive_ms < QUICK_SETTINGS_EDIT_TIMEOUT_MS) {
         return false;
+    }
+    if (menu->volume_only) {
+        quick_settings_close(menu);
+        return true;
     }
     menu->editing = false;
     menu->draft = 0U;
@@ -145,7 +169,7 @@ const char *quick_settings_hold_title(const quick_settings_t *menu)
     case QUICK_SETTINGS_VOLUME:
         return menu->editing ? "SAVE VOLUME" : "EDIT VOLUME";
     case QUICK_SETTINGS_ALARM:
-        return menu->editing ? "SAVE ALARM" : "EDIT ALARM";
+        return menu->editing ? "SAVE ALARM" : "TOGGLE ALARM";
     case QUICK_SETTINGS_WEB:
         return "OPEN WEB SETTINGS";
     default: return "QUICK SETTINGS";

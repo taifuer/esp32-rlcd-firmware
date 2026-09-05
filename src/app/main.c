@@ -14,6 +14,7 @@
 #include "audio_conversation.h"
 #include "audio_diagnostics.h"
 #include "audio_voice.h"
+#include "audio_music.h"
 #include "battery.h"
 #include "board_buttons.h"
 #include "board_i2c.h"
@@ -64,6 +65,7 @@ typedef enum {
     APP_DISPLAY_WEATHER,
     APP_DISPLAY_CALENDAR,
     APP_DISPLAY_MONOCHROME_IMAGE,
+    APP_DISPLAY_MUSIC,
     APP_DISPLAY_HOLD_PROMPT,
     APP_DISPLAY_IMAGE_DELETE_CONFIRMATION,
     APP_DISPLAY_IMAGE_DELETE_STATUS,
@@ -193,10 +195,12 @@ static const char *page_name(app_page_t page)
         return "calendar";
     case APP_PAGE_IMAGE:
         return "image";
+    case APP_PAGE_MUSIC:
+        return "music";
     case APP_PAGE_STATUS:
         return "status";
     case APP_PAGE_VOICE:
-        return "voice";
+        return "chat";
     case APP_PAGE_SETTINGS:
         return "settings";
     case APP_PAGE_ONLINE_UPDATE:
@@ -831,9 +835,10 @@ static const char *device_time_sync_state_name(
 static void configure_key_timing(
     button_state_t *state,
     app_page_t page,
-    online_update_state_t online_update_state)
+    online_update_state_t online_update_state, bool recovery_mode)
 {
     uint32_t action_threshold_ms = app_page_key_hold_threshold_ms(page);
+    if (recovery_mode && page == APP_PAGE_SETTINGS) action_threshold_ms = APP_PAGE_RECOVERY_SETTINGS_HOLD_MS;
     if (page == APP_PAGE_ONLINE_UPDATE) {
         action_threshold_ms =
             app_page_online_update_hold_threshold_ms(
@@ -1479,6 +1484,13 @@ void app_main(void)
         ESP_LOGW(TAG, "microSD image service unavailable: %s",
                  esp_err_to_name(sd_image_init_error));
     }
+    if (!recovery_mode && sd_image_init_error == ESP_OK) {
+        const esp_err_t music_error = music_library_init();
+        if (music_error != ESP_OK) ESP_LOGW(TAG, "music library unavailable: %s", esp_err_to_name(music_error));
+    }
+    uint32_t previous_music_revision = 0;
+    uint8_t previous_music_count = 0;
+    uint8_t previous_music_volume = 0;
     sd_image_status_t initial_sd_image_status = {0};
     sd_image_store_get_status(&initial_sd_image_status);
     app_page_state_set_image_available(
@@ -1623,6 +1635,19 @@ void app_main(void)
                 weather_interactive_page_opened = false;
             }
             render_requested = true;
+        }
+        music_library_status_t music_library = {0};
+        music_library_get_status(&music_library);
+        audio_music_status_t music_status = {0};
+        audio_music_get_status(&music_status);
+        const bool music_changed = music_status.revision != previous_music_revision ||
+            music_library.count != previous_music_count || music_status.volume != previous_music_volume;
+        if (music_changed) {
+            app_page_state_set_music_available(&page_state, !recovery_mode && music_library.count > 0U);
+            previous_music_revision = music_status.revision;
+            previous_music_count = music_library.count;
+            previous_music_volume = music_status.volume;
+            if (app_page_state_current(&page_state) == APP_PAGE_MUSIC) render_requested = true;
         }
         sd_image_status_t latest_sd_image_status = {0};
         sd_image_store_get_status(&latest_sd_image_status);
@@ -2103,7 +2128,7 @@ void app_main(void)
                 (void)button_state_set_action_timing(&boot_button_state, 0U);
             } else {
                 configure_key_timing(&key_button_state, input_page,
-                                     online_update_status.state);
+                                     online_update_status.state, recovery_mode);
                 configure_boot_timing(&boot_button_state, input_page,
                                       recovery_mode);
             }
@@ -2488,9 +2513,9 @@ void app_main(void)
                     if (target_unchanged &&
                         app_image_delete_ui_confirm(
                             &image_delete_ui)) {
-                        const esp_err_t delete_error =
-                            sd_image_store_request_delete(
-                                image_delete_target);
+                        esp_err_t delete_error = audio_music_stop_and_wait(1000);
+                        if (delete_error == ESP_OK) delete_error =
+                            sd_image_store_request_delete(image_delete_target);
                         if (delete_error == ESP_OK) {
                             image_delete_error = ESP_OK;
                             ESP_LOGI(TAG,
@@ -2553,6 +2578,7 @@ void app_main(void)
                             : ESP_ERR_INVALID_ARG;
                     quick_settings_save_result(&quick_settings,
                                                 save_error == ESP_OK);
+                    if (!quick_settings.active) dual_button_release_gate = true;
                     if (save_error == ESP_OK) {
                         settings_refresh_requested = true;
                     }
@@ -2595,7 +2621,9 @@ void app_main(void)
                     previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
                     latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
                     latest_sd_image_status.image_count > 1U;
-                if (image_next_available) {
+                if (input_page == APP_PAGE_MUSIC && previous_display_mode != APP_DISPLAY_NETWORK_SETUP) {
+                    (void)audio_music_toggle();
+                } else if (image_next_available) {
                     const size_t current_image =
                         sd_image_store_selected_index();
                     const size_t selected_image =
@@ -2648,7 +2676,14 @@ void app_main(void)
         } else if (key_event == BUTTON_EVENT_LONG_PRESS) {
             const app_page_action_t key_action =
                 app_page_key_hold_action(input_page);
-            if (key_action == APP_PAGE_ACTION_DELETE_IMAGE &&
+            if (key_action == APP_PAGE_ACTION_NEXT_TRACK &&
+                previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
+                manual_sync_ui == MANUAL_SYNC_UI_NONE && !firmware_update_ui_active &&
+                !gallery_download_ui_active && !online_update_busy && !online_update_confirmation_active &&
+                !boot_pressed_or_debounced) {
+                (void)audio_music_next();
+                render_requested = true;
+            } else if (key_action == APP_PAGE_ACTION_DELETE_IMAGE &&
                 previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
                 manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                 !firmware_update_ui_active &&
@@ -2876,7 +2911,14 @@ void app_main(void)
             const app_page_action_t boot_action =
                 recovery_mode ? APP_PAGE_ACTION_NONE
                               : app_page_boot_hold_action(input_page);
-            if (boot_action ==
+            if (boot_action == APP_PAGE_ACTION_MUSIC_VOLUME &&
+                manual_sync_ui == MANUAL_SYNC_UI_NONE && !firmware_update_ui_active &&
+                !gallery_download_ui_active && !online_update_busy && !online_update_confirmation_active &&
+                !key_pressed_or_debounced) {
+                app_settings_t latest;
+                if (app_settings_get(&latest) == ESP_OK) (void)quick_settings_open_volume(&quick_settings, &latest);
+                render_requested = true;
+            } else if (boot_action ==
                     APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING &&
                 manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                 !firmware_update_ui_active &&
@@ -4144,6 +4186,7 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||
                     previous_display_mode == APP_DISPLAY_WEATHER ||
                     previous_display_mode == APP_DISPLAY_MONOCHROME_IMAGE ||
+                    previous_display_mode == APP_DISPLAY_MUSIC ||
                     previous_display_mode == APP_DISPLAY_HOLD_PROMPT ||
                     previous_display_mode ==
                         APP_DISPLAY_IMAGE_DELETE_CONFIRMATION ||
@@ -4166,6 +4209,8 @@ void app_main(void)
                 display_mode = APP_DISPLAY_CALENDAR;
             } else if (active_page == APP_PAGE_IMAGE) {
                 display_mode = APP_DISPLAY_MONOCHROME_IMAGE;
+            } else if (active_page == APP_PAGE_MUSIC) {
+                display_mode = APP_DISPLAY_MUSIC;
             }
             if (show_setup) {
                 display_mode = APP_DISPLAY_NETWORK_SETUP;
@@ -4195,7 +4240,7 @@ void app_main(void)
                         latest_sd_image_status.state ==
                             SD_IMAGE_STATE_READY;
                     display_show_calendar(&dashboard,
-                                          image_page_available);
+                                          image_page_available, music_library.count > 0U);
                 }
             } else if (display_mode == APP_DISPLAY_MONOCHROME_IMAGE) {
                 if (display_mode != previous_display_mode ||
@@ -4209,13 +4254,32 @@ void app_main(void)
                             &selected_index, &image_count)) {
                         display_show_monochrome_image(
                             image_bitmap_snapshot, selected_index,
-                            image_count);
+                            image_count, music_library.count > 0U);
                     } else {
                         app_page_state_set_image_available(&page_state,
                                                            false);
                         display_show_dashboard(&dashboard);
                         display_mode = APP_DISPLAY_DASHBOARD;
                     }
+                }
+            } else if (display_mode == APP_DISPLAY_MUSIC) {
+                if (display_mode != previous_display_mode || render_requested || music_changed) {
+                    audio_music_get_status(&music_status);
+                    music_track_t track = {0};
+                    (void)music_library_track(music_status.selected_index, &track);
+                    const display_music_t playing = {
+                        .filename = track.filename,
+                        .state = music_status.state == AUDIO_MUSIC_PLAYING ? "PLAYING" :
+                            music_status.state == AUDIO_MUSIC_PAUSED ? "PAUSED" :
+                            music_status.state == AUDIO_MUSIC_ERROR ? "CANNOT PLAY" : "STOPPED",
+                        .playing = music_status.state == AUDIO_MUSIC_PLAYING,
+                        .failed = music_status.state == AUDIO_MUSIC_ERROR,
+                        .elapsed_seconds = music_status.elapsed_seconds,
+                        .volume = music_status.volume,
+                        .index = music_status.selected_index,
+                        .count = music_library.count,
+                    };
+                    display_show_music(&playing);
                 }
             } else if (display_mode == previous_display_mode &&
                        !render_requested) {

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware music player</title>
+  <desc id="description">Local microSD playback with filename, state, elapsed time, volume and three button actions. Interface illustration, not a device photograph.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif">
+    <text x="200" y="32" font-size="24" font-weight="700">MUSIC</text>
+    <text x="388" y="32" text-anchor="end" font-size="12" font-family="DejaVu Sans Mono, monospace">1 / 3</text>
+    <path d="M12 44H388M12 250H388" stroke="#eef3e8" fill="none" shape-rendering="crispEdges"/>
+    <text x="200" y="91" font-size="16" font-family="Noto Sans CJK SC, sans-serif">01 - 清晨</text>
+    <text x="200" y="141" font-size="24" font-weight="700">PLAYING</text>
+    <text x="200" y="188" font-size="26">01:24</text>
+    <g font-size="12" font-family="DejaVu Sans Mono, Consolas, monospace">
+      <text x="200" y="225">VOLUME 68%</text>
+      <text x="200" y="270">BOOT: HOME | KEY: PAUSE</text>
+      <text x="200" y="294">HOLD KEY 2s: NEXT | HOLD BOOT 2s: VOLUME</text>
+    </g>
+  </g>
+</svg>

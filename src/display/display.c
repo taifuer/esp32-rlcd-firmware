@@ -1155,7 +1155,7 @@ void display_show_weather(const display_weather_t *weather)
 }
 
 void display_show_calendar(const display_dashboard_t *dashboard,
-                           bool image_available)
+                           bool image_available, bool music_available)
 {
     if (s_u8g2 == NULL || dashboard == NULL) {
         return;
@@ -1231,13 +1231,13 @@ void display_show_calendar(const display_dashboard_t *dashboard,
     }
 
     draw_daily_footer(
-        display_interaction_calendar_footer(image_available));
+        display_interaction_calendar_footer(image_available, music_available));
     u8g2_SendBuffer(s_u8g2);
 }
 
 void display_show_monochrome_image(
     const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
-    size_t selected_index, size_t image_count)
+    size_t selected_index, size_t image_count, bool music_available)
 {
     if (s_u8g2 == NULL || bitmap == NULL) {
         return;
@@ -1256,9 +1256,72 @@ void display_show_monochrome_image(
     u8g2_SetDrawColor(s_u8g2, 1);
     char footer[64];
     if (display_interaction_format_image_navigation(
-            footer, sizeof(footer), selected_index, image_count)) {
+            footer, sizeof(footer), selected_index, image_count, music_available)) {
         draw_image_footer(footer);
     }
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_music(const display_music_t *music)
+{
+    if (s_u8g2 == NULL || music == NULL) return;
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    draw_system_header("MUSIC", 0U);
+    char value[48];
+    snprintf(value, sizeof(value), "%u / %u", (unsigned)music->index + 1U, (unsigned)music->count);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_utf8_right_aligned(388, 32, value);
+    u8g2_SetFont(s_u8g2, u8g2_font_wqy16_t_gb2312);
+    char title[132];
+    const unsigned char *name = (const unsigned char *)(music->filename != NULL ? music->filename : "--");
+    size_t used = 0;
+    for (size_t i = 0; name[i] != 0 && used + 4U < sizeof(title); ) {
+        const size_t start = i;
+        uint32_t codepoint = name[i++];
+        unsigned following = 0;
+        if (codepoint >= 0xc0U && codepoint < 0xe0U) { following = 1; codepoint &= 0x1fU; }
+        else if (codepoint >= 0xe0U && codepoint < 0xf0U) { following = 2; codepoint &= 0x0fU; }
+        else if (codepoint >= 0xf0U) { following = 3; codepoint &= 7U; }
+        bool valid = true;
+        for (unsigned j = 0; j < following; ++j) {
+            if (name[i] == 0 || (name[i] & 0xc0U) != 0x80U) { valid = false; break; }
+            codepoint = (codepoint << 6) | (name[i++] & 0x3fU);
+        }
+        if (!valid || codepoint > UINT16_MAX || !u8g2_IsGlyph(s_u8g2, (uint16_t)codepoint)) {
+            title[used++] = '?';
+        } else {
+            memcpy(title + used, name + start, i - start);
+            used += i - start;
+        }
+    }
+    title[used] = '\0';
+    char *extension = strrchr(title, '.');
+    if (extension != NULL) *extension = '\0';
+    /* Truncate complete UTF-8 code points, measured in the actual font. */
+    if (u8g2_GetUTF8Width(s_u8g2, title) > 368U) {
+        size_t length = strlen(title);
+        do {
+            if (length == 0U) break;
+            --length;
+            while (length > 0U && ((unsigned char)title[length] & 0xc0U) == 0x80U) --length;
+            title[length] = '\0';
+        } while (u8g2_GetUTF8Width(s_u8g2, title) > 344U);
+        memcpy(title + length, "...", 4);
+    }
+    draw_utf8_centered_in_region(12, 376, 91, title);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB18_tf);
+    draw_centered(141, music->state != NULL ? music->state : "STOPPED");
+    u8g2_SetFont(s_u8g2, u8g2_font_logisoso20_tf);
+    snprintf(value, sizeof(value), "%02u:%02u", (unsigned)(music->elapsed_seconds / 60U),
+             (unsigned)(music->elapsed_seconds % 60U));
+    draw_centered(188, value);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    snprintf(value, sizeof(value), "VOLUME %u%%", (unsigned)music->volume);
+    draw_centered(225, music->failed ? "CHECK FILE / CARD | KEY: RETRY" : value);
+    u8g2_DrawHLine(s_u8g2, 12, 250, 376);
+    draw_centered(270, music->playing ? "BOOT: HOME | KEY: PAUSE" : "BOOT: HOME | KEY: PLAY");
+    draw_centered(294, "HOLD KEY 2s: NEXT | HOLD BOOT 2s: VOLUME");
     u8g2_SendBuffer(s_u8g2);
 }
 
@@ -1329,7 +1392,7 @@ void display_show_system_status(const display_system_status_t *status)
     }
 
     char value[64];
-    draw_system_header("STATUS", 1U);
+    draw_system_header("STATUS", 4U);
 
     if (!status->rtc_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");
@@ -1406,7 +1469,7 @@ void display_show_voice(const display_voice_status_t *status)
 
     char value[48];
     const char *detail = status->detail != NULL ? status->detail : "";
-    draw_system_header("CHAT", 2U);
+    draw_system_header("CHAT", 1U);
     u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
 
     switch (status->state) {
@@ -1616,7 +1679,7 @@ void display_show_settings(const display_settings_status_t *status)
     }
 
     char value[40];
-    draw_system_header("SETTINGS", status->recovery_mode ? 0U : 3U);
+    draw_system_header("SETTINGS", status->recovery_mode ? 0U : 2U);
 
     if (status->recovery_mode) {
         draw_system_row(112, "MODE", "RECOVERY");
@@ -1733,8 +1796,9 @@ void display_show_quick_settings(const quick_settings_t *menu,
     u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN, SYSTEM_FOOTER_DIVIDER_Y,
                    BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
     draw_centered(270, display_interaction_quick_navigation(menu->editing));
-    draw_centered(294, display_interaction_quick_action(
-        menu->editing, menu->item == QUICK_SETTINGS_WEB));
+    draw_centered(294, !menu->editing && menu->item == QUICK_SETTINGS_ALARM
+        ? "HOLD KEY 2s: TOGGLE ALARM"
+        : display_interaction_quick_action(menu->editing, menu->item == QUICK_SETTINGS_WEB));
     u8g2_SendBuffer(s_u8g2);
 }
 
@@ -1781,7 +1845,7 @@ void display_show_online_update(const display_online_update_status_t *status)
     format_version(latest_version, sizeof(latest_version),
                    status->latest_version);
 
-    draw_system_header("ONLINE UPDATE", status->recovery_mode ? 0U : 4U);
+    draw_system_header("ONLINE UPDATE", status->recovery_mode ? 0U : 3U);
     switch (status->state) {
     case DISPLAY_ONLINE_UPDATE_STATE_CHECKING:
         draw_online_update_modal(

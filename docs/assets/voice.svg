@@ -4,7 +4,7 @@
   <rect width="400" height="300" rx="3" fill="#090b0a"/>
   <g fill="#eef3e8" stroke="#eef3e8">
     <text x="200" y="32" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">CHAT</text>
-    <text x="388" y="32" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">2/4</text>
+    <text x="388" y="32" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">1/4</text>
     <path d="M12 44H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
     <text x="200" y="92" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">AI CHAT</text>
     <text x="200" y="145" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="700">Hold KEY 2s to ask</text>

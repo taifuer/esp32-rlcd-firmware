@@ -213,10 +213,21 @@ void display_show_hold_prompt(const char *title,
 void display_show_dashboard(const display_dashboard_t *dashboard);
 void display_show_weather(const display_weather_t *weather);
 void display_show_calendar(const display_dashboard_t *dashboard,
-                           bool image_available);
+                           bool image_available, bool music_available);
 void display_show_monochrome_image(
     const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
-    size_t selected_index, size_t image_count);
+    size_t selected_index, size_t image_count, bool music_available);
+typedef struct {
+    const char *filename;
+    const char *state;
+    uint32_t elapsed_seconds;
+    uint8_t volume;
+    uint8_t index;
+    uint8_t count;
+    bool playing;
+    bool failed;
+} display_music_t;
+void display_show_music(const display_music_t *music);
 void display_show_image_delete_confirmation(
     const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
     size_t selected_index, size_t image_count, bool delete_ready);

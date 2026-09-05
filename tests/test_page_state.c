@@ -11,6 +11,7 @@ static void test_browsing_stays_and_background_discovery_never_navigates(void)
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
     app_page_state_set_weather_enabled(&state, true);
     app_page_state_set_image_available(&state, true);
+    app_page_state_set_music_available(&state, true);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
     /* There is intentionally no clock/tick API in the page model. Repeated
      * background availability updates must also preserve every chosen page. */
@@ -19,12 +20,14 @@ static void test_browsing_stays_and_background_discovery_never_navigates(void)
         for (unsigned poll = 0U; poll < 3600U; ++poll) {
             app_page_state_set_weather_enabled(&state, true);
             app_page_state_set_image_available(&state, true);
+            app_page_state_set_music_available(&state, true);
             assert(app_page_state_current(&state) == page);
         }
         app_page_state_init(&state); /* reboot does not remember this page */
         assert(app_page_state_current(&state) == APP_PAGE_HOME);
         app_page_state_set_weather_enabled(&state, true);
         app_page_state_set_image_available(&state, true);
+        app_page_state_set_music_available(&state, true);
     }
     assert(app_page_state_open_page(&state, APP_PAGE_CALENDAR));
     app_page_state_set_image_available(&state, false);
@@ -83,7 +86,14 @@ int main(void)
            APP_PAGE_ACTION_OPEN_SETTINGS);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_SETTINGS) ==
            APP_PAGE_SETTINGS_HOLD_MS);
-    assert(APP_PAGE_SETTINGS_HOLD_MS == 3000U);
+    assert(APP_PAGE_SETTINGS_HOLD_MS == 2000U);
+    assert(APP_PAGE_RECOVERY_SETTINGS_HOLD_MS == 3000U);
+    assert(app_page_is_daily(APP_PAGE_MUSIC));
+    assert(!app_page_is_system(APP_PAGE_MUSIC));
+    assert(app_page_key_hold_action(APP_PAGE_MUSIC) == APP_PAGE_ACTION_NEXT_TRACK);
+    assert(app_page_key_hold_threshold_ms(APP_PAGE_MUSIC) == 2000U);
+    assert(app_page_boot_hold_action(APP_PAGE_MUSIC) == APP_PAGE_ACTION_MUSIC_VOLUME);
+    assert(app_page_boot_hold_threshold_ms(APP_PAGE_MUSIC) == 2000U);
     assert(app_page_key_hold_action(APP_PAGE_ONLINE_UPDATE) ==
            APP_PAGE_ACTION_CHECK_ONLINE_UPDATE);
     assert(app_page_key_hold_threshold_ms(APP_PAGE_ONLINE_UPDATE) ==
@@ -160,7 +170,7 @@ int main(void)
     app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
     app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_STATUS);
+    assert(app_page_state_current(&state) == APP_PAGE_VOICE);
     app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
@@ -208,8 +218,6 @@ int main(void)
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
     app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_STATUS);
-    app_page_state_key_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_VOICE);
     app_page_state_key_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
@@ -217,15 +225,28 @@ int main(void)
     assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
     app_page_state_key_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_STATUS);
+    app_page_state_key_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_VOICE);
     app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
     app_page_state_boot_short_press(&state);
     app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_STATUS);
+    assert(app_page_state_current(&state) == APP_PAGE_VOICE);
     app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
+    assert(!app_page_state_open_page(&state, APP_PAGE_MUSIC));
+    app_page_state_set_music_available(&state, true);
+    app_page_state_boot_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
+    app_page_state_boot_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_MUSIC);
+    app_page_state_boot_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+    assert(app_page_state_open_page(&state, APP_PAGE_MUSIC));
+    app_page_state_set_music_available(&state, false);
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
     app_page_state_set_recovery_mode(&state, true);
     assert(state.recovery_mode);
     assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
@@ -233,6 +254,7 @@ int main(void)
     assert(!app_page_state_open_page(&state, APP_PAGE_WEATHER));
     assert(!app_page_state_open_page(&state, APP_PAGE_CALENDAR));
     assert(!app_page_state_open_page(&state, APP_PAGE_IMAGE));
+    assert(!app_page_state_open_page(&state, APP_PAGE_MUSIC));
     assert(!app_page_state_open_page(&state, APP_PAGE_STATUS));
     assert(!app_page_state_open_page(&state, APP_PAGE_VOICE));
     assert(app_page_state_open_page(&state, APP_PAGE_SETTINGS));

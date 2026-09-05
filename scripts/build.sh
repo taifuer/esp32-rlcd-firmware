@@ -58,6 +58,19 @@ idf.py -B build \
   merge-bin --output rlcd_firmware_factory.bin
 install -m 0644 build/rlcd_firmware.bin build/rlcd_firmware_ota.bin
 
+if ! grep -Fxq 'CONFIG_FATFS_API_ENCODING_UTF_8=y' sdkconfig || \
+   ! grep -Fxq 'CONFIG_FATFS_MAX_LFN=127' sdkconfig; then
+  echo '音乐文件名需要 FatFs UTF-8 和 127 字符 LFN；请按 docs/development.md 更新本机 sdkconfig。' >&2
+  exit 1
+fi
+mp3_decoder_objects="$(sed -nE \
+  's/.*libesp_audio_codec\.a\((esp_[[:alnum:]_]+_dec\.c\.obj)\).*/\1/p' \
+  build/rlcd_firmware.map | LC_ALL=C sort -u)"
+if [[ "${mp3_decoder_objects}" != 'esp_mp3_dec.c.obj' ]]; then
+  echo '音频解码链接范围改变，请核对组件、资源与许可材料。' >&2
+  exit 1
+fi
+
 partition_summary="$(python "${RLCD_IDF_DIR}/components/partition_table/gen_esp32part.py" \
   build/partition_table/partition-table.bin)"
 for required_partition in 'otadata' 'ota_0' 'ota_1'; do

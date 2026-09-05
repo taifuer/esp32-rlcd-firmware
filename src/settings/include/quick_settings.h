@@ -39,6 +39,7 @@ typedef struct {
     bool active;
     bool editing;
     bool release_required;
+    bool volume_only;
     quick_settings_item_t item;
     uint8_t draft;
     uint32_t inactive_ms;
@@ -46,6 +47,7 @@ typedef struct {
 } quick_settings_t;
 
 void quick_settings_open(quick_settings_t *menu);
+bool quick_settings_open_volume(quick_settings_t *menu, const app_settings_t *latest);
 void quick_settings_close(quick_settings_t *menu);
 /* Returns true while the opening/confirming press must still be consumed,
  * including the frame which observes its release. */

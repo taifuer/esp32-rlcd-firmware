@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "boot_recovery.h"
+#include "audio_music.h"
 #include "esp_app_format.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -542,8 +543,13 @@ static void install_task(void *argument)
     (void)argument;
     set_state(ONLINE_UPDATE_STATE_CONNECTING, ESP_OK,
               ONLINE_UPDATE_ERROR_NONE);
-    esp_err_t error = network_time_begin_online_session(
-        ONLINE_SESSION_TIMEOUT_MS);
+    esp_err_t error = audio_music_stop_and_wait(1500);
+    if (error != ESP_OK) {
+        set_state(ONLINE_UPDATE_STATE_FAILED, error, ONLINE_UPDATE_ERROR_NONE);
+        vTaskDelete(NULL);
+        return;
+    }
+    error = network_time_begin_online_session(ONLINE_SESSION_TIMEOUT_MS);
     online_update_error_t policy_error = ONLINE_UPDATE_ERROR_NONE;
     online_update_manifest_t fresh = {0};
     if (error == ESP_OK && cancellation_requested()) {

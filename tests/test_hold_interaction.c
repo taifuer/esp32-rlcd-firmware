@@ -35,6 +35,8 @@ static void test_all_actions_and_other_button_gate(void)
         APP_PAGE_ACTION_OPEN_SETTINGS,
         APP_PAGE_ACTION_CHECK_ONLINE_UPDATE,
         APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING,
+        APP_PAGE_ACTION_NEXT_TRACK,
+        APP_PAGE_ACTION_MUSIC_VOLUME,
     };
     for (size_t index = 0U;
          index < sizeof(actions) / sizeof(actions[0]); ++index) {

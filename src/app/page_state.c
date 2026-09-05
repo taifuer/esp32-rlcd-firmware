@@ -14,6 +14,9 @@ static app_page_t next_daily_page(const app_page_state_t *state)
     if (state->current == APP_PAGE_CALENDAR && state->image_available) {
         return APP_PAGE_IMAGE;
     }
+    if ((state->current == APP_PAGE_CALENDAR || state->current == APP_PAGE_IMAGE) && state->music_available) {
+        return APP_PAGE_MUSIC;
+    }
     return APP_PAGE_HOME;
 }
 
@@ -53,7 +56,8 @@ bool app_page_state_open_page(app_page_state_t *state, app_page_t page)
         (state->recovery_mode && page != APP_PAGE_SETTINGS &&
          page != APP_PAGE_ONLINE_UPDATE) ||
         (page == APP_PAGE_WEATHER && !state->weather_enabled) ||
-        (page == APP_PAGE_IMAGE && !state->image_available)) {
+        (page == APP_PAGE_IMAGE && !state->image_available) ||
+        (page == APP_PAGE_MUSIC && !state->music_available)) {
         return false;
     }
 
@@ -85,6 +89,13 @@ void app_page_state_set_image_available(app_page_state_t *state,
     }
 }
 
+void app_page_state_set_music_available(app_page_state_t *state, bool available)
+{
+    if (state == NULL) return;
+    state->music_available = available;
+    if (!available && state->current == APP_PAGE_MUSIC) app_page_state_go_home(state);
+}
+
 void app_page_state_set_recovery_mode(app_page_state_t *state,
                                       bool enabled)
 {
@@ -104,7 +115,7 @@ app_page_t app_page_state_current(const app_page_state_t *state)
 bool app_page_is_daily(app_page_t page)
 {
     return page == APP_PAGE_HOME || page == APP_PAGE_WEATHER ||
-           page == APP_PAGE_CALENDAR || page == APP_PAGE_IMAGE;
+           page == APP_PAGE_CALENDAR || page == APP_PAGE_IMAGE || page == APP_PAGE_MUSIC;
 }
 
 bool app_page_is_system(app_page_t page)
@@ -114,6 +125,7 @@ bool app_page_is_system(app_page_t page)
 
 app_page_action_t app_page_key_hold_action(app_page_t page)
 {
+    if (page == APP_PAGE_MUSIC) return APP_PAGE_ACTION_NEXT_TRACK;
     if (page == APP_PAGE_WEATHER) {
         return APP_PAGE_ACTION_REFRESH_WEATHER;
     }
@@ -138,6 +150,8 @@ app_page_action_t app_page_key_hold_action(app_page_t page)
 uint32_t app_page_key_hold_threshold_ms(app_page_t page)
 {
     switch (app_page_key_hold_action(page)) {
+    case APP_PAGE_ACTION_NEXT_TRACK:
+        return APP_PAGE_MUSIC_HOLD_MS;
     case APP_PAGE_ACTION_REFRESH_WEATHER:
         return APP_PAGE_WEATHER_REFRESH_HOLD_MS;
     case APP_PAGE_ACTION_DELETE_IMAGE:
@@ -167,6 +181,7 @@ uint32_t app_page_online_update_hold_threshold_ms(
 
 app_page_action_t app_page_boot_hold_action(app_page_t page)
 {
+    if (page == APP_PAGE_MUSIC) return APP_PAGE_ACTION_MUSIC_VOLUME;
     return page == APP_PAGE_SETTINGS
                ? APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING
                : APP_PAGE_ACTION_NONE;
@@ -174,6 +189,7 @@ app_page_action_t app_page_boot_hold_action(app_page_t page)
 
 uint32_t app_page_boot_hold_threshold_ms(app_page_t page)
 {
+    if (page == APP_PAGE_MUSIC) return APP_PAGE_MUSIC_HOLD_MS;
     return app_page_boot_hold_action(page) ==
                    APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING
                ? APP_PAGE_SETTINGS_POWER_HOLD_MS
@@ -206,5 +222,5 @@ void app_page_state_key_short_press(app_page_state_t *state)
     }
     state->current = app_page_is_system(state->current)
                          ? next_system_page(state->current)
-                         : APP_PAGE_STATUS;
+                         : APP_PAGE_VOICE;
 }

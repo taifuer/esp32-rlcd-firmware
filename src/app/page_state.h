@@ -11,7 +11,9 @@ extern "C" {
 #define APP_PAGE_MANUAL_SYNC_HOLD_MS 2000U
 #define APP_PAGE_VOICE_HOLD_MS 2000U
 #define APP_PAGE_IMAGE_DELETE_HOLD_MS 2000U
-#define APP_PAGE_SETTINGS_HOLD_MS 3000U
+#define APP_PAGE_SETTINGS_HOLD_MS 2000U
+#define APP_PAGE_RECOVERY_SETTINGS_HOLD_MS 3000U
+#define APP_PAGE_MUSIC_HOLD_MS 2000U
 #define APP_PAGE_SETTINGS_POWER_HOLD_MS 2000U
 #define APP_PAGE_ONLINE_UPDATE_CHECK_HOLD_MS 2000U
 #define APP_PAGE_ONLINE_UPDATE_INSTALL_HOLD_MS 3000U
@@ -21,6 +23,7 @@ typedef enum {
     APP_PAGE_WEATHER,
     APP_PAGE_CALENDAR,
     APP_PAGE_IMAGE,
+    APP_PAGE_MUSIC,
     APP_PAGE_STATUS,
     APP_PAGE_VOICE,
     APP_PAGE_SETTINGS,
@@ -36,12 +39,15 @@ typedef enum {
     APP_PAGE_ACTION_OPEN_SETTINGS,
     APP_PAGE_ACTION_CHECK_ONLINE_UPDATE,
     APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING,
+    APP_PAGE_ACTION_NEXT_TRACK,
+    APP_PAGE_ACTION_MUSIC_VOLUME,
 } app_page_action_t;
 
 typedef struct {
     app_page_t current;
     bool weather_enabled;
     bool image_available;
+    bool music_available;
     bool recovery_mode;
 } app_page_state_t;
 
@@ -52,6 +58,7 @@ void app_page_state_go_home(app_page_state_t *state);
 bool app_page_state_open_page(app_page_state_t *state, app_page_t page);
 void app_page_state_set_image_available(app_page_state_t *state,
                                         bool available);
+void app_page_state_set_music_available(app_page_state_t *state, bool available);
 void app_page_state_set_weather_enabled(app_page_state_t *state,
                                         bool enabled);
 void app_page_state_set_recovery_mode(app_page_state_t *state,
