@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "app_settings.h"
+#include "boot_recovery.h"
 #include "clock_service.h"
 #include "conversation_config.h"
 #include "esp_app_format.h"
@@ -80,6 +81,44 @@ static const char *TAG = "firmware_update";
 static const char SETTINGS_AP_BASE_NAME[] = "ESP32-RLCD-SETTINGS";
 static const char SETTINGS_URL[] = "http://192.168.4.1";
 static const char EXPECTED_PROJECT_NAME[] = "rlcd_firmware";
+
+static const char RECOVERY_SETTINGS_PAGE[] =
+    "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+    "<title>固件恢复</title><style>"
+    ":root{color-scheme:light;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#171717;background:#f5f6f7}"
+    "*{box-sizing:border-box}body{margin:0}main{width:calc(100% - 2rem);max-width:34rem;margin:0 auto;padding:2rem 0 3rem}"
+    "header{padding:.4rem 0 1rem}h1{font-size:1.85rem;margin:0 0 .55rem}h2{font-size:1.15rem;margin:0 0 .9rem}"
+    "p{line-height:1.55;margin:.45rem 0;color:#555}section{background:#fff;border:1px solid #e2e4e7;border-radius:.8rem;padding:1.15rem;margin:1rem 0}"
+    "label{display:block;font-weight:600;margin:.9rem 0 .35rem}input,button{width:100%;font:inherit;border-radius:.55rem;padding:.72rem .8rem;border:1px solid #a9adb2;background:#fff;min-height:44px}"
+    "button{margin-top:.9rem;border-color:#171717;background:#171717;color:#fff;font-weight:650}button.secondary,button.danger{background:#fff;color:#171717}"
+    "button.danger{color:#a32626;border-color:#c96c6c}button:disabled,input:disabled{opacity:.48}.note{font-size:.88rem;color:#676b70}.message{min-height:1.5rem;margin-top:.75rem;color:#333}"
+    ".summary{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;padding:.8rem .9rem;border-radius:.55rem;background:#f2f3f4}.summary span{color:#676b70}.summary strong{overflow-wrap:anywhere;text-align:right}"
+    ".form{margin-top:.9rem}.form[hidden]{display:none}.check{display:flex;align-items:center;gap:.55rem}.check input{width:auto;margin:0;padding:0;min-height:0}.row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.row button{margin-top:.7rem}"
+    "progress{width:100%;height:1rem;margin-top:1rem}@media(max-width:26rem){.row{grid-template-columns:1fr}.summary{align-items:flex-start;flex-direction:column;gap:.25rem}.summary strong{text-align:left}}"
+    "</style></head><body><main><header><h1>固件恢复</h1>"
+    "<p>恢复模式仅启动联网和升级所需功能。修复完成后，关闭电源再正常开机。</p></header>"
+    "<section><h2>Wi-Fi</h2><div class=\"summary\"><span id=\"wifiLabel\">已保存网络</span><strong id=\"wifiName\">正在读取…</strong></div>"
+    "<button id=\"wifiEdit\" type=\"button\" class=\"secondary\">更换 Wi-Fi</button>"
+    "<form id=\"wifiForm\" class=\"form\" autocomplete=\"off\" hidden><label for=\"wifiSsid\">Wi-Fi 名称</label><input id=\"wifiSsid\" maxlength=\"32\" required>"
+    "<label for=\"wifiPassword\">Wi-Fi 密码</label><input id=\"wifiPassword\" type=\"password\" maxlength=\"63\" autocomplete=\"new-password\">"
+    "<label class=\"check\"><input id=\"showWifiPassword\" type=\"checkbox\">显示密码</label><label class=\"check\"><input id=\"openWifi\" type=\"checkbox\">这是开放网络</label>"
+    "<p class=\"note\">仅支持 2.4 GHz。新网络验证成功后才会替换原配置。</p><div class=\"row\"><button type=\"submit\">连接并保存</button><button id=\"wifiCancel\" type=\"button\" class=\"secondary\">取消</button></div></form>"
+    "<p id=\"wifiMessage\" class=\"message\" role=\"status\"></p><button id=\"forgetWifi\" type=\"button\" class=\"danger\">移除已保存的 Wi-Fi</button></section>"
+    "<section><h2>本地固件升级</h2><p>请选择本项目发布的 <strong>OTA 固件</strong>。写入期间请保持供电。</p>"
+    "<input id=\"file\" type=\"file\" accept=\".bin,application/octet-stream\"><button id=\"upload\" type=\"button\">开始升级</button>"
+    "<progress id=\"progress\" max=\"100\" value=\"0\"></progress><p id=\"updateMessage\" class=\"message\">等待选择固件</p></section>"
+    "<script>let token='',wifiConfigured=false,wifiBusy=false;const $=id=>document.getElementById(id);const show=(id,text)=>{$(id).textContent=text};"
+    "function controls(){const open=$('openWifi').checked;$('wifiEdit').disabled=wifiBusy;$('wifiSsid').disabled=wifiBusy;$('wifiPassword').disabled=wifiBusy||open;$('showWifiPassword').disabled=wifiBusy||open;$('openWifi').disabled=wifiBusy;$('forgetWifi').disabled=wifiBusy||!wifiConfigured}"
+    "function edit(value){$('wifiForm').hidden=!value;if(value){$('wifiPassword').value='';$('wifiSsid').focus()}}"
+    "async function post(path,body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Token':token},body});const text=await response.text();if(!response.ok)throw new Error(text||'操作失败');return text}"
+    "async function load(){const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw new Error('无法读取恢复状态');const state=await response.json();token=state.token;wifiConfigured=state.wifi_configured===true;$('wifiLabel').textContent=wifiConfigured?'已保存网络':'网络状态';$('wifiName').textContent=wifiConfigured?state.wifi_ssid:(state.wifi_readable?'尚未配置':'无法读取，可更换网络或升级');$('wifiSsid').value=wifiConfigured?state.wifi_ssid:'';controls()}"
+    "$('wifiEdit').onclick=()=>edit(true);$('wifiCancel').onclick=()=>{edit(false);show('wifiMessage','')};$('showWifiPassword').onchange=()=>{$('wifiPassword').type=$('showWifiPassword').checked?'text':'password'};"
+    "$('openWifi').onchange=()=>{if($('openWifi').checked){$('wifiPassword').value='';$('showWifiPassword').checked=false;$('wifiPassword').type='password'}controls()};"
+    "$('wifiForm').onsubmit=async event=>{event.preventDefault();if(wifiBusy)return;const ssid=$('wifiSsid').value,password=$('wifiPassword').value,open=$('openWifi').checked;if(!ssid||new TextEncoder().encode(ssid).length>32){show('wifiMessage','Wi-Fi 名称应为 1—32 字节。');return}if(!open&&!/^[\\x20-\\x7e]{8,63}$/.test(password)){show('wifiMessage','请输入 8—63 位英文字符、数字或符号。');return}wifiBusy=true;controls();show('wifiMessage','正在验证新网络…');try{show('wifiMessage',await post('/api/wifi/change','ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(open?'':password)))}catch(error){show('wifiMessage',error.name==='TypeError'?'设置热点已关闭，请查看设备屏幕。':error.message);wifiBusy=false;controls()}};"
+    "$('forgetWifi').onclick=async()=>{if(!wifiConfigured||!confirm('移除已保存的 Wi-Fi？'))return;wifiBusy=true;controls();show('wifiMessage','正在移除…');try{show('wifiMessage',await post('/api/wifi/clear','confirm=FORGET'))}catch(error){show('wifiMessage',error.name==='TypeError'?'设置热点已关闭，请重新配网。':error.message);wifiBusy=false;controls()}};"
+    "$('upload').onclick=()=>{const file=$('file'),button=$('upload'),progress=$('progress');if(!file.files.length){show('updateMessage','请先选择 OTA 固件');return}if(!confirm('开始写入固件？'))return;button.disabled=true;file.disabled=true;const request=new XMLHttpRequest();request.open('POST','/update');request.setRequestHeader('Content-Type','application/octet-stream');request.setRequestHeader('X-RLCD-Token',token);request.upload.onprogress=event=>{if(event.lengthComputable){const value=Math.round(event.loaded*100/event.total);progress.value=value;show('updateMessage','正在上传 '+value+'%')}};request.onload=()=>{show('updateMessage',request.responseText||(request.status===200?'升级成功，设备即将重启':'升级失败'));if(request.status!==200){button.disabled=false;file.disabled=false}};request.onerror=()=>show('updateMessage','连接中断，请查看设备屏幕');request.send(file.files[0])};"
+    "load().catch(error=>show('wifiMessage',error.message));</script></main></body></html>";
 
 static const char SETTINGS_PAGE[] =
     "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
@@ -602,16 +641,22 @@ static bool session_deadline_expired(void)
 static void start_session_deadline(void)
 {
     const uint32_t now = (uint32_t)xTaskGetTickCount();
+    const bool recovery_mode = boot_recovery_is_active();
     portENTER_CRITICAL(&s_status_lock);
-    s_session_started_tick = now;
-    s_session_deadline_active = true;
+    if (recovery_mode) {
+        s_session_started_tick = 0U;
+        s_session_deadline_active = false;
+    } else {
+        s_session_started_tick = now;
+        s_session_deadline_active = true;
+    }
     portEXIT_CRITICAL(&s_status_lock);
 }
 
 static TickType_t session_deadline_remaining_ticks(void)
 {
     const uint32_t now = (uint32_t)xTaskGetTickCount();
-    uint32_t remaining = 0U;
+    uint32_t remaining = portMAX_DELAY;
     portENTER_CRITICAL(&s_status_lock);
     if (s_session_deadline_active) {
         remaining = settings_portal_deadline_remaining(
@@ -633,8 +678,10 @@ static esp_err_t settings_get_handler(httpd_req_t *request)
                          "text/plain; charset=utf-8",
                          "设置会话已关闭。\n");
     }
-    return send_page(request, "200 OK", "text/html; charset=utf-8",
-                     SETTINGS_PAGE);
+    return send_page(
+        request, "200 OK", "text/html; charset=utf-8",
+        boot_recovery_is_active() ? RECOVERY_SETTINGS_PAGE
+                                  : SETTINGS_PAGE);
 }
 
 static esp_err_t receive_exact(httpd_req_t *request, uint8_t *buffer,
@@ -1226,12 +1273,65 @@ static const char *conversation_service_form_value(
     }
 }
 
+static esp_err_t recovery_state_get_handler(httpd_req_t *request)
+{
+    network_time_saved_network_t saved_network = {0};
+    const esp_err_t network_error =
+        network_time_get_saved_network(&saved_network);
+    if (network_error != ESP_OK) {
+        /* Local recovery OTA must not depend on parsing old Wi-Fi settings.
+         * Keep the session token available even if those settings are bad. */
+        memset(&saved_network, 0, sizeof(saved_network));
+        ESP_LOGW(TAG, "saved Wi-Fi unavailable in recovery: %s",
+                 esp_err_to_name(network_error));
+    }
+
+    char token[SETTINGS_PORTAL_TOKEN_CAPACITY] = {0};
+    char escaped_ssid[
+        SETTINGS_JSON_ESCAPE_CAPACITY(NETWORK_SSID_MAX_LENGTH)] = {0};
+    char json[512] = {0};
+    portENTER_CRITICAL(&s_status_lock);
+    memcpy(token, s_session_token, sizeof(token));
+    portEXIT_CRITICAL(&s_status_lock);
+
+    if (!settings_portal_json_escape(
+            saved_network.ssid, escaped_ssid, sizeof(escaped_ssid))) {
+        memset(token, 0, sizeof(token));
+        memset(&saved_network, 0, sizeof(saved_network));
+        return send_page(request, "500 Internal Server Error",
+                         "text/plain; charset=utf-8",
+                         "无法生成恢复状态。\n");
+    }
+    const int written = snprintf(
+        json, sizeof(json),
+        "{\"recovery\":true,\"wifi_readable\":%s,\"wifi_configured\":%s,"
+        "\"wifi_ssid\":\"%s\",\"token\":\"%s\"}",
+        network_error == ESP_OK ? "true" : "false",
+        saved_network.configured ? "true" : "false",
+        escaped_ssid, token);
+    memset(token, 0, sizeof(token));
+    memset(&saved_network, 0, sizeof(saved_network));
+    if (written <= 0 || (size_t)written >= sizeof(json)) {
+        memset(json, 0, sizeof(json));
+        return send_page(request, "500 Internal Server Error",
+                         "text/plain; charset=utf-8",
+                         "无法生成恢复状态。\n");
+    }
+    const esp_err_t send_error = send_page(
+        request, "200 OK", "application/json; charset=utf-8", json);
+    memset(json, 0, sizeof(json));
+    return send_error;
+}
+
 static esp_err_t settings_state_get_handler(httpd_req_t *request)
 {
     if (!portal_is_ready()) {
         return send_page(request, "409 Conflict",
                          "text/plain; charset=utf-8",
                          "设置会话已关闭。\n");
+    }
+    if (boot_recovery_is_active()) {
+        return recovery_state_get_handler(request);
     }
     app_settings_t settings = {0};
     const esp_err_t error = app_settings_get(&settings);
@@ -2547,6 +2647,7 @@ static esp_err_t redirect_handler(httpd_req_t *request,
 
 static esp_err_t start_web_server(void)
 {
+    const bool recovery_mode = boot_recovery_is_active();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192U;
     config.max_uri_handlers = 22U;
@@ -2657,33 +2758,33 @@ static esp_err_t start_web_server(void)
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &state_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server, &settings_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &weather_regions_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &weather_config_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &weather_clear_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &conversation_config_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &conversation_clear_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server, &time_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server, &defaults_uri);
     }
     if (error == ESP_OK) {
@@ -2692,27 +2793,27 @@ static esp_err_t start_web_server(void)
     if (error == ESP_OK) {
         error = httpd_register_uri_handler(s_http_server, &wifi_change_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &image_list_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &image_preview_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &image_select_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &image_delete_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &image_upload_uri);
     }
-    if (error == ESP_OK) {
+    if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &starter_gallery_uri);
     }
@@ -3014,6 +3115,7 @@ static void update_task(void *argument)
     if ((bits & UPDATE_EVENT_COMPLETE) != 0U) {
         ESP_LOGI(TAG, "firmware image verified; restarting into new OTA slot");
         vTaskDelay(pdMS_TO_TICKS(UPDATE_RESTART_DELAY_MS));
+        boot_recovery_note_planned_restart();
         esp_restart();
     }
     if ((bits & UPDATE_EVENT_FAILED) != 0U) {
@@ -3034,10 +3136,13 @@ esp_err_t firmware_update_init(void)
     if (s_initialized) {
         return ESP_OK;
     }
-    const esp_err_t conversation_error = conversation_config_init();
-    if (conversation_error != ESP_OK) {
-        ESP_LOGW(TAG, "cloud conversation settings unavailable: %s",
-                 esp_err_to_name(conversation_error));
+    if (!boot_recovery_is_active()) {
+        const esp_err_t conversation_error = conversation_config_init();
+        if (conversation_error != ESP_OK) {
+            ESP_LOGW(TAG,
+                     "cloud conversation settings unavailable: %s",
+                     esp_err_to_name(conversation_error));
+        }
     }
     const esp_partition_t *running = esp_ota_get_running_partition();
     const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);
@@ -3049,7 +3154,9 @@ esp_err_t firmware_update_init(void)
         return ESP_ERR_NO_MEM;
     }
     s_initialized = true;
-    ESP_LOGI(TAG, "local settings and dual-slot OTA service ready");
+    ESP_LOGI(TAG, "%s and dual-slot OTA service ready",
+             boot_recovery_is_active() ? "recovery settings"
+                                       : "local settings");
     return ESP_OK;
 }
 

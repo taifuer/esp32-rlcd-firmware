@@ -21,6 +21,10 @@ bool app_hold_prompt_allowed(const app_hold_prompt_context_t *context,
     }
 
     switch (action) {
+    case APP_PAGE_ACTION_REFRESH_WEATHER:
+        return context->manual_sync_idle &&
+               !context->online_update_confirmation_active &&
+               context->weather_refresh_available;
     case APP_PAGE_ACTION_DELETE_IMAGE:
         return context->manual_sync_idle &&
                !context->online_update_confirmation_active &&
@@ -45,6 +49,8 @@ const char *app_hold_prompt_title(app_page_action_t action,
                                   bool manual_saving_requested)
 {
     switch (action) {
+    case APP_PAGE_ACTION_REFRESH_WEATHER:
+        return "REFRESH WEATHER";
     case APP_PAGE_ACTION_DELETE_IMAGE:
         return "DELETE IMAGE";
     case APP_PAGE_ACTION_SYNC_TIME:

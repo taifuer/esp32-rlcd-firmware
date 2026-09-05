@@ -13,6 +13,9 @@ extern "C" {
 esp_err_t weather_http_get_json(const char *url, const char *api_key,
                                 size_t maximum_json_bytes, char **json,
                                 size_t *json_length);
+/* Exercises the same bounded Gzip decoder used for live responses without
+ * opening the network. */
+esp_err_t weather_http_json_self_test(void);
 
 #ifdef __cplusplus
 }

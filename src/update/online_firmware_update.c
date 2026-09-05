@@ -5,6 +5,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "boot_recovery.h"
 #include "esp_app_format.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
@@ -600,6 +601,7 @@ static void install_task(void *argument)
                   ONLINE_UPDATE_ERROR_NONE);
         ESP_LOGI(TAG, "online update v%s verified; restarting", fresh.version);
         vTaskDelay(pdMS_TO_TICKS(ONLINE_RESTART_DELAY_MS));
+        boot_recovery_note_planned_restart();
         esp_restart();
     }
 

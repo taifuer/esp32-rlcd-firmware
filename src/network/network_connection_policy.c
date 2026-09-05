@@ -54,7 +54,9 @@ network_connection_action_t network_connection_policy_on_operation_end(
 }
 
 bool network_connection_policy_should_provision(
-    bool setup_window_completed, bool force_requested)
+    bool startup_provisioning_enabled, bool setup_window_completed,
+    bool force_requested)
 {
-    return !setup_window_completed || force_requested;
+    return force_requested ||
+           (startup_provisioning_enabled && !setup_window_completed);
 }

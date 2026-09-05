@@ -135,12 +135,15 @@ static void draw_system_header(const char *title, uint8_t page)
     u8g2_SetDrawColor(s_u8g2, 1);
     u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
     draw_centered(SYSTEM_TITLE_BASELINE_Y, title);
-    snprintf(position, sizeof(position), "%u/%u", page, SYSTEM_PAGE_COUNT);
-    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    u8g2_DrawStr(s_u8g2,
-                 BOARD_DISPLAY_WIDTH - SYSTEM_SIDE_MARGIN -
-                     (int)u8g2_GetStrWidth(s_u8g2, position),
-                 SYSTEM_TITLE_BASELINE_Y, position);
+    if (page > 0U) {
+        snprintf(position, sizeof(position), "%u/%u", page,
+                 SYSTEM_PAGE_COUNT);
+        u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+        u8g2_DrawStr(s_u8g2,
+                     BOARD_DISPLAY_WIDTH - SYSTEM_SIDE_MARGIN -
+                         (int)u8g2_GetStrWidth(s_u8g2, position),
+                     SYSTEM_TITLE_BASELINE_Y, position);
+    }
     u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN, SYSTEM_DIVIDER_Y,
                    BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
 }
@@ -1591,7 +1594,18 @@ void display_show_settings(const display_settings_status_t *status)
     }
 
     char value[40];
-    draw_system_header("SETTINGS", 3U);
+    draw_system_header("SETTINGS", status->recovery_mode ? 0U : 3U);
+
+    if (status->recovery_mode) {
+        draw_system_row(112, "MODE", "RECOVERY");
+        draw_system_row(
+            180, "NORMAL START",
+            display_interaction_recovery_restart_hint());
+        draw_system_footer(
+            display_interaction_recovery_settings_footer());
+        u8g2_SendBuffer(s_u8g2);
+        return;
+    }
 
     const char *power;
     if (status->power_apply_pending) {
@@ -1677,7 +1691,7 @@ void display_show_online_update(const display_online_update_status_t *status)
     format_version(latest_version, sizeof(latest_version),
                    status->latest_version);
 
-    draw_system_header("ONLINE UPDATE", 4U);
+    draw_system_header("ONLINE UPDATE", status->recovery_mode ? 0U : 4U);
     switch (status->state) {
     case DISPLAY_ONLINE_UPDATE_STATE_CHECKING:
         draw_online_update_modal(
@@ -1720,7 +1734,9 @@ void display_show_online_update(const display_online_update_status_t *status)
             "UPDATE FAILED",
             status->detail != NULL ? status->detail : "Try again when online",
             "Current firmware is unchanged",
-            display_interaction_online_update_footer(false));
+            status->recovery_mode
+                ? display_interaction_recovery_update_footer(false)
+                : display_interaction_online_update_footer(false));
         break;
     case DISPLAY_ONLINE_UPDATE_STATE_NOT_CHECKED:
     case DISPLAY_ONLINE_UPDATE_STATE_UP_TO_DATE:
@@ -1735,21 +1751,44 @@ void display_show_online_update(const display_online_update_status_t *status)
             state_text = "UPDATE AVAILABLE";
             footer = display_interaction_online_update_footer(true);
         }
-        draw_system_row(82, "CURRENT", current_version);
-        draw_system_row(126,
-                        status->beta_channel ? "BETA LATEST" : "LATEST",
-                        latest_version);
-        draw_system_row(170, "STATUS", state_text);
-        draw_system_row(
-            214, "LAST CHECK",
-            status->last_checked != NULL ? status->last_checked : "--");
-        draw_system_footer(footer);
+        if (status->recovery_mode) {
+            draw_system_row(72, "CURRENT", current_version);
+            draw_system_row(
+                108, status->beta_channel ? "BETA LATEST" : "LATEST",
+                latest_version);
+            draw_system_row(
+                144, "LAST RESET",
+                status->recovery_reset != NULL
+                    ? status->recovery_reset
+                    : "UNKNOWN");
+            draw_system_row(
+                180, "FAILED AT",
+                status->recovery_phase != NULL
+                    ? status->recovery_phase
+                    : "UNKNOWN");
+            draw_system_row(216, "STATUS", state_text);
+            draw_system_footer(
+                display_interaction_recovery_update_footer(
+                    status->state ==
+                    DISPLAY_ONLINE_UPDATE_STATE_UPDATE_AVAILABLE));
+        } else {
+            draw_system_row(82, "CURRENT", current_version);
+            draw_system_row(126,
+                            status->beta_channel ? "BETA LATEST" : "LATEST",
+                            latest_version);
+            draw_system_row(170, "STATUS", state_text);
+            draw_system_row(
+                214, "LAST CHECK",
+                status->last_checked != NULL ? status->last_checked : "--");
+            draw_system_footer(footer);
+        }
         break;
     }
     default:
         draw_system_row(126, "STATUS", "NOT CHECKED");
-        draw_system_footer(
-            display_interaction_online_update_footer(false));
+        draw_system_footer(status->recovery_mode
+                               ? display_interaction_recovery_update_footer(false)
+                               : display_interaction_online_update_footer(false));
         break;
     }
     u8g2_SendBuffer(s_u8g2);

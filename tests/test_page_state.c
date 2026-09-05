@@ -22,7 +22,10 @@ int main(void)
     assert(!app_page_is_system(APP_PAGE_IMAGE));
     assert(app_page_key_hold_action(APP_PAGE_HOME) == APP_PAGE_ACTION_NONE);
     assert(app_page_key_hold_action(APP_PAGE_WEATHER) ==
-           APP_PAGE_ACTION_NONE);
+           APP_PAGE_ACTION_REFRESH_WEATHER);
+    assert(app_page_key_hold_threshold_ms(APP_PAGE_WEATHER) ==
+           APP_PAGE_WEATHER_REFRESH_HOLD_MS);
+    assert(APP_PAGE_WEATHER_REFRESH_HOLD_MS == 2000U);
     assert(app_page_key_hold_action(APP_PAGE_CALENDAR) ==
            APP_PAGE_ACTION_NONE);
     assert(app_page_key_hold_action(APP_PAGE_IMAGE) ==
@@ -200,11 +203,38 @@ int main(void)
     app_page_state_boot_short_press(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
+    app_page_state_set_recovery_mode(&state, true);
+    assert(state.recovery_mode);
+    assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
+    assert(!app_page_state_open_page(&state, APP_PAGE_HOME));
+    assert(!app_page_state_open_page(&state, APP_PAGE_WEATHER));
+    assert(!app_page_state_open_page(&state, APP_PAGE_CALENDAR));
+    assert(!app_page_state_open_page(&state, APP_PAGE_IMAGE));
+    assert(!app_page_state_open_page(&state, APP_PAGE_STATUS));
+    assert(!app_page_state_open_page(&state, APP_PAGE_VOICE));
+    assert(app_page_state_open_page(&state, APP_PAGE_SETTINGS));
+    assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
+    app_page_state_boot_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
+    app_page_state_go_home(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
+    assert(!app_page_state_tick(&state, UINT32_MAX));
+    assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
+    app_page_state_key_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
+    app_page_state_key_short_press(&state);
+    assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
+    assert(app_page_state_open_page(&state, APP_PAGE_ONLINE_UPDATE));
+    app_page_state_set_recovery_mode(&state, false);
+    assert(!state.recovery_mode);
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+
     app_page_state_init(NULL);
     app_page_state_go_home(NULL);
     assert(!app_page_state_open_page(NULL, APP_PAGE_HOME));
     app_page_state_set_weather_enabled(NULL, true);
     app_page_state_set_image_available(NULL, true);
+    app_page_state_set_recovery_mode(NULL, true);
     app_page_state_boot_short_press(NULL);
     app_page_state_key_short_press(NULL);
     app_page_state_note_activity(NULL);

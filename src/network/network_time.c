@@ -97,6 +97,7 @@ static httpd_handle_t s_http_server;
 static bool s_initialized;
 static bool s_storage_ready;
 static bool s_automatic_sync_enabled = true;
+static bool s_startup_provisioning_enabled = true;
 /* Suppress the normal STA_START auto-connect while a settings-portal
  * candidate is being configured in APSTA mode. */
 static bool s_station_connect_deferred;
@@ -1640,11 +1641,14 @@ static void network_task(void *argument)
         wake_bits &= ~NETWORK_EVENT_FORCE_PROVISIONING;
         esp_err_t error = load_credentials(&credentials);
         if (error != ESP_OK) {
-            if (error == ESP_ERR_NVS_NOT_FOUND &&
-                !network_connection_policy_should_provision(
+            if (!network_connection_policy_should_provision(
+                    s_startup_provisioning_enabled,
                     setup_window_completed, force_provisioning)) {
                 set_status(NETWORK_TIME_STATE_RETRY_WAIT, false,
-                           ESP_ERR_TIMEOUT);
+                           error == ESP_ERR_NVS_NOT_FOUND
+                               ? (s_startup_provisioning_enabled
+                                      ? ESP_ERR_TIMEOUT : ESP_OK)
+                               : error);
                 network_task_activity_end();
                 wake_bits = wait_for_network_task_event(portMAX_DELAY);
                 continue;
@@ -1751,12 +1755,14 @@ static void network_task(void *argument)
     }
 }
 
-esp_err_t network_time_init(bool automatic_sync_enabled)
+esp_err_t network_time_init(bool automatic_sync_enabled,
+                            bool startup_provisioning_enabled)
 {
     if (s_initialized) {
         return ESP_OK;
     }
     s_automatic_sync_enabled = automatic_sync_enabled;
+    s_startup_provisioning_enabled = startup_provisioning_enabled;
     set_status(NETWORK_TIME_STATE_STARTING, false, ESP_OK);
 
     esp_err_t error = app_storage_init();

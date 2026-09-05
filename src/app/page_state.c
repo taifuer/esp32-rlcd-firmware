@@ -56,6 +56,8 @@ bool app_page_state_open_page(app_page_state_t *state, app_page_t page)
 {
     if (state == NULL ||
         (!app_page_is_daily(page) && !app_page_is_system(page)) ||
+        (state->recovery_mode && page != APP_PAGE_SETTINGS &&
+         page != APP_PAGE_ONLINE_UPDATE) ||
         (page == APP_PAGE_WEATHER && !state->weather_enabled) ||
         (page == APP_PAGE_IMAGE && !state->image_available)) {
         return false;
@@ -90,6 +92,18 @@ void app_page_state_set_image_available(app_page_state_t *state,
     }
 }
 
+void app_page_state_set_recovery_mode(app_page_state_t *state,
+                                      bool enabled)
+{
+    if (state == NULL) {
+        return;
+    }
+
+    state->recovery_mode = enabled;
+    state->current = enabled ? APP_PAGE_ONLINE_UPDATE : APP_PAGE_HOME;
+    state->inactive_ms = 0U;
+}
+
 app_page_t app_page_state_current(const app_page_state_t *state)
 {
     return state != NULL ? state->current : APP_PAGE_HOME;
@@ -108,6 +122,9 @@ bool app_page_is_system(app_page_t page)
 
 app_page_action_t app_page_key_hold_action(app_page_t page)
 {
+    if (page == APP_PAGE_WEATHER) {
+        return APP_PAGE_ACTION_REFRESH_WEATHER;
+    }
     if (page == APP_PAGE_IMAGE) {
         return APP_PAGE_ACTION_DELETE_IMAGE;
     }
@@ -129,6 +146,8 @@ app_page_action_t app_page_key_hold_action(app_page_t page)
 uint32_t app_page_key_hold_threshold_ms(app_page_t page)
 {
     switch (app_page_key_hold_action(page)) {
+    case APP_PAGE_ACTION_REFRESH_WEATHER:
+        return APP_PAGE_WEATHER_REFRESH_HOLD_MS;
     case APP_PAGE_ACTION_DELETE_IMAGE:
         return APP_PAGE_IMAGE_DELETE_HOLD_MS;
     case APP_PAGE_ACTION_SYNC_TIME:
@@ -174,6 +193,10 @@ void app_page_state_boot_short_press(app_page_state_t *state)
     if (state == NULL) {
         return;
     }
+    if (state->recovery_mode) {
+        state->inactive_ms = 0U;
+        return;
+    }
     state->current = app_page_is_daily(state->current)
                          ? next_daily_page(state)
                          : APP_PAGE_HOME;
@@ -183,6 +206,13 @@ void app_page_state_boot_short_press(app_page_state_t *state)
 void app_page_state_key_short_press(app_page_state_t *state)
 {
     if (state == NULL) {
+        return;
+    }
+    if (state->recovery_mode) {
+        state->current = state->current == APP_PAGE_SETTINGS
+                             ? APP_PAGE_ONLINE_UPDATE
+                             : APP_PAGE_SETTINGS;
+        state->inactive_ms = 0U;
         return;
     }
     state->current = app_page_is_system(state->current)
@@ -200,7 +230,8 @@ void app_page_state_note_activity(app_page_state_t *state)
 
 bool app_page_state_tick(app_page_state_t *state, uint32_t elapsed_ms)
 {
-    if (state == NULL || state->current == APP_PAGE_HOME) {
+    if (state == NULL || state->current == APP_PAGE_HOME ||
+        state->recovery_mode) {
         return false;
     }
 

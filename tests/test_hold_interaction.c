@@ -10,6 +10,7 @@ static app_hold_prompt_context_t available_context(void)
     return (app_hold_prompt_context_t) {
         .buttons_ready = true,
         .manual_sync_idle = true,
+        .weather_refresh_available = true,
         .image_delete_available = true,
     };
 }
@@ -27,6 +28,7 @@ static void test_all_actions_and_other_button_gate(void)
 {
     const app_hold_prompt_context_t context = available_context();
     const app_page_action_t actions[] = {
+        APP_PAGE_ACTION_REFRESH_WEATHER,
         APP_PAGE_ACTION_DELETE_IMAGE,
         APP_PAGE_ACTION_SYNC_TIME,
         APP_PAGE_ACTION_START_VOICE,
@@ -76,6 +78,13 @@ static void test_common_modal_and_release_gates(void)
 static void test_action_specific_gates(void)
 {
     app_hold_prompt_context_t context = available_context();
+    context.weather_refresh_available = false;
+    assert(!app_hold_prompt_allowed(
+        &context, APP_PAGE_ACTION_REFRESH_WEATHER, false));
+    assert(app_hold_prompt_allowed(
+        &context, APP_PAGE_ACTION_SYNC_TIME, false));
+
+    context = available_context();
     context.image_delete_available = false;
     assert(!app_hold_prompt_allowed(
         &context, APP_PAGE_ACTION_DELETE_IMAGE, false));
@@ -118,6 +127,10 @@ static void test_action_specific_gates(void)
 
 static void test_action_titles(void)
 {
+    assert(strcmp(app_hold_prompt_title(
+                      APP_PAGE_ACTION_REFRESH_WEATHER,
+                      APP_HOLD_UPDATE_CHECK, false),
+                  "REFRESH WEATHER") == 0);
     assert(strcmp(app_hold_prompt_title(
                       APP_PAGE_ACTION_DELETE_IMAGE,
                       APP_HOLD_UPDATE_CHECK, false),

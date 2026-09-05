@@ -56,7 +56,11 @@ typedef struct {
     char ssid[NETWORK_SSID_MAX_LENGTH + 1U];
 } network_time_saved_network_t;
 
-esp_err_t network_time_init(bool automatic_sync_enabled);
+/* Recovery disables the initial provisioning window so maintenance can own
+ * the radio even when no credentials have been saved. Explicit provisioning
+ * requests remain available. */
+esp_err_t network_time_init(bool automatic_sync_enabled,
+                            bool startup_provisioning_enabled);
 esp_err_t network_time_get_status(network_time_status_t *status);
 bool network_time_take_datetime(network_time_datetime_t *datetime);
 esp_err_t network_time_request_sync(void);

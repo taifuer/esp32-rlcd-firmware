@@ -141,6 +141,33 @@ static esp_err_t decode_body(const uint8_t *body, size_t body_length,
     return ESP_OK;
 }
 
+esp_err_t weather_http_json_self_test(void)
+{
+    static const uint8_t compressed[] = {
+        0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x03, 0xab, 0x56, 0x4a, 0xce, 0x4f, 0x49,
+        0x55, 0xb2, 0x52, 0x32, 0x32, 0x30, 0x50, 0xaa,
+        0x05, 0x00, 0x4a, 0x35, 0x55, 0x8e, 0x0e, 0x00,
+        0x00, 0x00,
+    };
+    static const char expected[] = "{\"code\":\"200\"}";
+    char *json = NULL;
+    size_t json_length = 0U;
+    esp_err_t error = decode_body(
+        compressed, sizeof(compressed), sizeof(expected) - 1U,
+        &json, &json_length);
+    if (error == ESP_OK &&
+        (json_length != sizeof(expected) - 1U ||
+         memcmp(json, expected, sizeof(expected) - 1U) != 0)) {
+        error = ESP_ERR_INVALID_RESPONSE;
+    }
+    if (json != NULL) {
+        memset(json, 0, json_length);
+        free(json);
+    }
+    return error;
+}
+
 esp_err_t weather_http_get_json(const char *url, const char *api_key,
                                 size_t maximum_json_bytes, char **json,
                                 size_t *json_length)

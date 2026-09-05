@@ -49,7 +49,8 @@ network_connection_action_t network_connection_policy_on_operation_end(
 /* The automatic first-boot setup window stays closed after timing out, unless
  * the user explicitly asks to configure Wi-Fi again. */
 bool network_connection_policy_should_provision(
-    bool setup_window_completed, bool force_requested);
+    bool startup_provisioning_enabled, bool setup_window_completed,
+    bool force_requested);
 
 #ifdef __cplusplus
 }

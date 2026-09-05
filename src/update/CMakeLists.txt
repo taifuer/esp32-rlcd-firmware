@@ -21,6 +21,7 @@ idf_component_register(
         conversation
         mbedtls
         network
+        recovery
         rtc
         sd_image
         settings

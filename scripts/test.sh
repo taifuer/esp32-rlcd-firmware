@@ -132,6 +132,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/app -Isrc/input/include \
+  src/app/page_state.c src/input/button_state.c \
+  tests/test_weather_refresh_interaction.c \
+  -o "${RLCD_TEST_TMP}/test_weather_refresh_interaction"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/image/include \
   src/image/monochrome_image.c tests/test_monochrome_image.c \
   -o "${RLCD_TEST_TMP}/test_monochrome_image"
@@ -182,6 +189,20 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/app \
   src/app/voice_backend_policy.c tests/test_voice_backend_policy.c \
   -o "${RLCD_TEST_TMP}/test_voice_backend_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/recovery/include \
+  src/recovery/boot_recovery_policy.c \
+  tests/test_boot_recovery_policy.c \
+  -o "${RLCD_TEST_TMP}/test_boot_recovery_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Itests/recovery_stubs -Isrc/recovery/include \
+  src/recovery/boot_recovery_policy.c \
+  tests/test_boot_recovery_record.c \
+  -o "${RLCD_TEST_TMP}/test_boot_recovery_record"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/update/include \
@@ -399,6 +420,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_hold_interaction"
 "${RLCD_TEST_TMP}/test_image_delete_ui"
 "${RLCD_TEST_TMP}/test_image_delete_interaction"
+"${RLCD_TEST_TMP}/test_weather_refresh_interaction"
 "${RLCD_TEST_TMP}/test_monochrome_image"
 "${RLCD_TEST_TMP}/test_image_catalog"
 "${RLCD_TEST_TMP}/test_sd_image_import_policy"
@@ -408,6 +430,8 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_conversation_config"
 "${RLCD_TEST_TMP}/test_network_screen_policy"
 "${RLCD_TEST_TMP}/test_voice_backend_policy"
+"${RLCD_TEST_TMP}/test_boot_recovery_policy"
+"${RLCD_TEST_TMP}/test_boot_recovery_record"
 "${RLCD_TEST_TMP}/test_firmware_update_policy"
 "${RLCD_TEST_TMP}/test_settings_portal_policy"
 ASAN_OPTIONS=detect_leaks=0 \

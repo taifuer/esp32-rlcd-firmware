@@ -3,6 +3,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -12,6 +13,7 @@
 #include "weather_cache.h"
 #include "weather_client.h"
 #include "weather_config.h"
+#include "weather_http_json.h"
 #include "weather_location_catalog.h"
 #include "weather_request.h"
 
@@ -32,6 +34,7 @@ enum {
     WEATHER_VALID_EPOCH_MINIMUM = 1577836800,
 };
 
+static const char *TAG = "weather_service";
 static SemaphoreHandle_t s_mutex;
 static SemaphoreHandle_t s_operation_mutex;
 static EventGroupHandle_t s_events;
@@ -178,6 +181,16 @@ static bool automatic_refresh_enabled(void)
     return enabled;
 }
 
+static uint32_t status_revision(void)
+{
+    uint32_t revision = 0U;
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) == pdTRUE) {
+        revision = s_status.revision;
+        xSemaphoreGive(s_mutex);
+    }
+    return revision;
+}
+
 static esp_err_t load_configuration(weather_config_snapshot_t *snapshot,
                                     uint32_t *fingerprint)
 {
@@ -272,10 +285,10 @@ static void perform_refresh_locked(bool force, bool from_maintenance)
         if (error != ESP_OK) {
             set_state(WEATHER_SERVICE_STATE_FAILED,
                       WEATHER_FAILURE_STAGE_LOCATION, error);
-        } else if (from_maintenance) {
-            /* A validated portal request should never reach this branch, but
-             * always finish the interactive request if stored state changes
-             * unexpectedly during the handoff. */
+        } else if (from_maintenance || force) {
+            /* An interactive request may race with a settings change.  Always
+             * leave REFRESHING instead of waiting forever for an operation
+             * that cannot start. */
             set_state(WEATHER_SERVICE_STATE_FAILED,
                       WEATHER_FAILURE_STAGE_LOCATION,
                       ESP_ERR_INVALID_ARG);
@@ -444,6 +457,7 @@ static void weather_task(void *argument)
         const EventBits_t bits = xEventGroupWaitBits(
             s_events, WEATHER_EVENT_ALL, pdTRUE, pdFALSE,
             pdMS_TO_TICKS(WEATHER_CHECK_INTERVAL_MS));
+        const uint32_t revision_before = status_revision();
         if ((bits & WEATHER_EVENT_MAINTENANCE_REFRESH) != 0U) {
             perform_refresh(true, true);
         } else if ((bits & WEATHER_EVENT_FORCE_REFRESH) != 0U) {
@@ -462,6 +476,16 @@ static void weather_task(void *argument)
                 }
             }
         }
+        if (status_revision() != revision_before) {
+            ESP_LOGI(
+                TAG,
+                "weather task diagnostics: stack_free=%u internal_free=%u internal_min=%u",
+                (unsigned)uxTaskGetStackHighWaterMark(NULL),
+                (unsigned)heap_caps_get_free_size(
+                    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                (unsigned)heap_caps_get_minimum_free_size(
+                    MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+        }
     }
 }
 
@@ -469,6 +493,12 @@ esp_err_t weather_service_init(bool automatic_refresh_enabled)
 {
     if (s_initialized) {
         return ESP_OK;
+    }
+    const esp_err_t decoder_error = weather_http_json_self_test();
+    if (decoder_error != ESP_OK) {
+        ESP_LOGE(TAG, "weather Gzip decoder self-test failed: %s",
+                 esp_err_to_name(decoder_error));
+        return decoder_error;
     }
     if (s_mutex == NULL) {
         s_mutex = xSemaphoreCreateMutex();
@@ -565,9 +595,25 @@ esp_err_t weather_service_set_automatic_refresh_enabled(bool enabled)
 
 esp_err_t weather_service_request_refresh(void)
 {
-    if (!s_initialized || s_events == NULL) {
+    if (!s_initialized || s_mutex == NULL || s_events == NULL) {
         return ESP_ERR_INVALID_STATE;
     }
+
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (!s_status.config_enabled ||
+        s_status.state == WEATHER_SERVICE_STATE_REFRESHING ||
+        (xEventGroupGetBits(s_events) & WEATHER_EVENT_FORCE_REFRESH) != 0U) {
+        xSemaphoreGive(s_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_status.interactive_refresh = true;
+    s_status.state = WEATHER_SERVICE_STATE_REFRESHING;
+    s_status.failure_stage = WEATHER_FAILURE_STAGE_NONE;
+    s_status.last_error = ESP_OK;
+    increment_revision();
+    xSemaphoreGive(s_mutex);
     xEventGroupSetBits(s_events, WEATHER_EVENT_FORCE_REFRESH);
     return ESP_OK;
 }

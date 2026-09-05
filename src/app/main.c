@@ -18,6 +18,8 @@
 #include "board_buttons.h"
 #include "board_i2c.h"
 #include "board_pins.h"
+#include "boot_recovery.h"
+#include "boot_recovery_policy.h"
 #include "button_state.h"
 #include "chinese_lunar.h"
 #include "conversation_config.h"
@@ -104,7 +106,7 @@ enum {
     APP_POWER_SETTING_RESULT_MS = 2000,
     APP_FIRMWARE_UPDATE_RESULT_MS = 2500,
     APP_GALLERY_RESULT_MS = 3000,
-    APP_OTA_CONFIRM_DELAY_MS = 5000,
+    APP_RECOVERY_PORTAL_RETRY_MS = 5000,
     APP_CLOUD_VOICE_UI_UPDATE_MS = 300,
 };
 
@@ -839,10 +841,11 @@ static void configure_key_timing(
     (void)button_state_set_action_timing(state, action_threshold_ms);
 }
 
-static void configure_boot_timing(button_state_t *state, app_page_t page)
+static void configure_boot_timing(button_state_t *state, app_page_t page,
+                                  bool recovery_mode)
 {
     const uint32_t action_threshold_ms =
-        app_page_boot_hold_threshold_ms(page);
+        recovery_mode ? 0U : app_page_boot_hold_threshold_ms(page);
     (void)button_state_set_action_timing(state, action_threshold_ms);
 }
 
@@ -1037,16 +1040,17 @@ static void make_display_weather(
 void app_main(void)
 {
     const esp_app_desc_t *app = esp_app_get_description();
+    const esp_reset_reason_t startup_reset_reason = esp_reset_reason();
+    const esp_err_t button_init_error = board_buttons_init();
+    const bool buttons_ready = button_init_error == ESP_OK;
+    const bool manual_recovery_requested =
+        buttons_ready && board_key_is_pressed();
+    boot_recovery_begin(startup_reset_reason, app->app_elf_sha256,
+                        manual_recovery_requested);
     const size_t psram_bytes = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
     ESP_LOGI(TAG, "%s firmware v%s (ESP-IDF %s)", BOARD_NAME, app->version, app->idf_ver);
     ESP_LOGI(TAG, "PSRAM available: %u KiB", (unsigned)(psram_bytes / 1024U));
     ESP_LOGI(TAG, "dashboard with SoftAP provisioning, NVS Wi-Fi settings, and SNTP RTC sync");
-
-    uint8_t *const image_bitmap_snapshot = heap_caps_malloc(
-        MONO_IMAGE_BITMAP_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (image_bitmap_snapshot == NULL) {
-        ESP_LOGW(TAG, "microSD image display snapshot unavailable");
-    }
 
     const bool display_ready = display_init() == ESP_OK;
     if (display_ready) {
@@ -1054,17 +1058,63 @@ void app_main(void)
     } else {
         ESP_LOGE(TAG, "ST7305 display initialization failed");
     }
+    boot_recovery_set_phase(BOOT_RECOVERY_PHASE_DISPLAY);
+
+    if (buttons_ready) {
+        ESP_LOGI(TAG, "BOOT button ready on GPIO %d; KEY button ready on GPIO %d",
+                 BOARD_BOOT_GPIO, BOARD_KEY_GPIO);
+    } else {
+        ESP_LOGW(TAG, "board buttons unavailable: %s",
+                 esp_err_to_name(button_init_error));
+    }
+
+    boot_recovery_status_t recovery_status = {0};
+    boot_recovery_get_status(&recovery_status);
+    const bool recovery_mode = recovery_status.recovery_mode;
+    if (recovery_mode) {
+        ESP_LOGW(TAG,
+                 "recovery mode active: manual=%d reset=%s faults=%u previous_phase=%s",
+                 recovery_status.manual_recovery,
+                 boot_recovery_reset_reason_name(startup_reset_reason),
+                 recovery_status.consecutive_faults,
+                 boot_recovery_phase_name(recovery_status.previous_phase));
+        ESP_LOGW(TAG,
+                 "previous startup diagnostics: main_stack_free=%u internal_free=%u internal_min=%u",
+                 (unsigned)recovery_status.previous_main_stack_free,
+                 (unsigned)recovery_status.previous_free_internal_heap,
+                 (unsigned)recovery_status.previous_minimum_internal_heap);
+        if (display_ready) {
+            display_show_status(
+                "RECOVERY MODE",
+                recovery_status.manual_recovery
+                    ? "KEY held during startup"
+                    : "Repeated startup failures");
+        }
+    }
+
+    uint8_t *const image_bitmap_snapshot =
+        recovery_mode
+            ? NULL
+            : heap_caps_malloc(
+                  MONO_IMAGE_BITMAP_BYTES,
+                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!recovery_mode && image_bitmap_snapshot == NULL) {
+        ESP_LOGW(TAG, "microSD image display snapshot unavailable");
+    }
 
     const esp_err_t storage_error = app_storage_init();
     if (storage_error != ESP_OK) {
         ESP_LOGE(TAG, "persistent storage initialization failed: %s",
                  esp_err_to_name(storage_error));
     }
+    boot_recovery_set_phase(BOOT_RECOVERY_PHASE_STORAGE);
 
     const esp_err_t conversation_config_error =
-        storage_error == ESP_OK ? conversation_config_init()
-                                : storage_error;
-    if (conversation_config_error != ESP_OK) {
+        recovery_mode
+            ? ESP_ERR_NOT_SUPPORTED
+            : (storage_error == ESP_OK ? conversation_config_init()
+                                       : storage_error);
+    if (!recovery_mode && conversation_config_error != ESP_OK) {
         ESP_LOGW(TAG, "cloud voice configuration unavailable: %s",
                  esp_err_to_name(conversation_config_error));
     }
@@ -1108,9 +1158,11 @@ void app_main(void)
         return;
     }
     const esp_err_t volume_error =
-        audio_diagnostics_set_playback_volume(
-            settings.audio_playback_volume);
-    if (volume_error != ESP_OK) {
+        recovery_mode
+            ? ESP_ERR_NOT_SUPPORTED
+            : audio_diagnostics_set_playback_volume(
+                  settings.audio_playback_volume);
+    if (!recovery_mode && volume_error != ESP_OK) {
         ESP_LOGW(TAG, "could not apply audio playback volume: %s",
                  esp_err_to_name(volume_error));
     }
@@ -1145,27 +1197,31 @@ void app_main(void)
             ESP_LOGW(TAG, "PCF85063 not ready: %s", esp_err_to_name(error));
         }
 
-        error = board_i2c_probe(SHTC3_I2C_ADDRESS, 100);
-        if (error == ESP_OK) {
-            error = shtc3_init(board_i2c_bus(), &sensor_id);
-        }
-        sensor_driver_ready = error == ESP_OK;
-        if (sensor_driver_ready) {
-            ESP_LOGI(TAG, "SHTC3 detected at 0x%02X, sensor ID=0x%04X",
-                     SHTC3_I2C_ADDRESS, sensor_id);
-        } else {
-            ESP_LOGW(TAG, "SHTC3 not ready: %s", esp_err_to_name(error));
+        if (!recovery_mode) {
+            error = board_i2c_probe(SHTC3_I2C_ADDRESS, 100);
+            if (error == ESP_OK) {
+                error = shtc3_init(board_i2c_bus(), &sensor_id);
+            }
+            sensor_driver_ready = error == ESP_OK;
+            if (sensor_driver_ready) {
+                ESP_LOGI(TAG, "SHTC3 detected at 0x%02X, sensor ID=0x%04X",
+                         SHTC3_I2C_ADDRESS, sensor_id);
+            } else {
+                ESP_LOGW(TAG, "SHTC3 not ready: %s", esp_err_to_name(error));
+            }
         }
     }
 
     const esp_err_t audio_init_error =
-        i2c_ready ? audio_diagnostics_init(board_i2c_bus())
-                  : ESP_ERR_INVALID_STATE;
+        recovery_mode
+            ? ESP_ERR_NOT_SUPPORTED
+            : (i2c_ready ? audio_diagnostics_init(board_i2c_bus())
+                         : ESP_ERR_INVALID_STATE);
     audio_diagnostics_status_t audio_status = {0};
     audio_diagnostics_get_status(&audio_status);
     if (audio_init_error == ESP_OK) {
         ESP_LOGI(TAG, "audio diagnostics ready: ES8311 speaker and ES7210 microphones");
-    } else {
+    } else if (!recovery_mode) {
         ESP_LOGW(TAG,
                  "audio diagnostics partially unavailable: speaker=%d microphones=%d error=%s",
                  audio_status.speaker_ready,
@@ -1175,15 +1231,14 @@ void app_main(void)
 
     bool rtc_backup_monitor_ready = false;
     if (storage_error == ESP_OK) {
-        const esp_reset_reason_t reset_reason = esp_reset_reason();
         const esp_err_t error = rtc_backup_monitor_init(
-            reset_reason == ESP_RST_POWERON, startup_rtc_readable,
+            startup_reset_reason == ESP_RST_POWERON, startup_rtc_readable,
             startup_rtc_readable ? &startup_datetime : NULL);
         rtc_backup_monitor_ready = error == ESP_OK;
         if (rtc_backup_monitor_ready) {
             ESP_LOGI(TAG, "RTC backup status: %s (reset reason %d)",
                      rtc_backup_status_name(rtc_backup_monitor_status()),
-                     (int)reset_reason);
+                     (int)startup_reset_reason);
         } else {
             ESP_LOGW(TAG, "RTC backup monitor unavailable: %s",
                      esp_err_to_name(error));
@@ -1254,19 +1309,12 @@ void app_main(void)
                  "dynamic frequency scaling unavailable; display and network saving policy remains active: %s",
                  esp_err_to_name(power_manager_error));
     }
-
-    const esp_err_t button_init_error = board_buttons_init();
-    const bool buttons_ready = button_init_error == ESP_OK;
-    if (buttons_ready) {
-        ESP_LOGI(TAG, "BOOT button ready on GPIO %d; KEY button ready on GPIO %d",
-                 BOARD_BOOT_GPIO, BOARD_KEY_GPIO);
-    } else {
-        ESP_LOGW(TAG, "board buttons unavailable: %s",
-                 esp_err_to_name(button_init_error));
-    }
+    boot_recovery_set_phase(BOOT_RECOVERY_PHASE_HARDWARE);
 
     const esp_err_t network_error =
-        network_time_init(power_policy.automatic_network);
+        network_time_init(!recovery_mode &&
+                              power_policy.automatic_network,
+                          !recovery_mode);
     if (network_error != ESP_OK) {
         ESP_LOGW(TAG, "automatic network time unavailable: %s",
                  esp_err_to_name(network_error));
@@ -1288,18 +1336,21 @@ void app_main(void)
                  esp_err_to_name(usb_commands_error));
     }
 
-    const esp_err_t gallery_error = gallery_download_init();
-    if (gallery_error != ESP_OK) {
+    const esp_err_t gallery_error =
+        recovery_mode ? ESP_ERR_NOT_SUPPORTED : gallery_download_init();
+    if (!recovery_mode && gallery_error != ESP_OK) {
         ESP_LOGW(TAG, "gallery service unavailable: %s",
                  esp_err_to_name(gallery_error));
     }
     const esp_err_t weather_error =
-        storage_error == ESP_OK
+        recovery_mode
+            ? ESP_ERR_NOT_SUPPORTED
+            : storage_error == ESP_OK
             ? weather_service_init(
                   network_error == ESP_OK &&
                   power_policy.automatic_network)
             : storage_error;
-    if (weather_error != ESP_OK) {
+    if (!recovery_mode && weather_error != ESP_OK) {
         ESP_LOGW(TAG, "weather service unavailable: %s",
                  esp_err_to_name(weather_error));
     }
@@ -1317,8 +1368,9 @@ void app_main(void)
                  esp_err_to_name(online_update_error));
     }
     bool running_image_confirmation_pending =
-        firmware_update_error == ESP_OK && display_ready && buttons_ready &&
+        !recovery_mode && firmware_update_error == ESP_OK &&
         network_error == ESP_OK;
+    boot_recovery_set_phase(BOOT_RECOVERY_PHASE_SERVICES);
 
     display_dashboard_t dashboard = {
         .lunar_text = NULL,
@@ -1360,6 +1412,24 @@ void app_main(void)
                              BUTTON_LONG_PRESS_DISABLED_MS);
     app_page_state_t page_state;
     app_page_state_init(&page_state);
+    app_page_state_set_recovery_mode(&page_state, recovery_mode);
+    char recovery_reset[32] = {0};
+    const char *recovery_phase = NULL;
+    if (recovery_mode) {
+        if (recovery_status.manual_recovery) {
+            snprintf(recovery_reset, sizeof(recovery_reset),
+                     "MANUAL START");
+            recovery_phase = "REQUESTED";
+        } else {
+            snprintf(recovery_reset, sizeof(recovery_reset),
+                     "%s x%u",
+                     boot_recovery_reset_reason_name(
+                         recovery_status.reset_reason),
+                     recovery_status.consecutive_faults);
+            recovery_phase = boot_recovery_phase_name(
+                recovery_status.previous_phase);
+        }
+    }
     weather_service_status_t weather_status = {0};
     if (weather_error == ESP_OK) {
         (void)weather_service_get_status(
@@ -1400,8 +1470,9 @@ void app_main(void)
     };
     esp_err_t image_delete_error = ESP_OK;
     bool image_delete_wait_for_button_release = false;
-    const esp_err_t sd_image_init_error = sd_image_store_init();
-    if (sd_image_init_error != ESP_OK) {
+    const esp_err_t sd_image_init_error =
+        recovery_mode ? ESP_ERR_NOT_SUPPORTED : sd_image_store_init();
+    if (!recovery_mode && sd_image_init_error != ESP_OK) {
         ESP_LOGW(TAG, "microSD image service unavailable: %s",
                  esp_err_to_name(sd_image_init_error));
     }
@@ -1421,10 +1492,13 @@ void app_main(void)
         initial_image_delete_status.revision;
     alarm_schedule_t alarm_schedule =
         alarm_schedule_from_settings(&settings);
+    if (recovery_mode) {
+        alarm_schedule.enabled = false;
+    }
     alarm_scheduler_t alarm_scheduler;
     alarm_scheduler_init(&alarm_scheduler);
     alarm_input_gate_t alarm_input_gate = {0};
-    if (storage_error == ESP_OK) {
+    if (!recovery_mode && storage_error == ESP_OK) {
         alarm_history_record_t alarm_history_record = {0};
         bool alarm_history_found = false;
         const esp_err_t alarm_history_error = alarm_history_load(
@@ -1454,6 +1528,9 @@ void app_main(void)
     TickType_t power_setting_ui_started = initial_tick;
     TickType_t firmware_update_result_started = initial_tick;
     TickType_t gallery_result_started = initial_tick;
+    TickType_t last_ota_confirmation_attempt = initial_tick;
+    TickType_t last_recovery_portal_attempt =
+        initial_tick - pdMS_TO_TICKS(APP_RECOVERY_PORTAL_RETRY_MS);
     network_time_state_t previous_network_state = NETWORK_TIME_STATE_UNINITIALIZED;
     network_time_state_t previous_manual_sync_network_state =
         NETWORK_TIME_STATE_UNINITIALIZED;
@@ -1469,7 +1546,8 @@ void app_main(void)
     bool first_periodic_update = true;
     bool settings_refresh_requested = false;
     bool battery_read_pending = false;
-    bool dual_button_release_gate = false;
+    bool dual_button_release_gate =
+        recovery_mode && buttons_ready && board_key_is_pressed();
     bool voice_button_release_gate = false;
     bool status_refresh_pending = false;
     uint8_t previous_portal_seconds = 0U;
@@ -1484,8 +1562,11 @@ void app_main(void)
         GALLERY_DOWNLOAD_STATE_IDLE;
     uint8_t previous_gallery_percent = 0U;
     bool automatic_update_check_pending = false;
+    bool ota_confirmation_attempted = false;
+    bool boot_health_marked = false;
     uint32_t cycle = 0;
 
+    boot_recovery_set_phase(BOOT_RECOVERY_PHASE_MAIN_LOOP);
     while (true) {
         const TickType_t now = xTaskGetTickCount();
         const uint32_t button_elapsed_ms =
@@ -1688,6 +1769,19 @@ void app_main(void)
             voice_session_state_is_active(&voice_session);
 
         (void)firmware_update_get_status(&firmware_update_status);
+        if (recovery_mode && !buttons_ready &&
+            firmware_update_error == ESP_OK &&
+            firmware_update_status.state == FIRMWARE_UPDATE_STATE_IDLE &&
+            (network_status.state == NETWORK_TIME_STATE_RETRY_WAIT ||
+             network_status.state == NETWORK_TIME_STATE_SYNCHRONIZED) &&
+            now - last_recovery_portal_attempt >=
+                pdMS_TO_TICKS(APP_RECOVERY_PORTAL_RETRY_MS)) {
+            last_recovery_portal_attempt = now;
+            const esp_err_t portal_error = firmware_update_start();
+            ESP_LOGW(TAG, "automatic recovery portal start: %s",
+                     esp_err_to_name(portal_error));
+            (void)firmware_update_get_status(&firmware_update_status);
+        }
         if (firmware_update_status.state != previous_update_state ||
             firmware_update_status.percent != previous_update_percent) {
             if (firmware_update_status.state != previous_update_state &&
@@ -1793,7 +1887,7 @@ void app_main(void)
                     apply_error = apply_runtime_power_transition(
                         &power_runtime, &power_policy,
                         &next_power_runtime, &next_power_policy,
-                        network_error == ESP_OK);
+                        !recovery_mode && network_error == ESP_OK);
                 }
                 if (apply_error == ESP_OK) {
                     power_runtime = next_power_runtime;
@@ -1854,7 +1948,7 @@ void app_main(void)
                                 &next_power_policy)
                         ? ESP_OK
                         : ESP_ERR_INVALID_ARG;
-                if (apply_error == ESP_OK &&
+                if (!recovery_mode && apply_error == ESP_OK &&
                     snapshot.settings.audio_playback_volume !=
                         settings.audio_playback_volume) {
                     apply_error =
@@ -1880,7 +1974,7 @@ void app_main(void)
                     apply_error = apply_runtime_power_transition(
                         &power_runtime, &power_policy,
                         &next_power_runtime, &next_power_policy,
-                        network_error == ESP_OK);
+                        !recovery_mode && network_error == ESP_OK);
                 }
 
                 if (apply_error == ESP_OK) {
@@ -1903,6 +1997,9 @@ void app_main(void)
                     }
                     alarm_schedule =
                         alarm_schedule_from_settings(&settings);
+                    if (recovery_mode) {
+                        alarm_schedule.enabled = false;
+                    }
                     dashboard.show_seconds = power_policy.show_seconds;
                     dashboard.temperature_fahrenheit =
                         settings.temperature_unit ==
@@ -1997,7 +2094,8 @@ void app_main(void)
         if (buttons_ready) {
             configure_key_timing(&key_button_state, input_page,
                                  online_update_status.state);
-            configure_boot_timing(&boot_button_state, input_page);
+            configure_boot_timing(&boot_button_state, input_page,
+                                  recovery_mode);
             key_pressed = board_key_is_pressed();
             boot_pressed = board_boot_is_pressed();
             key_event = button_state_update(
@@ -2049,7 +2147,7 @@ void app_main(void)
                 last_sync_time = synchronized_time;
                 last_sync_valid = true;
                 automatic_update_check_pending =
-                    power_policy.automatic_network;
+                    !recovery_mode && power_policy.automatic_network;
                 system_status_data_changed = true;
                 esp_err_t rtc_sync_error = ESP_OK;
                 if (!rtc_driver_ready) {
@@ -2563,6 +2661,31 @@ void app_main(void)
                              esp_err_to_name(manual_sync_error));
                 }
                 render_requested = true;
+            } else if (key_action == APP_PAGE_ACTION_REFRESH_WEATHER &&
+                       weather_error == ESP_OK &&
+                       manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+                       !firmware_update_ui_active &&
+                       !gallery_download_ui_active &&
+                       !online_update_busy &&
+                       !online_update_confirmation_active &&
+                       !app_image_delete_ui_is_active(
+                           &image_delete_ui) &&
+                       !voice_session_state_is_active(
+                           &voice_session)) {
+                const esp_err_t refresh_error =
+                    weather_service_request_refresh();
+                if (refresh_error == ESP_OK) {
+                    ESP_LOGI(TAG,
+                             "KEY long press: weather refresh requested");
+                } else if (refresh_error == ESP_ERR_INVALID_STATE) {
+                    ESP_LOGI(TAG,
+                             "weather refresh already active or unavailable");
+                } else {
+                    ESP_LOGW(TAG,
+                             "weather refresh could not start: %s",
+                             esp_err_to_name(refresh_error));
+                }
+                render_requested = true;
             } else if (key_action == APP_PAGE_ACTION_START_VOICE &&
                        manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                        !firmware_update_ui_active &&
@@ -2709,7 +2832,8 @@ void app_main(void)
         } else if (boot_event == BUTTON_EVENT_LONG_PRESS) {
             app_page_state_note_activity(&page_state);
             const app_page_action_t boot_action =
-                app_page_boot_hold_action(input_page);
+                recovery_mode ? APP_PAGE_ACTION_NONE
+                              : app_page_boot_hold_action(input_page);
             if (boot_action ==
                     APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING &&
                 manual_sync_ui == MANUAL_SYNC_UI_NONE &&
@@ -2824,6 +2948,11 @@ void app_main(void)
                 manual_sync_ui == MANUAL_SYNC_UI_ACTIVE,
             .online_update_confirmation_active =
                 online_update_confirmation_active,
+            .weather_refresh_available =
+                weather_error == ESP_OK &&
+                weather_status.config_enabled &&
+                weather_status.state !=
+                    WEATHER_SERVICE_STATE_REFRESHING,
             .image_delete_available =
                 latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
                 latest_sd_image_status.image_count > 0U &&
@@ -3010,18 +3139,45 @@ void app_main(void)
             ESP_LOGI(TAG, "page timeout: returning home");
         }
 
+        const bool startup_milestones_complete =
+            display_ready && buttons_ready && !first_periodic_update &&
+            previous_display_mode != APP_DISPLAY_NONE;
+        const uint32_t uptime_ms =
+            (uint32_t)(now - initial_tick) * portTICK_PERIOD_MS;
+        const boot_recovery_ota_gate_t ota_gate = {
+            .recovery_mode = recovery_mode,
+            .startup_milestones_complete =
+                startup_milestones_complete,
+            .uptime_ms = uptime_ms,
+            .first_attempt = !ota_confirmation_attempted,
+            .since_last_attempt_ms =
+                (uint32_t)(now - last_ota_confirmation_attempt) *
+                portTICK_PERIOD_MS,
+        };
         if (running_image_confirmation_pending &&
-            now - initial_tick >= pdMS_TO_TICKS(APP_OTA_CONFIRM_DELAY_MS)) {
+            boot_recovery_should_confirm_ota(&ota_gate)) {
+            ota_confirmation_attempted = true;
+            last_ota_confirmation_attempt = now;
             const esp_err_t confirm_error =
                 firmware_update_confirm_running_image();
             if (confirm_error == ESP_OK) {
                 ESP_LOGI(TAG,
                          "running OTA image confirmed after stable startup");
+                running_image_confirmation_pending = false;
             } else {
-                ESP_LOGE(TAG, "could not confirm running OTA image: %s",
+                ESP_LOGE(TAG,
+                         "could not confirm running OTA image; retrying: %s",
                          esp_err_to_name(confirm_error));
             }
-            running_image_confirmation_pending = false;
+        }
+        if (!boot_health_marked &&
+            boot_recovery_should_mark_healthy(
+                recovery_mode, startup_milestones_complete,
+                uptime_ms)) {
+            boot_recovery_mark_healthy();
+            boot_health_marked = true;
+            ESP_LOGI(TAG,
+                     "startup guard marked healthy after stable runtime");
         }
 
         if (periodic_update) {
@@ -3304,7 +3460,8 @@ void app_main(void)
                                     &power_runtime, &power_policy,
                                     &next_power_runtime,
                                     &next_power_policy,
-                                    network_error == ESP_OK);
+                                    !recovery_mode &&
+                                        network_error == ESP_OK);
                             if (transition_error != ESP_OK) {
                                 ESP_LOGW(
                                     TAG,
@@ -3390,7 +3547,7 @@ void app_main(void)
             ++cycle;
         }
 
-        if (automatic_update_check_pending &&
+        if (!recovery_mode && automatic_update_check_pending &&
             power_policy.automatic_network &&
             online_update_error == ESP_OK &&
             network_status.state == NETWORK_TIME_STATE_SYNCHRONIZED &&
@@ -3839,6 +3996,7 @@ void app_main(void)
                     display_show_voice(&display_voice_status);
                 } else if (active_page == APP_PAGE_SETTINGS) {
                     const display_settings_status_t settings_status = {
+                        .recovery_mode = recovery_mode,
                         .manual_saving_requested =
                             power_setting_apply_pending
                                 ? power_setting_target
@@ -3890,6 +4048,7 @@ void app_main(void)
                     const display_online_update_status_t display_status = {
                         .state = display_online_update_state(
                             online_update_status.state),
+                        .recovery_mode = recovery_mode,
                         .beta_channel = online_update_status.beta_channel,
                         .current_version =
                             online_update_status.current_version,
@@ -3902,6 +4061,10 @@ void app_main(void)
                                 ? online_update_status.last_checked
                                 : NULL,
                         .detail = detail,
+                        .recovery_reset =
+                            recovery_mode ? recovery_reset : NULL,
+                        .recovery_phase =
+                            recovery_mode ? recovery_phase : NULL,
                         .downloaded_bytes =
                             (uint32_t)online_update_status.downloaded_bytes,
                         .total_bytes =

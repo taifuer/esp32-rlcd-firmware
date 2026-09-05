@@ -17,7 +17,7 @@ extern "C" {
 
 static inline const char *display_interaction_weather_footer(void)
 {
-    return "BOOT: CALENDAR | KEY: STATUS";
+    return "BOOT: CALENDAR | KEY: STATUS | HOLD KEY 2s: REFRESH";
 }
 
 static inline const char *display_interaction_calendar_footer(
@@ -94,6 +94,24 @@ static inline const char *display_interaction_online_update_footer(
     return review_available
                ? "BOOT: HOME | KEY: STATUS | HOLD KEY 2s: REVIEW UPDATE"
                : "BOOT: HOME | KEY: STATUS | HOLD KEY 2s: CHECK UPDATE";
+}
+
+static inline const char *display_interaction_recovery_settings_footer(void)
+{
+    return "KEY: ONLINE UPDATE | HOLD KEY 3s: WEB SETTINGS";
+}
+
+static inline const char *display_interaction_recovery_update_footer(
+    bool review_available)
+{
+    return review_available
+               ? "KEY: SETTINGS | HOLD KEY 2s: REVIEW UPDATE"
+               : "KEY: SETTINGS | HOLD KEY 2s: CHECK UPDATE";
+}
+
+static inline const char *display_interaction_recovery_restart_hint(void)
+{
+    return "PWR OFF / ON";
 }
 
 #ifdef __cplusplus

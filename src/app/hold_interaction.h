@@ -30,6 +30,7 @@ typedef struct {
     bool manual_sync_idle;
     bool manual_sync_active;
     bool online_update_confirmation_active;
+    bool weather_refresh_available;
     bool image_delete_available;
 } app_hold_prompt_context_t;
 

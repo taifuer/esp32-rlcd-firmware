@@ -110,6 +110,7 @@ typedef struct {
 } display_system_status_t;
 
 typedef struct {
+    bool recovery_mode;
     bool manual_saving_requested;
     bool automatic_saving_active;
     bool effective_low_power;
@@ -181,11 +182,14 @@ typedef enum {
 
 typedef struct {
     display_online_update_state_t state;
+    bool recovery_mode;
     bool beta_channel;
     const char *current_version;
     const char *latest_version;
     const char *last_checked;
     const char *detail;
+    const char *recovery_reset;
+    const char *recovery_phase;
     uint32_t downloaded_bytes;
     uint32_t total_bytes;
     uint8_t progress_percent;

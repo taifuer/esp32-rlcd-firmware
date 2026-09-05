@@ -50,11 +50,13 @@ esp_err_t weather_service_get_status(weather_service_status_t *status,
                                      int64_t now_epoch_seconds,
                                      bool rtc_valid);
 esp_err_t weather_service_set_automatic_refresh_enabled(bool enabled);
+/* Start one user-visible refresh. A queued or running refresh is not
+ * duplicated and returns ESP_ERR_INVALID_STATE. */
 esp_err_t weather_service_request_refresh(void);
 /* Called only after the settings HTTP response has been sent and its SoftAP
  * has stopped. The worker atomically takes over the maintenance session. */
 esp_err_t weather_service_request_refresh_from_maintenance(void);
-/* Dismiss the terminal result of a refresh started from the settings portal. */
+/* Dismiss the terminal result of a user-visible refresh. */
 esp_err_t weather_service_acknowledge_interactive_refresh(void);
 /* Re-evaluate enablement immediately after a save that does not fetch. */
 esp_err_t weather_service_notify_configuration_changed(void);

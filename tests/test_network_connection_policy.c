@@ -91,10 +91,19 @@ static void test_invalid_inputs_do_nothing(void)
 
 static void test_explicit_setup_reopens_expired_window(void)
 {
-    assert(network_connection_policy_should_provision(false, false));
-    assert(network_connection_policy_should_provision(false, true));
-    assert(!network_connection_policy_should_provision(true, false));
-    assert(network_connection_policy_should_provision(true, true));
+    assert(network_connection_policy_should_provision(true, false, false));
+    assert(network_connection_policy_should_provision(true, false, true));
+    assert(!network_connection_policy_should_provision(true, true, false));
+    assert(network_connection_policy_should_provision(true, true, true));
+}
+
+static void test_recovery_leaves_radio_for_maintenance(void)
+{
+    assert(!network_connection_policy_should_provision(false, false, false));
+    assert(!network_connection_policy_should_provision(false, true, false));
+    /* A deliberate Wi-Fi clear/reconfigure still reopens provisioning. */
+    assert(network_connection_policy_should_provision(false, false, true));
+    assert(network_connection_policy_should_provision(false, true, true));
 }
 
 int main(void)
@@ -105,6 +114,7 @@ int main(void)
     test_busy_mode_change_waits_for_owner();
     test_portal_end_uses_latest_mode();
     test_explicit_setup_reopens_expired_window();
+    test_recovery_leaves_radio_for_maintenance();
     test_invalid_inputs_do_nothing();
 
     puts("network connection policy tests passed");

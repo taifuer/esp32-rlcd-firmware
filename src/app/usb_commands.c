@@ -7,10 +7,14 @@
 #include "audio_diagnostics.h"
 #include "audio_voice.h"
 #include "app_settings.h"
+#include "boot_recovery.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
 #include "esp_app_desc.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "network_time.h"
 #include "pcf85063.h"
 
@@ -91,7 +95,37 @@ static void log_datetime(const char *prefix, const pcf85063_datetime_t *datetime
 static void process_line(const char *line, bool rtc_available)
 {
     if (strcmp(line, "HELP") == 0) {
-        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | GET_AUDIO | GET_VOICE | RESET_VOICE_DIAG | GET_SETTINGS | RESET_WIFI | HELP");
+        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | GET_BOOT | GET_AUDIO | GET_VOICE | RESET_VOICE_DIAG | GET_SETTINGS | RESET_WIFI | HELP");
+        return;
+    }
+
+    if (strcmp(line, "GET_BOOT") == 0) {
+        boot_recovery_status_t status = {0};
+        boot_recovery_get_status(&status);
+        const esp_app_desc_t *app = esp_app_get_description();
+        ESP_LOGI(
+            TAG,
+            "BOOT version=%s reset=%s recovery=%s manual=%s faults=%u "
+            "previous_phase=%s current_phase=%s main_stack_free_at_checkpoint=%u "
+            "console_stack_free=%u "
+            "internal_free=%u internal_min=%u previous_main_stack_free=%u "
+            "previous_internal_free=%u previous_internal_min=%u",
+            app->version,
+            boot_recovery_reset_reason_name(status.reset_reason),
+            status.recovery_mode ? "yes" : "no",
+            status.manual_recovery ? "yes" : "no",
+            (unsigned)status.consecutive_faults,
+            boot_recovery_phase_name(status.previous_phase),
+            boot_recovery_phase_name(status.current_phase),
+            (unsigned)status.main_stack_free_at_checkpoint,
+            (unsigned)uxTaskGetStackHighWaterMark(NULL),
+            (unsigned)heap_caps_get_free_size(
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            (unsigned)heap_caps_get_minimum_free_size(
+                MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+            (unsigned)status.previous_main_stack_free,
+            (unsigned)status.previous_free_internal_heap,
+            (unsigned)status.previous_minimum_internal_heap);
         return;
     }
 

@@ -61,7 +61,8 @@ static void assert_footer_uses_concrete_targets(const char *footer)
 static void test_targeted_navigation_footers(void)
 {
     assert(strcmp(display_interaction_weather_footer(),
-                  "BOOT: CALENDAR | KEY: STATUS") == 0);
+                  "BOOT: CALENDAR | KEY: STATUS | HOLD KEY 2s: REFRESH") ==
+           0);
     assert(strcmp(display_interaction_calendar_footer(true),
                   "BOOT: IMAGE | KEY: STATUS") == 0);
     assert(strcmp(display_interaction_calendar_footer(false),
@@ -80,6 +81,14 @@ static void test_targeted_navigation_footers(void)
     assert(strcmp(display_interaction_online_update_footer(true),
                   "BOOT: HOME | KEY: STATUS | HOLD KEY 2s: REVIEW UPDATE") ==
            0);
+    assert(strcmp(display_interaction_recovery_settings_footer(),
+                  "KEY: ONLINE UPDATE | HOLD KEY 3s: WEB SETTINGS") == 0);
+    assert(strcmp(display_interaction_recovery_update_footer(false),
+                  "KEY: SETTINGS | HOLD KEY 2s: CHECK UPDATE") == 0);
+    assert(strcmp(display_interaction_recovery_update_footer(true),
+                  "KEY: SETTINGS | HOLD KEY 2s: REVIEW UPDATE") == 0);
+    assert(strcmp(display_interaction_recovery_restart_hint(),
+                  "PWR OFF / ON") == 0);
 
     assert_footer_uses_concrete_targets(
         display_interaction_weather_footer());
@@ -97,6 +106,12 @@ static void test_targeted_navigation_footers(void)
         display_interaction_online_update_footer(false));
     assert_footer_uses_concrete_targets(
         display_interaction_online_update_footer(true));
+    assert_footer_uses_concrete_targets(
+        display_interaction_recovery_settings_footer());
+    assert_footer_uses_concrete_targets(
+        display_interaction_recovery_update_footer(false));
+    assert_footer_uses_concrete_targets(
+        display_interaction_recovery_update_footer(true));
 }
 
 static void test_image_navigation_footer(void)
