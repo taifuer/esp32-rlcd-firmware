@@ -130,12 +130,12 @@ v0.18.0 首次引入的同一发布边界：
 ```bash
 ./scripts/update-app.sh \
   --port COM5 \
-  --firmware build/release/v0.25.0/esp32-rlcd-firmware-v0.25.0-ota.bin \
-  --model build/release/v0.25.0/esp32-rlcd-firmware-v0.25.0-model.bin \
+  --firmware build/release/v0.26.0/esp32-rlcd-firmware-v0.26.0-ota.bin \
+  --model build/release/v0.26.0/esp32-rlcd-firmware-v0.26.0-model.bin \
   --confirm
 ```
 
-首次安装、完整恢复和需要改写为新分区表时，使用包含模型的 v0.25.0 Factory 镜像；
+首次安装、完整恢复和需要改写为新分区表时，使用包含模型的 v0.26.0 Factory 镜像；
 `build.sh` 必须逐字节确认 Factory 在 `0x610000` 包含同一 `srmodels.bin`。已通过
 `update-app.sh` 或 Factory 安装兼容模型的设备，后续纯应用 OTA 可以继续复用它；改变
 模型内容、区域大小或不兼容 ABI 时，必须再次提供 app+model USB 更新或独立、断电安全且
@@ -171,20 +171,20 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 
 ### 构建版本与更新通道
 
-仓库默认构建版本为 `0.25.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
+仓库默认构建版本为 `0.26.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
 候选构建修改 `CMakeLists.txt`：
 
 ```bash
-RLCD_PROJECT_VERSION=0.26.0-dev.1 ./scripts/build.sh
-RLCD_PROJECT_VERSION=0.25.0 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.27.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.26.0 ./scripts/build.sh
 ```
 
 版本必须是固件可比较的 SemVer，且不带文件名使用的前导 `v`：
 
 - 设备默认读取 `https://mcu.taifua.com/esp32-rlcd/firmware/stable.json`；只有设备偏好中
   显式启用开发者测试通道后才读取 `testing.json`；
-- SemVer 不自动选择通道。稳定清单只允许 `0.25.0` 这类正式目标，测试清单用于
-  `0.26.0-dev.1`、`0.26.0-rc.1` 等候选，也可在转正式期间指向正式目标。
+- SemVer 不自动选择通道。稳定清单只允许 `0.26.0` 这类正式目标，测试清单用于
+  `0.27.0-dev.1`、`0.27.0-rc.1` 等候选，也可在转正式期间指向正式目标。
 
 预发布验证先上传版本化 `-ota.bin`，核对大小和 SHA-256，再更新 `testing.json`。正式
 发布必须从同一份已实机验收的源码构建正式版本，重新核对产物差异、大小与 SHA-256 后
@@ -932,7 +932,8 @@ Factory 大小为 8,560,811 bytes，SHA-256 为
 
 候选范围只包含页面导航与设备快捷菜单，不改变分区、模型、天气请求、网络保持和语音协议。
 dev.2 根据反馈取消 dev.1 的常驻页设置与普通页面超时，以“切到哪页就停在哪页”取代。
-入口与正常/恢复模式的区别见[设备设置](device-settings.md)。以下实机项尚待逐项确认：
+入口与正常/恢复模式的区别见[设备设置](device-settings.md)。用户确认 dev.2 日常使用正常，
+并同意发布 v0.26.0；以下保留完整回归矩阵，专项结果仍需逐项记录：
 
 1. 从 v0.25.0 或 v0.26.0-dev.1 OTA 升级后仍默认时钟，原时区、温标、音量、闹钟、省电偏好及 Beta
    通道保留；首次开机和重启不增加全屏错误或联网等待。
@@ -966,3 +967,10 @@ Flash 断电测试。另覆盖 dev.1 三种旧 DISPLAY 值的完整记录读取�
 
 若回退到只支持旧 schema 的固件，旧固件会使用安全默认偏好且不覆盖新版记录；重新升级后
 仍能读取新版保存值。Wi-Fi、天气、对话凭据属于各自独立存储，不随本次偏好迁移清除。
+
+### v0.26.0 正式发布记录
+
+用户反馈“没啥问题，发布吧”后，冻结 dev.2 功能代码，显式构建正式 `0.26.0`。正式 OTA
+与验收候选长度相同，仅版本、构建时间、ELF 摘要和镜像校验字段不同；分区与语音模型
+不变。文件与效果图保存在 [`dist/v0.26.0/`](../dist/v0.26.0/)，发布附件包含快捷菜单示意。
+异常启动注入、恢复 OTA、真实 Flash 断电与长期功耗等未新增专项结论。

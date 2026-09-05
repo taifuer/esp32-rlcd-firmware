@@ -99,7 +99,7 @@ for preview_name in \
     device-health.svg network-time.svg audio.svg voice.svg \
     offline-commands.svg hold-prompt.svg \
     wifi-maintenance.svg online-update.svg local-update.svg \
-    status.svg settings.svg alarm.svg settings-portal.svg \
+    status.svg settings.svg quick-settings.svg alarm.svg settings-portal.svg \
     recovery-update.svg recovery-settings.svg \
     online-update-confirm.svg online-update-progress.svg \
     online-update-verify.svg online-update-result.svg \
