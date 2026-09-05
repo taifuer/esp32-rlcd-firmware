@@ -132,30 +132,30 @@ Bootloader 时使用。v0.18.0 新增的模型区域位于旧布局原本未分�
 使用发布目录时可分别通过 `--firmware` 与 `--model` 指定已列入同一 `SHA256SUMS` 的文件。
 此流程仍需手动进入 ROM 下载模式。
 
-仓库中的 v0.24.0 正式发布目录可以直接使用：
+仓库中的 v0.25.0 正式发布目录可以直接使用：
 
 ```bash
 ./scripts/update-app.sh \
   --port COM5 \
-  --firmware dist/v0.24.0/esp32-rlcd-firmware-v0.24.0-ota.bin \
-  --model dist/v0.24.0/esp32-rlcd-firmware-v0.24.0-model.bin \
+  --firmware dist/v0.25.0/esp32-rlcd-firmware-v0.25.0-ota.bin \
+  --model dist/v0.25.0/esp32-rlcd-firmware-v0.25.0-model.bin \
   --confirm
 ```
 
 发布目录中的 `SHA256SUMS` 同时覆盖 Factory、OTA 和模型；如果同版本的 `-model.bin` 与
 `-ota.bin` 位于同一目录，脚本也能自动找到模型，可省略 `--model`。
 
-旧设备迁移到 v0.24.0 且首次启用自 v0.18.0 起提供的离线语音时，需要执行一次本流程来
+旧设备迁移到 v0.25.0 且首次启用自 v0.18.0 起提供的离线语音时，需要执行一次本流程来
 安装模型；在线更新和设置门户本地 OTA 仍只更新应用。模型已经安装后，普通用户和日常
 开发继续优先使用设备内更新，无需数据线和 ROM 下载模式。完整步骤见
 [固件安装与更新](firmware-update.md)。
 
 ### 构建版本与在线通道
 
-仓库默认生成 `0.24.0`。构建后续预发布候选时使用环境变量，例如：
+仓库默认生成 `0.25.0`。构建后续预发布候选时使用环境变量，例如：
 
 ```bash
-RLCD_PROJECT_VERSION=0.24.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.26.0-dev.1 ./scripts/build.sh
 ```
 
 所有版本默认读取 `stable.json`，只有在设备设置中显式开启 Beta 更新后才读取

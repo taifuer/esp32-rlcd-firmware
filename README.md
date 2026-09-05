@@ -6,14 +6,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.24.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.25.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
 ## 效果预览
 
-以下为 v0.24.0 的界面示意。
+以下为 v0.25.0 的界面示意。
 
 | 首屏 | 天气 |
 | :---: | :---: |
@@ -39,7 +39,8 @@
   设置门户按“省份 → 城市”配置地点，设备直连 QWeather 获取实时天气和
   三日预报并缓存。功能启用后即加入 `BOOT` 页面环，保存配置后会打开天气页；请求中和
   失败原因都在固定天气布局内显示，同地点已有缓存时后台刷新失败仍继续显示缓存，
-  `SAVING` 不为天气周期联网；
+  顶栏单独显示 RTC 当前日期和星期；按住 `KEY` 2 秒可手动刷新，`SAVING` 不为天气周期
+  联网；
 - 离线语音使用板载 ES7210 和 ESP-SR 中文模型：“对话”页显示
   `OFFLINE COMMANDS` 和 `Hold KEY 2s for a command`，按住 `KEY` 2 秒并松开后，
   可用“回到主页”“打开日历”“查看状态”“打开图片”“打开设置”等安全指令导航；
@@ -64,6 +65,8 @@
 - 在线更新通过 HTTPS 检查清单并下载 OTA 镜像，安装始终需要实体按键确认；
 - 本地更新通过设置门户上传 OTA 镜像，作为无互联网时的维护与恢复入口；
 - 双 OTA 应用槽、镜像校验、新版本启动确认和失败回滚，普通更新保留 Wi-Fi 配置；
+- 开机按住 `KEY` 可进入启动恢复模式，只保留在线更新与精简设置门户；连续异常启动时
+  也可自动进入，操作说明见[固件安装与更新](docs/firmware-update.md#应用启动恢复)；
 - 通过板载 1-bit SDMMC 显示 FAT32 microSD 中最多 32 张黑白图片；多图时短按 `KEY`
   手动切换并跨重启保留选择，不自动轮播；
 - 手机浏览器可在本地将 JPEG/PNG 转换并导入 microSD，也可安装公共演示图集，逐张预览、
@@ -88,7 +91,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.24.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.25.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -96,11 +99,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.24.0
+cd dist/v0.25.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.24.0/esp32-rlcd-firmware-v0.24.0-factory.bin \
+  --firmware dist/v0.25.0/esp32-rlcd-firmware-v0.25.0-factory.bin \
   --confirm
 ```
 
@@ -127,6 +130,7 @@ cd ../..
 │   ├── gallery/         # 公共演示图清单与 HTTPS 下载
 │   ├── image/           # PBM/BMP 单色图片校验与解码
 │   ├── network/         # 配网、NVS、SNTP 与联网会话
+│   ├── recovery/        # 启动异常记录、恢复模式与 OTA 健康判定
 │   ├── rtc/             # PCF85063 与备用电池保持判定
 │   ├── sd_image/        # SDMMC/FatFs 扫描、缓存与明确导入事务
 │   ├── sensors/         # SHTC3 与环境舒适度判定
