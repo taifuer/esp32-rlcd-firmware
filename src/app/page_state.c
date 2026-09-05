@@ -52,6 +52,38 @@ void app_page_state_go_home(app_page_state_t *state)
     (void)app_page_state_open_page(state, APP_PAGE_HOME);
 }
 
+bool app_page_state_set_default(app_page_state_t *state, app_page_t page)
+{
+    if (state == NULL || (page != APP_PAGE_HOME &&
+                          page != APP_PAGE_WEATHER &&
+                          page != APP_PAGE_IMAGE)) {
+        return false;
+    }
+    state->default_page = page;
+    state->inactive_ms = 0U;
+    return true;
+}
+
+app_page_t app_page_state_default(const app_page_state_t *state)
+{
+    if (state == NULL) {
+        return APP_PAGE_HOME;
+    }
+    if (state->recovery_mode) {
+        return APP_PAGE_ONLINE_UPDATE;
+    }
+    if ((state->default_page == APP_PAGE_WEATHER && state->weather_enabled) ||
+        (state->default_page == APP_PAGE_IMAGE && state->image_available)) {
+        return state->default_page;
+    }
+    return APP_PAGE_HOME;
+}
+
+void app_page_state_go_default(app_page_state_t *state)
+{
+    (void)app_page_state_open_page(state, app_page_state_default(state));
+}
+
 bool app_page_state_open_page(app_page_state_t *state, app_page_t page)
 {
     if (state == NULL ||
@@ -230,7 +262,7 @@ void app_page_state_note_activity(app_page_state_t *state)
 
 bool app_page_state_tick(app_page_state_t *state, uint32_t elapsed_ms)
 {
-    if (state == NULL || state->current == APP_PAGE_HOME ||
+    if (state == NULL || state->current == app_page_state_default(state) ||
         state->recovery_mode) {
         return false;
     }
@@ -240,7 +272,7 @@ bool app_page_state_tick(app_page_state_t *state, uint32_t elapsed_ms)
         return false;
     }
 
-    state->current = APP_PAGE_HOME;
+    state->current = app_page_state_default(state);
     state->inactive_ms = 0U;
     return true;
 }

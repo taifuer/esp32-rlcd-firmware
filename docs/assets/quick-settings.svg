@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware quick settings</title>
+  <desc id="description">Four on-device settings: volume, alarm toggle, persistent display and web settings. KEY chooses an item, holding KEY edits, BOOT returns.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" font-family="DejaVu Sans, Arial, sans-serif">
+    <text x="200" y="32" text-anchor="middle" font-size="24" font-weight="700">QUICK SETTINGS</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke="#eef3e8" shape-rendering="crispEdges"/>
+    <rect x="12" y="55" width="376" height="36"/>
+    <g font-size="18" font-weight="700">
+      <text x="20" y="80" fill="#090b0a">VOLUME</text>
+      <text x="378" y="80" text-anchor="end" fill="#090b0a">68 %</text>
+      <text x="20" y="124">ALARM</text>
+      <text x="378" y="124" text-anchor="end">ON 07:30</text>
+      <text x="20" y="168">DISPLAY</text>
+      <text x="378" y="168" text-anchor="end">WEATHER</text>
+      <text x="20" y="212">WEB SETTINGS</text>
+      <text x="378" y="212" text-anchor="end">&gt;</text>
+    </g>
+    <g text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="11">
+      <text x="200" y="270">BOOT: BACK | KEY: NEXT ITEM</text>
+      <text x="200" y="294">HOLD KEY 2s: EDIT</text>
+    </g>
+  </g>
+</svg>

@@ -1645,9 +1645,10 @@ void display_show_settings(const display_settings_status_t *status)
     draw_system_row(72, "POWER", power);
     format_utc_offset(value, sizeof(value), status->utc_offset_minutes);
     draw_system_row(108, "TIME ZONE", value);
-    draw_system_row(144, "TEMP UNIT",
-                    status->temperature_fahrenheit ? "FAHRENHEIT"
-                                                   : "CELSIUS");
+    snprintf(value, sizeof(value), "%s%s",
+             app_default_display_name(status->default_display),
+             status->default_display_available ? "" : " | NO DATA");
+    draw_system_row(144, "DISPLAY", value);
     if (status->playback_volume_percent <= 100U) {
         snprintf(value, sizeof(value), "%u %%",
                  status->playback_volume_percent);
@@ -1667,6 +1668,87 @@ void display_show_settings(const display_settings_status_t *status)
     draw_system_row(216, "ALARM", value);
 
     draw_settings_footer(status->manual_saving_requested);
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_quick_settings(const quick_settings_t *menu,
+                                 const app_settings_t *saved,
+                                 bool apply_pending, bool rtc_valid,
+                                 bool weather_enabled, bool image_available)
+{
+    if (s_u8g2 == NULL || menu == NULL || !menu->active || saved == NULL) {
+        return;
+    }
+    draw_system_header(menu->editing ? quick_settings_item_name(menu->item)
+                                     : "QUICK SETTINGS", 0U);
+    char value[40];
+    if (menu->editing) {
+        if (menu->item == QUICK_SETTINGS_VOLUME) {
+            snprintf(value, sizeof(value), "%u %%", menu->draft);
+        } else if (menu->item == QUICK_SETTINGS_ALARM) {
+            snprintf(value, sizeof(value), "%s", menu->draft ? "ON" : "OFF");
+        } else {
+            snprintf(value, sizeof(value), "%s",
+                     app_default_display_name((app_default_display_t)menu->draft));
+        }
+        u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+        draw_centered(137, value);
+        u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+        if (menu->item == QUICK_SETTINGS_VOLUME) {
+            draw_centered(188, menu->draft == 0U ? "MUTED" : "PLAYBACK VOLUME");
+            draw_centered(212, "0 - 100% | SAVE TO APPLY");
+        } else if (menu->item == QUICK_SETTINGS_ALARM) {
+            snprintf(value, sizeof(value), "%02u:%02u | %s",
+                     saved->alarm_hour, saved->alarm_minute,
+                     alarm_repeat_name(saved->alarm_weekdays));
+            draw_centered(188, value);
+            draw_centered(212, rtc_valid ? "CHANGE SCHEDULE IN WEB SETTINGS"
+                                        : "SET RTC TIME IN WEB SETTINGS");
+        } else {
+            draw_centered(188, "AT STARTUP AND AFTER 30s IDLE");
+            draw_centered(212, !weather_enabled && !image_available
+                ? "ENABLE WEATHER OR ADD AN SD IMAGE"
+                : "UNAVAILABLE PAGES FALL BACK TO CLOCK");
+        }
+    } else {
+        for (unsigned index = 0U; index < QUICK_SETTINGS_ITEM_COUNT; ++index) {
+            const int baseline = 80 + (int)index * 44;
+            if ((unsigned)menu->item == index) {
+                u8g2_DrawBox(s_u8g2, 12, baseline - 25, 376, 36);
+                u8g2_SetDrawColor(s_u8g2, 0);
+            }
+            u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
+            u8g2_DrawStr(s_u8g2, 20, baseline,
+                         quick_settings_item_name((quick_settings_item_t)index));
+            if (index == QUICK_SETTINGS_VOLUME) {
+                snprintf(value, sizeof(value), "%u %%", saved->audio_playback_volume);
+            } else if (index == QUICK_SETTINGS_ALARM) {
+                snprintf(value, sizeof(value), "%s %02u:%02u",
+                         saved->alarm_enabled ? "ON" : "OFF",
+                         saved->alarm_hour, saved->alarm_minute);
+            } else if (index == QUICK_SETTINGS_DISPLAY) {
+                snprintf(value, sizeof(value), "%s",
+                         app_default_display_name(saved->default_display));
+            } else {
+                snprintf(value, sizeof(value), ">");
+            }
+            draw_utf8_right_aligned(378, baseline, value);
+            u8g2_SetDrawColor(s_u8g2, 1);
+        }
+    }
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    if (menu->notice == QUICK_SETTINGS_NOTICE_SAVED) {
+        draw_centered(239, apply_pending ? "SAVED | APPLYING" : "SAVED");
+    } else if (menu->notice == QUICK_SETTINGS_NOTICE_SAVE_FAILED) {
+        draw_centered(239, "SAVE FAILED | TRY AGAIN OR CANCEL");
+    } else if (menu->notice == QUICK_SETTINGS_NOTICE_UNAVAILABLE) {
+        draw_centered(239, "NOT AVAILABLE | CHECK WEB SETTINGS");
+    }
+    u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN, SYSTEM_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
+    draw_centered(270, display_interaction_quick_navigation(menu->editing));
+    draw_centered(294, display_interaction_quick_action(
+        menu->editing, menu->item == QUICK_SETTINGS_WEB));
     u8g2_SendBuffer(s_u8g2);
 }
 

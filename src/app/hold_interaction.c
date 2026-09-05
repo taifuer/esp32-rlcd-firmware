@@ -58,7 +58,7 @@ const char *app_hold_prompt_title(app_page_action_t action,
     case APP_PAGE_ACTION_START_VOICE:
         return "START CHAT";
     case APP_PAGE_ACTION_OPEN_SETTINGS:
-        return "OPEN WEB SETTINGS";
+        return "QUICK SETTINGS";
     case APP_PAGE_ACTION_CHECK_ONLINE_UPDATE:
         if (update_intent == APP_HOLD_UPDATE_INSTALL) {
             return "INSTALL UPDATE";

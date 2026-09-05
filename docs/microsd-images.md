@@ -136,7 +136,7 @@ python3 tools/rlcd-image.py convert --dither input.jpg 00-main.pbm
 
 ### 手机本地转换与导入
 
-1. 在设备“设置”页按住 `KEY` 3 秒，连接屏幕所示的临时热点并打开设置门户。
+1. 按[网页设置入口](device-settings.md#网页设置)打开门户，连接屏幕所示的临时热点。
 2. 选择 JPEG 或 PNG。源文件最大 32 MiB、解码后最多 4,000 万像素；浏览器在手机本地
    保持比例缩放到顶部 400 × 250 可见区，底部 50 像素留黑。
 3. 调整二值化阈值，按需启用 Floyd–Steinberg 抖动，先检查最终 400 × 300 黑白预览。

@@ -155,14 +155,14 @@ static void test_settings_footer_names_next_saving_action(void)
 
     assert(strcmp(
                turn_on,
-               "HOLD BOOT 2s: MANUAL SAVING ON | HOLD KEY 3s: WEB SETTINGS") ==
+               "HOLD BOOT 2s: MANUAL SAVING ON | HOLD KEY 3s: QUICK SETTINGS") ==
            0);
     assert(strcmp(
                turn_off,
-               "HOLD BOOT 2s: MANUAL SAVING OFF | HOLD KEY 3s: WEB SETTINGS") ==
+               "HOLD BOOT 2s: MANUAL SAVING OFF | HOLD KEY 3s: QUICK SETTINGS") ==
            0);
-    assert(strstr(turn_on, "WEB SETTINGS") != NULL);
-    assert(strstr(turn_off, "WEB SETTINGS") != NULL);
+    assert(strstr(turn_on, "QUICK SETTINGS") != NULL);
+    assert(strstr(turn_off, "QUICK SETTINGS") != NULL);
     assert_footer_uses_concrete_targets(turn_on);
     assert_footer_uses_concrete_targets(turn_off);
 }

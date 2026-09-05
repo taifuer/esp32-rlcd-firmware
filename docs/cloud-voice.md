@@ -48,7 +48,7 @@ AI 对话未开启、未配置 API Key、家庭 Wi-Fi 当前离线或设备处�
    **API Key**，不要填写阿里云 RAM 的 AccessKey ID 或 AccessKey Secret；Token Plan、
    Coding Plan 等专属套餐 Key 不在当前固件的验证范围内。详细步骤可参考
    [阿里云官方说明](https://help.aliyun.com/zh/model-studio/get-api-key)；
-4. 在设备“设置”页按住 `KEY` 3 秒，连接屏幕显示的临时热点并打开设置门户；
+4. 按[网页设置入口](device-settings.md#网页设置)打开门户，连接屏幕显示的临时热点；
 5. 在“AI 对话”中选择开启，将刚才复制的 API Key 直接粘贴到输入框；
 6. 保持默认模型，并让 API Host 留空。默认北京共享接口不需要 Workspace ID、App ID，
    也不需要创建百炼应用；

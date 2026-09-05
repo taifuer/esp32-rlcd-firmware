@@ -146,7 +146,7 @@ static void test_action_titles(void)
     assert(strcmp(app_hold_prompt_title(
                       APP_PAGE_ACTION_OPEN_SETTINGS,
                       APP_HOLD_UPDATE_CHECK, false),
-                  "OPEN WEB SETTINGS") == 0);
+                  "QUICK SETTINGS") == 0);
     assert(strcmp(app_hold_prompt_title(
                       APP_PAGE_ACTION_CHECK_ONLINE_UPDATE,
                       APP_HOLD_UPDATE_CHECK, false),

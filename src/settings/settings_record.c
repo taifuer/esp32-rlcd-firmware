@@ -3,7 +3,8 @@
 #include <limits.h>
 
 #define SETTINGS_RECORD_MAGIC UINT32_C(0x47464352)
-#define SETTINGS_RECORD_FORMAT_VERSION 5U
+#define SETTINGS_RECORD_FORMAT_VERSION 6U
+#define SETTINGS_RECORD_SCHEMA6_FORMAT_VERSION 5U
 #define SETTINGS_RECORD_SCHEMA5_FORMAT_VERSION 4U
 #define SETTINGS_RECORD_SCHEMA5_VERSION 5U
 #define SETTINGS_RECORD_SCHEMA4_FORMAT_VERSION 3U
@@ -30,6 +31,7 @@ enum {
     ALARM_WEEKDAYS_OFFSET = 23,
     /* Schema v4 used this byte for the now-obsolete image rotation mode. */
     LEGACY_IMAGE_ROTATION_OFFSET = 24,
+    DEFAULT_DISPLAY_OFFSET = 25,
     CHECKSUM_OFFSET = 28,
     SCHEMA3_CHECKSUM_OFFSET = 24,
     SCHEMA2_CHECKSUM_OFFSET = 20,
@@ -114,19 +116,23 @@ bool settings_record_encode(uint32_t generation,
     encoded[ALARM_WEEKDAYS_OFFSET] = settings->alarm_weekdays;
     /* Canonical legacy value: fixed image. */
     encoded[LEGACY_IMAGE_ROTATION_OFFSET] = 0U;
+    encoded[DEFAULT_DISPLAY_OFFSET] = (uint8_t)settings->default_display;
     put_u32(encoded, CHECKSUM_OFFSET,
             record_checksum(encoded, CHECKSUM_OFFSET));
     return true;
 }
 
-bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
-                            settings_record_t *record)
+static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
+                                  settings_record_t *record, bool schema6)
 {
     if (encoded == NULL || record == NULL ||
         encoded_size != SETTINGS_RECORD_ENCODED_SIZE ||
         get_u32(encoded, MAGIC_OFFSET) != SETTINGS_RECORD_MAGIC ||
         get_u16(encoded, FORMAT_OFFSET) !=
-            SETTINGS_RECORD_FORMAT_VERSION ||
+            (schema6 ? SETTINGS_RECORD_SCHEMA6_FORMAT_VERSION
+                     : SETTINGS_RECORD_FORMAT_VERSION) ||
+        get_u16(encoded, SCHEMA_OFFSET) !=
+            (schema6 ? 6U : APP_SETTINGS_SCHEMA_VERSION) ||
         get_u16(encoded, SIZE_OFFSET) != SETTINGS_RECORD_ENCODED_SIZE ||
         get_u32(encoded, CHECKSUM_OFFSET) !=
             record_checksum(encoded, CHECKSUM_OFFSET)) {
@@ -144,7 +150,7 @@ bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
         return false;
     }
     const app_settings_t settings = {
-        .schema_version = get_u16(encoded, SCHEMA_OFFSET),
+        .schema_version = APP_SETTINGS_SCHEMA_VERSION,
         .manual_saving_requested =
             encoded[MANUAL_SAVING_OFFSET] == 1U,
         .utc_offset_minutes = (int16_t)signed_utc_offset,
@@ -157,6 +163,8 @@ bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
         .alarm_hour = encoded[ALARM_HOUR_OFFSET],
         .alarm_minute = encoded[ALARM_MINUTE_OFFSET],
         .alarm_weekdays = encoded[ALARM_WEEKDAYS_OFFSET],
+        .default_display = schema6 ? APP_DEFAULT_DISPLAY_CLOCK
+            : (app_default_display_t)encoded[DEFAULT_DISPLAY_OFFSET],
     };
     if (!app_settings_validate(&settings)) {
         return false;
@@ -167,6 +175,19 @@ bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
         .settings = settings,
     };
     return true;
+}
+
+bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
+                            settings_record_t *record)
+{
+    return decode_recent_record(encoded, encoded_size, record, false);
+}
+
+bool settings_record_decode_schema6(const uint8_t *encoded,
+                                    size_t encoded_size,
+                                    settings_record_t *record)
+{
+    return decode_recent_record(encoded, encoded_size, record, true);
 }
 
 bool settings_record_decode_schema5(const uint8_t *encoded,
@@ -427,12 +448,16 @@ bool settings_record_repair_is_usable(
 }
 
 settings_migration_source_t settings_record_select_migration_source(
-    bool current_record_valid, bool schema5_record_valid,
+    bool current_record_valid, bool schema6_record_valid,
+    bool schema5_record_valid,
     bool schema4_record_valid, bool schema3_record_valid,
     bool schema2_record_valid)
 {
     if (current_record_valid) {
         return SETTINGS_MIGRATION_SOURCE_CURRENT_RECORD;
+    }
+    if (schema6_record_valid) {
+        return SETTINGS_MIGRATION_SOURCE_SCHEMA6_RECORD;
     }
     if (schema5_record_valid) {
         return SETTINGS_MIGRATION_SOURCE_SCHEMA5_RECORD;

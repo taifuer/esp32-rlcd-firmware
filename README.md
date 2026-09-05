@@ -23,11 +23,13 @@
 | 状态 | 对话 |
 | ![状态页效果图](docs/assets/status.svg) | ![AI 对话页效果图](docs/assets/voice.svg) |
 | 设置 | 在线更新 |
-| ![设置页效果图](docs/assets/settings.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
+| ![设置页效果图](dist/v0.25.0/settings.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
 
 效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
 
 ## 当前功能
+
+以下为正式版功能；v0.26.0 Beta 的常驻显示与屏幕快捷设置见[设备设置](docs/device-settings.md)。
 
 - 三段式首屏显示公历、农历、星期、温湿度、三态环境舒适度、电量和网络结果；`NORMAL`
   等大显示 `HH:MM:SS`，`SAVING` 显示 `HH:MM`；

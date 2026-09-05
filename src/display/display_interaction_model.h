@@ -84,8 +84,22 @@ static inline const char *display_interaction_settings_action_footer(
     bool manual_saving_requested)
 {
     return manual_saving_requested
-               ? "HOLD BOOT 2s: MANUAL SAVING OFF | HOLD KEY 3s: WEB SETTINGS"
-               : "HOLD BOOT 2s: MANUAL SAVING ON | HOLD KEY 3s: WEB SETTINGS";
+               ? "HOLD BOOT 2s: MANUAL SAVING OFF | HOLD KEY 3s: QUICK SETTINGS"
+               : "HOLD BOOT 2s: MANUAL SAVING ON | HOLD KEY 3s: QUICK SETTINGS";
+}
+
+static inline const char *display_interaction_quick_navigation(bool editing)
+{
+    return editing ? "BOOT: CANCEL | KEY: CHANGE VALUE"
+                   : "BOOT: BACK | KEY: NEXT ITEM";
+}
+
+static inline const char *display_interaction_quick_action(bool editing,
+                                                          bool web)
+{
+    return editing ? "HOLD KEY 2s: SAVE"
+                   : web ? "HOLD KEY 2s: OPEN WEB SETTINGS"
+                         : "HOLD KEY 2s: EDIT";
 }
 
 static inline const char *display_interaction_online_update_footer(

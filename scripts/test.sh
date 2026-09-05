@@ -9,6 +9,11 @@ trap 'rm -rf -- "${RLCD_TEST_TMP}"' EXIT
 
 cd "${RLCD_PROJECT_DIR}"
 
+if [[ ! -f "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" ]]; then
+  echo "未找到固定版本的 U8g2 字体测试依赖，请先执行: ./scripts/bootstrap.sh" >&2
+  exit 1
+fi
+
 if [[ ! -f "${RLCD_QRCODE_COMPONENT_DIR}/qrcodegen.c" ]]; then
   echo "未找到二维码测试依赖，请先执行: ./scripts/bootstrap.sh" >&2
   exit 1
@@ -113,6 +118,23 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/settings/include -Isrc/input/include -Isrc/display \
+  src/settings/settings_model.c src/settings/quick_settings.c \
+  src/input/button_state.c tests/test_quick_settings.c \
+  -o "${RLCD_TEST_TMP}/test_quick_settings"
+
+cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
+  -I"${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc" \
+  -Isrc/settings/include -Isrc/display -Isrc/app \
+  src/settings/settings_model.c src/settings/quick_settings.c \
+  src/app/hold_interaction.c tests/test_settings_layout.c \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_font.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
+  -o "${RLCD_TEST_TMP}/test_settings_layout"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/app \
   src/app/hold_interaction.c tests/test_hold_interaction.c \
   -o "${RLCD_TEST_TMP}/test_hold_interaction"
@@ -171,6 +193,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   src/settings/settings_model.c src/settings/settings_record.c \
   tests/test_settings_record.c \
   -o "${RLCD_TEST_TMP}/test_settings_record"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Itests/settings_stubs -Isrc/settings/include -Isrc/settings -Isrc/storage/include \
+  src/settings/settings_model.c src/settings/settings_record.c \
+  tests/test_settings_storage.c \
+  -o "${RLCD_TEST_TMP}/test_settings_storage"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
@@ -417,6 +446,8 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_network_qr"
 "${RLCD_TEST_TMP}/test_button_state"
 "${RLCD_TEST_TMP}/test_page_state"
+"${RLCD_TEST_TMP}/test_quick_settings"
+"${RLCD_TEST_TMP}/test_settings_layout"
 "${RLCD_TEST_TMP}/test_hold_interaction"
 "${RLCD_TEST_TMP}/test_image_delete_ui"
 "${RLCD_TEST_TMP}/test_image_delete_interaction"
@@ -427,6 +458,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_sd_image_delete_policy"
 "${RLCD_TEST_TMP}/test_app_settings"
 "${RLCD_TEST_TMP}/test_settings_record"
+"${RLCD_TEST_TMP}/test_settings_storage"
 "${RLCD_TEST_TMP}/test_conversation_config"
 "${RLCD_TEST_TMP}/test_network_screen_policy"
 "${RLCD_TEST_TMP}/test_voice_backend_policy"

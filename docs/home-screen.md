@@ -46,11 +46,12 @@
 | 图片（单图） | `BOOT: HOME | KEY: STATUS`；第二行 `HOLD KEY 2s: DELETE IMAGE` |
 | 状态 | `BOOT: HOME | KEY: CHAT | HOLD KEY 2s: SYNC TIME` |
 | 对话（空闲或不可用） | `BOOT: HOME | KEY: SETTINGS` |
-| 设置 | `BOOT: HOME | KEY: ONLINE UPDATE`；第二行按当前请求显示 `MANUAL SAVING ON` 或 `MANUAL SAVING OFF`，并使用 `WEB SETTINGS` |
+| 设置 | `BOOT: HOME | KEY: ONLINE UPDATE`；第二行按当前请求显示 `MANUAL SAVING ON` 或 `MANUAL SAVING OFF`，并使用 `QUICK SETTINGS` |
 | 在线更新 | `BOOT: HOME | KEY: STATUS`；可操作时追加 `CHECK UPDATE` 或 `REVIEW UPDATE` |
 
 所有有效长按在持续 1 秒后统一显示剩余时间与 `RELEASE TO CANCEL`；此时提前松开只取消
-长按，不会再执行短按动作。天气、月历、图片和所有系统页无操作 30 秒后返回首屏。长按中的按键、
+长按，不会再执行短按动作。v0.26.0 Beta 起，普通页面无操作 30 秒后返回所选常驻页，
+常驻页自身不超时；默认仍为时钟。长按中的按键、
 图片删除确认与执行、
 语音会话、校时任务、设置门户和固件更新会暂停普通页面超时。图片删除确认页必须先松开
 发起长按的 `KEY`，再短按 `KEY` 删除；短按 `BOOT` 或 10 秒无操作取消。语音监听时，
@@ -197,7 +198,7 @@ microSD 不用于保存音频或其他运行数据。必须物理关机后再插
 | --- | --- | --- |
 | 状态 | RTC 与备用电源、SHTC3、电池、最近时间同步结果和当前 Wi-Fi 链路 | 按住 `KEY` 2 秒立即校时 |
 | 对话 | 本地安全指令，以及可选 AI 对话 Beta 的连接、转写、回复与续问 | 按住 `KEY` 2 秒，松开后开始一次会话 |
-| 设置 | 实际电源状态与原因、手动提前省电、时区、温度单位、播放音量、离线闹钟和本地设置门户 | 按住 `BOOT` 2 秒切换手动提前省电；按住 `KEY` 3 秒开启设置门户 |
+| 设置 | 实际电源状态与原因、时区、常驻显示、播放音量和离线闹钟 | 按住 `BOOT` 2 秒切换手动提前省电；按住 `KEY` 3 秒进入快捷设置，其中保留网页入口 |
 | 在线更新 | 当前版本、对应通道最新版本和最近检查结果 | 按住 `KEY` 2 秒检查或查看可用版本；确认页按住 3 秒安装 |
 
 | 状态 | 对话 |
@@ -268,8 +269,11 @@ MultiNet 指令识别，不会停在云端连接页等待网络。后端在整�
 “手动提前省电”的开与关，随后在原地应用，不需要开启热点；关闭手动请求不等于强制
 `NORMAL`，低电规则仍可能保持 `SAVING | LOW BAT`。应用完成后显示成功，暂时无法应用时
 显示等待重试。第二行页脚显示的是下一次长按会执行的 `MANUAL SAVING ON` 或
-`MANUAL SAVING OFF`，而不是重复当前状态。按住 `KEY` 3 秒的 `WEB SETTINGS` 会开启
-最多 5 分钟的临时 WPA2 设置门户，屏幕显示标准 Wi-Fi 二维码、随机密码和
+`MANUAL SAVING OFF`，而不是重复当前状态。v0.26.0 Beta 起按住 `KEY` 3 秒进入
+`QUICK SETTINGS`，直接修改音量、闹钟开关与常驻显示，也可选择 `WEB SETTINGS`
+打开网页；v0.25.0 及更早版本仍是长按 3 秒直接打开网页。
+完整按键与版本区别见[设备设置](device-settings.md)。网页入口会开启最多 5 分钟的临时
+WPA2 设置门户，屏幕显示标准 Wi-Fi 二维码、随机密码和
 `192.168.4.1`：
 
 若保存已经完成但运行态暂时无法切换，`POWER` 行显示手动目标与 `PENDING`，后台继续

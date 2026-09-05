@@ -45,6 +45,7 @@
 #include "page_state.h"
 #include "pcf85063.h"
 #include "power_manager.h"
+#include "quick_settings.h"
 #include "rtc_backup.h"
 #include "sd_image.h"
 #include "shtc3.h"
@@ -70,6 +71,7 @@ typedef enum {
     APP_DISPLAY_VOICE,
     APP_DISPLAY_ALARM,
     APP_DISPLAY_SETTINGS,
+    APP_DISPLAY_QUICK_SETTINGS,
     APP_DISPLAY_ONLINE_UPDATE,
     APP_DISPLAY_MANUAL_SYNC,
     APP_DISPLAY_MANUAL_SYNC_RESULT,
@@ -295,6 +297,19 @@ static bool image_delete_target_matches_status(
         .filename = status->filename,
     };
     return app_image_delete_target_matches(target, &current);
+}
+
+static app_page_t default_display_page(app_default_display_t display)
+{
+    switch (display) {
+    case APP_DEFAULT_DISPLAY_WEATHER:
+        return APP_PAGE_WEATHER;
+    case APP_DEFAULT_DISPLAY_IMAGE:
+        return APP_PAGE_IMAGE;
+    case APP_DEFAULT_DISPLAY_CLOCK:
+    default:
+        return APP_PAGE_HOME;
+    }
 }
 
 static uint32_t alarm_schedule_revision(const app_settings_t *settings)
@@ -1412,7 +1427,10 @@ void app_main(void)
                              BUTTON_LONG_PRESS_DISABLED_MS);
     app_page_state_t page_state;
     app_page_state_init(&page_state);
+    (void)app_page_state_set_default(
+        &page_state, default_display_page(settings.default_display));
     app_page_state_set_recovery_mode(&page_state, recovery_mode);
+    quick_settings_t quick_settings = {0};
     char recovery_reset[32] = {0};
     const char *recovery_phase = NULL;
     if (recovery_mode) {
@@ -1482,6 +1500,12 @@ void app_main(void)
         &page_state,
         image_bitmap_snapshot != NULL &&
             initial_sd_image_status.state == SD_IMAGE_STATE_READY);
+    if (!recovery_mode) {
+        app_page_state_go_default(&page_state);
+    }
+    bool startup_image_pending = !recovery_mode &&
+        settings.default_display == APP_DEFAULT_DISPLAY_IMAGE &&
+        initial_sd_image_status.state == SD_IMAGE_STATE_LOADING;
     sd_image_state_t previous_sd_image_state =
         initial_sd_image_status.state;
     uint32_t previous_sd_image_revision =
@@ -1636,6 +1660,13 @@ void app_main(void)
                 image_bitmap_snapshot != NULL &&
                 latest_sd_image_status.state == SD_IMAGE_STATE_READY;
             app_page_state_set_image_available(&page_state, image_ready);
+            if (startup_image_pending &&
+                latest_sd_image_status.state != SD_IMAGE_STATE_LOADING) {
+                if (app_page_state_current(&page_state) == APP_PAGE_HOME) {
+                    app_page_state_go_default(&page_state);
+                }
+                startup_image_pending = false;
+            }
             const bool state_changed =
                 latest_sd_image_status.state != previous_sd_image_state;
             previous_sd_image_state = latest_sd_image_status.state;
@@ -1980,6 +2011,9 @@ void app_main(void)
                 if (apply_error == ESP_OK) {
                     settings = snapshot.settings;
                     settings_generation = snapshot.generation;
+                    (void)app_page_state_set_default(
+                        &page_state,
+                        default_display_page(settings.default_display));
                     power_runtime = next_power_runtime;
                     power_policy = next_power_policy;
                     if (configured_power_changed) {
@@ -2076,6 +2110,14 @@ void app_main(void)
         const bool alarm_was_ringing =
             alarm_scheduler.state == ALARM_SCHEDULER_RINGING;
         const app_page_t input_page = app_page_state_current(&page_state);
+        if (quick_settings.active &&
+            (recovery_mode || input_page != APP_PAGE_SETTINGS ||
+             firmware_update_ui_active || gallery_download_ui_active ||
+             voice_session_active || manual_sync_ui != MANUAL_SYNC_UI_NONE)) {
+            quick_settings_close(&quick_settings);
+            dual_button_release_gate = true;
+            render_requested = true;
+        }
         if (app_image_delete_ui_state(&image_delete_ui) ==
                 APP_IMAGE_DELETE_UI_CONFIRMING &&
             (input_page != APP_PAGE_IMAGE ||
@@ -2092,10 +2134,16 @@ void app_main(void)
                      "image delete confirmation cancelled: image changed");
         }
         if (buttons_ready) {
-            configure_key_timing(&key_button_state, input_page,
-                                 online_update_status.state);
-            configure_boot_timing(&boot_button_state, input_page,
-                                  recovery_mode);
+            if (quick_settings.active) {
+                (void)button_state_set_action_timing(
+                    &key_button_state, QUICK_SETTINGS_HOLD_MS);
+                (void)button_state_set_action_timing(&boot_button_state, 0U);
+            } else {
+                configure_key_timing(&key_button_state, input_page,
+                                     online_update_status.state);
+                configure_boot_timing(&boot_button_state, input_page,
+                                      recovery_mode);
+            }
             key_pressed = board_key_is_pressed();
             boot_pressed = board_boot_is_pressed();
             key_event = button_state_update(
@@ -2111,6 +2159,9 @@ void app_main(void)
             key_pressed || key_debounced_pressed;
         const bool boot_pressed_or_debounced =
             boot_pressed || boot_debounced_pressed;
+        if (key_pressed_or_debounced || boot_pressed_or_debounced) {
+            startup_image_pending = false;
+        }
         if (key_pressed_or_debounced &&
             boot_pressed_or_debounced) {
             dual_button_release_gate = true;
@@ -2268,6 +2319,11 @@ void app_main(void)
         const bool alarm_button_events_suppressed =
             alarm_was_ringing || alarm_started_this_loop ||
             alarm_gate_was_blocking;
+
+        if (alarm_started_this_loop && quick_settings.active) {
+            quick_settings_close(&quick_settings);
+            render_requested = true;
+        }
 
         if (alarm_started_this_loop &&
             power_setting_ui != POWER_SETTING_UI_NONE) {
@@ -2539,6 +2595,76 @@ void app_main(void)
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
         }
+        if (quick_settings.active) {
+            const bool release_blocked = quick_settings_release_gate(
+                &quick_settings, key_pressed_or_debounced ||
+                                     boot_pressed_or_debounced);
+            if (!release_blocked && (key_event != BUTTON_EVENT_NONE ||
+                                     boot_event != BUTTON_EVENT_NONE)) {
+                app_settings_t latest_settings;
+                const bool settings_readable =
+                    app_settings_get(&latest_settings) == ESP_OK;
+                quick_settings_action_t action = QUICK_SETTINGS_ACTION_NONE;
+                if (boot_event == BUTTON_EVENT_SHORT_PRESS ||
+                    key_event == BUTTON_EVENT_SHORT_PRESS ||
+                    key_event == BUTTON_EVENT_LONG_PRESS) {
+                    const quick_settings_input_t menu_input =
+                        boot_event == BUTTON_EVENT_SHORT_PRESS
+                            ? QUICK_SETTINGS_BACK
+                            : key_event == BUTTON_EVENT_SHORT_PRESS
+                                  ? QUICK_SETTINGS_NEXT
+                                  : QUICK_SETTINGS_ACTIVATE;
+                    action = quick_settings_input(
+                        &quick_settings, menu_input,
+                        settings_readable ? &latest_settings : NULL,
+                        page_state.weather_enabled, page_state.image_available);
+                }
+                if (action == QUICK_SETTINGS_ACTION_SAVE) {
+                    app_setting_field_t field = APP_SETTING_VOLUME;
+                    uint8_t value = 0U;
+                    const esp_err_t save_error = quick_settings_save_request(
+                        &quick_settings, &field, &value)
+                            ? app_settings_save_field(field, value)
+                            : ESP_ERR_INVALID_ARG;
+                    quick_settings_save_result(&quick_settings,
+                                                save_error == ESP_OK);
+                    if (save_error == ESP_OK) {
+                        settings_refresh_requested = true;
+                        if (field == APP_SETTING_DEFAULT_DISPLAY) {
+                            (void)app_page_state_set_default(
+                                &page_state, default_display_page(
+                                    (app_default_display_t)value));
+                            quick_settings_close(&quick_settings);
+                            dual_button_release_gate = true;
+                            app_page_state_go_default(&page_state);
+                        }
+                    }
+                    ESP_LOGI(TAG, "quick setting field=%u save: %s",
+                             (unsigned)field, esp_err_to_name(save_error));
+                } else if (action == QUICK_SETTINGS_ACTION_OPEN_WEB) {
+                    const esp_err_t start_error = firmware_update_start();
+                    if (start_error == ESP_OK) {
+                        quick_settings_close(&quick_settings);
+                        dual_button_release_gate = true;
+                    } else {
+                        quick_settings.notice =
+                            QUICK_SETTINGS_NOTICE_UNAVAILABLE;
+                    }
+                    (void)firmware_update_get_status(&firmware_update_status);
+                    firmware_update_ui_active =
+                        firmware_update_status.state !=
+                        FIRMWARE_UPDATE_STATE_IDLE;
+                    previous_update_state = firmware_update_status.state;
+                    previous_update_percent = firmware_update_status.percent;
+                    ESP_LOGI(TAG, "quick settings web portal: %s",
+                             esp_err_to_name(start_error));
+                }
+                app_page_state_note_activity(&page_state);
+                render_requested = true;
+            }
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
+        }
         if (key_event == BUTTON_EVENT_SHORT_PRESS) {
             if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                 !firmware_update_ui_active &&
@@ -2598,7 +2724,7 @@ void app_main(void)
             render_requested = true;
             if (input_page == APP_PAGE_SETTINGS) {
                 ESP_LOGI(TAG,
-                         "KEY hold cancelled; settings portal not opened");
+                         "KEY hold cancelled; settings unchanged");
             } else if (input_page == APP_PAGE_ONLINE_UPDATE) {
                 ESP_LOGI(TAG,
                          "KEY hold cancelled; online update unchanged");
@@ -2801,13 +2927,18 @@ void app_main(void)
                        !online_update_busy &&
                        !online_update_confirmation_active &&
                        !boot_pressed_or_debounced) {
-                const esp_err_t start_error = firmware_update_start();
+                const esp_err_t start_error = recovery_mode
+                    ? firmware_update_start() : ESP_OK;
+                if (!recovery_mode) {
+                    quick_settings_open(&quick_settings);
+                }
                 if (start_error != ESP_OK) {
                     ESP_LOGW(TAG, "could not open settings portal: %s",
                              esp_err_to_name(start_error));
                 } else {
                     ESP_LOGI(TAG,
-                             "KEY long press: settings portal started");
+                             "KEY long press: %s opened",
+                             recovery_mode ? "recovery portal" : "quick settings");
                 }
                 (void)firmware_update_get_status(&firmware_update_status);
                 firmware_update_ui_active =
@@ -2965,12 +3096,12 @@ void app_main(void)
         const app_page_action_t boot_hold_action =
             app_page_boot_hold_action(input_page);
         const bool key_hold_prompt_active =
-            app_hold_prompt_allowed(
+            !quick_settings.active && app_hold_prompt_allowed(
                 &hold_prompt_context, key_hold_action,
                 boot_pressed_or_debounced) &&
             button_state_hold_prompt_active(&key_button_state);
         const bool boot_hold_prompt_active =
-            app_hold_prompt_allowed(
+            !quick_settings.active && app_hold_prompt_allowed(
                 &hold_prompt_context, boot_hold_action,
                 key_pressed_or_debounced) &&
             button_state_hold_prompt_active(&boot_button_state);
@@ -2992,9 +3123,11 @@ void app_main(void)
                           ONLINE_UPDATE_STATE_AVAILABLE
                       ? APP_HOLD_UPDATE_REVIEW
                       : APP_HOLD_UPDATE_CHECK;
-        const char *hold_title = app_hold_prompt_title(
-            active_hold_action, hold_update_intent,
-            settings.manual_saving_requested);
+        const char *hold_title = recovery_mode &&
+                active_hold_action == APP_PAGE_ACTION_OPEN_SETTINGS
+            ? "OPEN WEB SETTINGS"
+            : app_hold_prompt_title(active_hold_action, hold_update_intent,
+                                    settings.manual_saving_requested);
 
         const bool button_interaction_active =
             key_pressed || boot_pressed ||
@@ -3002,6 +3135,11 @@ void app_main(void)
             button_state_is_pressed(&boot_button_state);
         if (button_interaction_active) {
             app_page_state_note_activity(&page_state);
+        }
+        if (quick_settings_tick(&quick_settings, button_elapsed_ms,
+                                 button_interaction_active)) {
+            app_page_state_go_default(&page_state);
+            render_requested = true;
         }
 
         if (manual_sync_ui != MANUAL_SYNC_UI_NONE &&
@@ -3122,6 +3260,7 @@ void app_main(void)
             }
         }
         if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+            !quick_settings.active &&
             !hold_prompt_active &&
             !app_image_delete_ui_is_active(&image_delete_ui) &&
             power_setting_ui == POWER_SETTING_UI_NONE &&
@@ -3136,7 +3275,8 @@ void app_main(void)
             !button_interaction_active &&
             app_page_state_tick(&page_state, button_elapsed_ms)) {
             render_requested = true;
-            ESP_LOGI(TAG, "page timeout: returning home");
+            ESP_LOGI(TAG, "page timeout: returning to %s",
+                     page_name(app_page_state_current(&page_state)));
         }
 
         const bool startup_milestones_complete =
@@ -3547,7 +3687,8 @@ void app_main(void)
             ++cycle;
         }
 
-        if (!recovery_mode && automatic_update_check_pending &&
+        if (!recovery_mode && !quick_settings.active &&
+            automatic_update_check_pending &&
             power_policy.automatic_network &&
             online_update_error == ESP_OK &&
             network_status.state == NETWORK_TIME_STATE_SYNCHRONIZED &&
@@ -3587,6 +3728,37 @@ void app_main(void)
             }
             previous_display_mode = APP_DISPLAY_ALARM;
             previous_portal_seconds = 0U;
+        } else if (display_ready && quick_settings.active) {
+            const bool quick_hold_prompt = !quick_settings.release_required &&
+                !dual_button_release_gate && !alarm_button_events_suppressed &&
+                !boot_pressed_or_debounced &&
+                button_state_hold_prompt_active(&key_button_state);
+            const uint8_t quick_hold_seconds = (uint8_t)
+                button_state_hold_seconds_remaining(&key_button_state);
+            if (quick_hold_prompt) {
+                if (render_requested ||
+                    previous_display_mode != APP_DISPLAY_HOLD_PROMPT ||
+                    previous_portal_seconds != quick_hold_seconds) {
+                    display_show_hold_prompt(
+                        quick_settings_hold_title(&quick_settings),
+                        quick_hold_seconds);
+                }
+                previous_display_mode = APP_DISPLAY_HOLD_PROMPT;
+                previous_portal_seconds = quick_hold_seconds;
+            } else {
+                if (render_requested ||
+                    previous_display_mode != APP_DISPLAY_QUICK_SETTINGS) {
+                    app_settings_snapshot_t saved = {.settings = settings};
+                    (void)app_settings_get_snapshot(&saved);
+                    display_show_quick_settings(
+                        &quick_settings, &saved.settings,
+                        saved.generation != settings_generation,
+                        dashboard.time_valid,
+                        page_state.weather_enabled, page_state.image_available);
+                }
+                previous_display_mode = APP_DISPLAY_QUICK_SETTINGS;
+                previous_portal_seconds = 0U;
+            }
         } else if (display_ready &&
                    power_setting_ui != POWER_SETTING_UI_NONE) {
             if (render_requested ||
@@ -4011,9 +4183,10 @@ void app_main(void)
                         .power_apply_pending =
                             power_setting_apply_pending,
                         .utc_offset_minutes = settings.utc_offset_minutes,
-                        .temperature_fahrenheit =
-                            settings.temperature_unit ==
-                            APP_TEMPERATURE_UNIT_FAHRENHEIT,
+                        .default_display = settings.default_display,
+                        .default_display_available =
+                            app_page_state_default(&page_state) ==
+                            default_display_page(settings.default_display),
                         .playback_volume_percent =
                             settings.audio_playback_volume,
                         .alarm_enabled = settings.alarm_enabled,
@@ -4081,6 +4254,7 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_STATUS ||
                     previous_display_mode == APP_DISPLAY_VOICE ||
                     previous_display_mode == APP_DISPLAY_SETTINGS ||
+                    previous_display_mode == APP_DISPLAY_QUICK_SETTINGS ||
                     previous_display_mode == APP_DISPLAY_ALARM ||
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||
                     previous_display_mode == APP_DISPLAY_WEATHER ||

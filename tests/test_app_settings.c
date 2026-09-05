@@ -9,7 +9,7 @@ static void test_defaults_and_validation(void)
 {
     app_settings_t settings;
     app_settings_defaults(&settings);
-    assert(APP_SETTINGS_SCHEMA_VERSION == 6U);
+    assert(APP_SETTINGS_SCHEMA_VERSION == 7U);
     assert(settings.schema_version == APP_SETTINGS_SCHEMA_VERSION);
     assert(!settings.manual_saving_requested);
     assert(settings.utc_offset_minutes == 480);
@@ -20,6 +20,7 @@ static void test_defaults_and_validation(void)
     assert(settings.alarm_hour == 7U);
     assert(settings.alarm_minute == 30U);
     assert(settings.alarm_weekdays == APP_SETTINGS_ALARM_WEEKDAYS_MASK);
+    assert(settings.default_display == APP_DEFAULT_DISPLAY_CLOCK);
     assert(app_settings_validate(&settings));
 
     settings.manual_saving_requested = true;
@@ -106,6 +107,41 @@ static void test_timezone_format(void)
     assert(!app_settings_format_posix_tz(481, timezone, sizeof(timezone)));
     assert(!app_settings_format_posix_tz(480, timezone, 5U));
     assert(!app_settings_format_posix_tz(480, NULL, sizeof(timezone)));
+}
+
+static void test_scoped_edits(void)
+{
+    app_settings_t settings;
+    app_settings_defaults(&settings);
+    settings.manual_saving_requested = true;
+    settings.update_channel = APP_UPDATE_CHANNEL_BETA;
+    settings.utc_offset_minutes = -300;
+    settings.alarm_hour = 23U;
+    settings.alarm_minute = 42U;
+    settings.alarm_weekdays = APP_SETTINGS_ALARM_WEEKENDS_MASK;
+    assert(app_settings_set_field(&settings, APP_SETTING_VOLUME, 0U));
+    assert(settings.audio_playback_volume == 0U);
+    assert(app_settings_set_field(&settings, APP_SETTING_ALARM_ENABLED, 1U));
+    assert(settings.alarm_enabled);
+    assert(settings.alarm_hour == 23U && settings.alarm_minute == 42U);
+    assert(settings.alarm_weekdays == APP_SETTINGS_ALARM_WEEKENDS_MASK);
+    assert(app_settings_set_field(&settings, APP_SETTING_DEFAULT_DISPLAY,
+                                  APP_DEFAULT_DISPLAY_IMAGE));
+    assert(settings.default_display == APP_DEFAULT_DISPLAY_IMAGE);
+    assert(settings.manual_saving_requested);
+    assert(settings.update_channel == APP_UPDATE_CHANNEL_BETA);
+    assert(settings.utc_offset_minutes == -300);
+    const app_settings_t before = settings;
+    assert(!app_settings_set_field(&settings, APP_SETTING_VOLUME, 101U));
+    assert(!app_settings_set_field(&settings, APP_SETTING_ALARM_ENABLED, 2U));
+    assert(!app_settings_set_field(&settings, APP_SETTING_DEFAULT_DISPLAY, 3U));
+    assert(!app_settings_set_field(&settings, (app_setting_field_t)99, 0U));
+    assert(memcmp(&settings, &before, sizeof(settings)) == 0);
+    assert(!app_settings_set_field(NULL, APP_SETTING_VOLUME, 50U));
+    settings.default_display = (app_default_display_t)-1;
+    assert(!app_settings_validate(&settings));
+    settings.default_display = (app_default_display_t)3;
+    assert(!app_settings_validate(&settings));
 }
 
 static void test_power_policy_profiles(void)
@@ -356,6 +392,7 @@ static void assert_form(const char *form, bool manual_saving,
     app_settings_t base;
     app_settings_defaults(&base);
     base.manual_saving_requested = manual_saving;
+    base.default_display = APP_DEFAULT_DISPLAY_WEATHER;
     app_settings_t settings = {0};
     assert(app_settings_parse_form(form, strlen(form), &base, &settings));
     assert(settings.schema_version == APP_SETTINGS_SCHEMA_VERSION);
@@ -368,6 +405,7 @@ static void assert_form(const char *form, bool manual_saving,
     assert(settings.alarm_hour == alarm_hour);
     assert(settings.alarm_minute == alarm_minute);
     assert(settings.alarm_weekdays == alarm_weekdays);
+    assert(settings.default_display == APP_DEFAULT_DISPLAY_WEATHER);
 }
 
 static void test_form_parser_preserves_device_setting(void)
@@ -439,6 +477,7 @@ static void test_form_parser_preserves_device_setting(void)
 int main(void)
 {
     test_defaults_and_validation();
+    test_scoped_edits();
     test_legacy_power_mapping();
     test_timezone_format();
     test_power_policy_profiles();

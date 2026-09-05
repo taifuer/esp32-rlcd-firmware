@@ -25,6 +25,8 @@ esp_err_t app_settings_get_snapshot(app_settings_snapshot_t *snapshot);
 /* Convenience wrapper for callers which do not need change detection. */
 esp_err_t app_settings_get(app_settings_t *settings);
 esp_err_t app_settings_save(const app_settings_t *settings);
+/* Save exactly one device-editable field under the settings lock. */
+esp_err_t app_settings_save_field(app_setting_field_t field, uint8_t value);
 /* Atomically toggle only the persisted manual saving request while
  * preserving every other field from the latest record. */
 esp_err_t app_settings_toggle_manual_saving(bool *saved_requested);

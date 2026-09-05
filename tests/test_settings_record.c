@@ -38,6 +38,7 @@ static void assert_settings_equal(const app_settings_t *actual,
     assert(actual->alarm_hour == expected->alarm_hour);
     assert(actual->alarm_minute == expected->alarm_minute);
     assert(actual->alarm_weekdays == expected->alarm_weekdays);
+    assert(actual->default_display == expected->default_display);
 }
 
 static void test_codec_round_trip_and_layout(void)
@@ -52,7 +53,7 @@ static void test_codec_round_trip_and_layout(void)
     assert(encoded[1] == 'C');
     assert(encoded[2] == 'F');
     assert(encoded[3] == 'G');
-    assert(encoded[4] == 5U && encoded[5] == 0U);
+    assert(encoded[4] == 6U && encoded[5] == 0U);
     assert(encoded[6] == SETTINGS_RECORD_ENCODED_SIZE &&
            encoded[7] == 0U);
     assert(encoded[8] == 0x12U && encoded[9] == 0x34U &&
@@ -149,6 +150,45 @@ static void make_schema5_record(uint8_t legacy_power,
     put_legacy_u32(encoded, 28U, legacy_checksum(encoded, 28U));
 }
 
+static void test_schema6_migration_and_display_roundtrip(void)
+{
+    for (uint8_t value = 0U; value <= APP_DEFAULT_DISPLAY_IMAGE; ++value) {
+        app_settings_t settings = make_settings(39U, APP_UPDATE_CHANNEL_BETA);
+        settings.default_display = (app_default_display_t)value;
+        uint8_t encoded[SETTINGS_RECORD_ENCODED_SIZE];
+        assert(settings_record_encode(100U, &settings, encoded, sizeof(encoded)));
+        assert(encoded[25] == value);
+        settings_record_t decoded = {0};
+        assert(settings_record_decode(encoded, sizeof(encoded), &decoded));
+        assert_settings_equal(&decoded.settings, &settings);
+        assert(!settings_record_decode_schema6(encoded, sizeof(encoded), &decoded));
+        encoded[25] = 3U;
+        put_legacy_u32(encoded, 28U, legacy_checksum(encoded, 28U));
+        assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
+        /* v0.25.0 record: format 5, schema 6, reserved byte must not become
+         * a display preference. Every existing setting is retained. */
+        encoded[4] = 5U;
+        encoded[12] = 6U;
+        put_legacy_u32(encoded, 28U, legacy_checksum(encoded, 28U));
+        assert(settings_record_decode_schema6(encoded, sizeof(encoded), &decoded));
+        settings.default_display = APP_DEFAULT_DISPLAY_CLOCK;
+        assert_settings_equal(&decoded.settings, &settings);
+        assert(decoded.generation == 100U);
+        assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
+        encoded[18] ^= 1U;
+        assert(!settings_record_decode_schema6(encoded, sizeof(encoded), &decoded));
+        assert(!settings_record_decode_schema6(NULL, sizeof(encoded), &decoded));
+        assert(!settings_record_decode_schema6(encoded, sizeof(encoded), NULL));
+        assert(!settings_record_decode_schema6(encoded, sizeof(encoded) - 1U, &decoded));
+    }
+    assert(settings_record_select_migration_source(false, true, true, true,
+                                                   true, true) ==
+           SETTINGS_MIGRATION_SOURCE_SCHEMA6_RECORD);
+    assert(settings_record_select_migration_source(true, true, true, true,
+                                                   true, true) ==
+           SETTINGS_MIGRATION_SOURCE_CURRENT_RECORD);
+}
+
 static void test_schema5_record_migration(void)
 {
     const bool expected_manual[] = {false, true, false};
@@ -183,7 +223,7 @@ static void test_schema5_record_migration(void)
         assert(settings_record_encode(decoded.generation,
                                       &decoded.settings, canonical,
                                       sizeof(canonical)));
-        assert(canonical[4] == 5U);
+        assert(canonical[4] == 6U);
         assert(canonical[12] == APP_SETTINGS_SCHEMA_VERSION);
         assert(canonical[14] ==
                (expected_manual[legacy_power] ? 1U : 0U));
@@ -264,7 +304,7 @@ static void test_schema4_record_migration(void)
             assert(settings_record_encode(decoded.generation,
                                           &decoded.settings, canonical,
                                           sizeof(canonical)));
-            assert(canonical[4] == 5U);
+            assert(canonical[4] == 6U);
             assert(canonical[12] == APP_SETTINGS_SCHEMA_VERSION);
             assert(canonical[14] ==
                    (expected.manual_saving_requested ? 1U : 0U));
@@ -577,40 +617,41 @@ static void test_repair_plan(void)
 
 static void test_migration_source_priority(void)
 {
-    assert(settings_record_select_migration_source(true, true, true, true,
+    assert(settings_record_select_migration_source(true, false, true, true, true,
                                                    true) ==
            SETTINGS_MIGRATION_SOURCE_CURRENT_RECORD);
-    assert(settings_record_select_migration_source(true, false, false,
+    assert(settings_record_select_migration_source(true, false, false, false,
                                                    false, false) ==
            SETTINGS_MIGRATION_SOURCE_CURRENT_RECORD);
-    assert(settings_record_select_migration_source(false, true, true, true,
+    assert(settings_record_select_migration_source(false, false, true, true, true,
                                                    true) ==
            SETTINGS_MIGRATION_SOURCE_SCHEMA5_RECORD);
-    assert(settings_record_select_migration_source(false, true, false,
+    assert(settings_record_select_migration_source(false, false, true, false,
                                                    false, false) ==
            SETTINGS_MIGRATION_SOURCE_SCHEMA5_RECORD);
-    assert(settings_record_select_migration_source(false, false, true, true,
+    assert(settings_record_select_migration_source(false, false, false, true, true,
                                                    true) ==
            SETTINGS_MIGRATION_SOURCE_SCHEMA4_RECORD);
-    assert(settings_record_select_migration_source(false, false, true,
+    assert(settings_record_select_migration_source(false, false, false, true,
                                                    false, false) ==
            SETTINGS_MIGRATION_SOURCE_SCHEMA4_RECORD);
-    assert(settings_record_select_migration_source(false, false, false,
+    assert(settings_record_select_migration_source(false, false, false, false,
                                                    true, true) ==
            SETTINGS_MIGRATION_SOURCE_SCHEMA3_RECORD);
-    assert(settings_record_select_migration_source(false, false, false,
+    assert(settings_record_select_migration_source(false, false, false, false,
                                                    true, false) ==
            SETTINGS_MIGRATION_SOURCE_SCHEMA3_RECORD);
-    assert(settings_record_select_migration_source(false, false, false,
+    assert(settings_record_select_migration_source(false, false, false, false,
                                                    false, true) ==
            SETTINGS_MIGRATION_SOURCE_SCHEMA2_RECORD);
-    assert(settings_record_select_migration_source(false, false, false,
+    assert(settings_record_select_migration_source(false, false, false, false,
                                                    false, false) ==
            SETTINGS_MIGRATION_SOURCE_V1_FIELDS);
 }
 
 int main(void)
 {
+    test_schema6_migration_and_display_roundtrip();
     test_codec_round_trip_and_layout();
     test_current_manual_saving_round_trip();
     test_schema5_record_migration();

@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define APP_SETTINGS_SCHEMA_VERSION 6U
+#define APP_SETTINGS_SCHEMA_VERSION 7U
 #define APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES 480
 #define APP_SETTINGS_MIN_UTC_OFFSET_MINUTES (-720)
 #define APP_SETTINGS_MAX_UTC_OFFSET_MINUTES 840
@@ -39,6 +39,19 @@ typedef enum {
     APP_UPDATE_CHANNEL_BETA = 1,
 } app_update_channel_t;
 
+typedef enum {
+    APP_DEFAULT_DISPLAY_CLOCK = 0,
+    APP_DEFAULT_DISPLAY_WEATHER,
+    APP_DEFAULT_DISPLAY_IMAGE,
+} app_default_display_t;
+
+/* Device edits change one field in the latest record, never a stale copy. */
+typedef enum {
+    APP_SETTING_VOLUME = 0,
+    APP_SETTING_ALARM_ENABLED,
+    APP_SETTING_DEFAULT_DISPLAY,
+} app_setting_field_t;
+
 typedef struct {
     uint16_t schema_version;
     bool manual_saving_requested;
@@ -50,10 +63,14 @@ typedef struct {
     uint8_t alarm_hour;
     uint8_t alarm_minute;
     uint8_t alarm_weekdays;
+    app_default_display_t default_display;
 } app_settings_t;
 
 void app_settings_defaults(app_settings_t *settings);
 bool app_settings_validate(const app_settings_t *settings);
+bool app_settings_set_field(app_settings_t *settings,
+                             app_setting_field_t field, uint8_t value);
+const char *app_default_display_name(app_default_display_t display);
 /* Decode the persisted power value used by settings schema v1-v5. Schema
  * v1-v4 stored NORMAL=0/SAVING=1. Schema v5 added AUTO=0, SAVING=1 and
  * NORMAL=2. The current model keeps only a manual saving request: the

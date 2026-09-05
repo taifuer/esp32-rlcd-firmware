@@ -41,6 +41,7 @@ typedef enum {
 
 typedef struct {
     app_page_t current;
+    app_page_t default_page;
     uint32_t inactive_ms;
     bool weather_enabled;
     bool image_available;
@@ -49,6 +50,11 @@ typedef struct {
 
 void app_page_state_init(app_page_state_t *state);
 void app_page_state_go_home(app_page_state_t *state);
+/* Only CLOCK/HOME, WEATHER and IMAGE may be persistent. Preference is kept
+ * when temporarily unavailable; the effective destination is HOME. */
+bool app_page_state_set_default(app_page_state_t *state, app_page_t page);
+app_page_t app_page_state_default(const app_page_state_t *state);
+void app_page_state_go_default(app_page_state_t *state);
 bool app_page_state_open_page(app_page_state_t *state, app_page_t page);
 void app_page_state_set_image_available(app_page_state_t *state,
                                         bool available);
