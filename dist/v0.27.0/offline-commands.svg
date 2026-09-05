@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware offline commands page</title>
+  <desc id="description">A clean white-on-black chat page inviting the user to start one offline device command and showing the supported navigation examples.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="200" y="32" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">CHAT</text>
+    <text x="388" y="32" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">1/4</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+    <text x="200" y="88" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="22" font-weight="700">OFFLINE COMMANDS</text>
+    <text x="200" y="133" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="700">Hold KEY 2s for a command</text>
+    <g stroke="none" text-anchor="middle" font-family="WenQuanYi Zen Hei, Noto Sans CJK SC, sans-serif" font-size="16" font-weight="700">
+      <text x="200" y="183">回到主页　打开日历　查看状态</text>
+      <text x="200" y="216">打开图片　打开设置　取消</text>
+    </g>
+    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: HOME | KEY: SETTINGS</text>
+  </g>
+</svg>

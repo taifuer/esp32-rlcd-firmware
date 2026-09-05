@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware online update download progress</title>
+  <desc id="description">A minimal white-on-black online update screen with real download percentage, transferred size and power reminder.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="200" y="32" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">ONLINE UPDATE</text>
+    <text x="388" y="32" stroke="none" text-anchor="end" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">3/4</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+    <text x="200" y="105" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="700">DOWNLOADING 64%</text>
+    <rect x="40" y="138" width="320" height="22" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+    <rect x="42" y="140" width="202" height="18" stroke="none" shape-rendering="crispEdges"/>
+    <text x="200" y="198" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="700">993 / 1551 KiB</text>
+    <text x="200" y="225" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">Keep power connected</text>
+    <text x="200" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">DO NOT POWER OFF</text>
+  </g>
+</svg>

@@ -1,18 +1,18 @@
 # ESP32 RLCD Firmware
 
 面向 Waveshare ESP32-S3-RLCD-4.2 的原生 ESP-IDF 固件。它以离线可用的 RTC 时钟为
-核心，提供月历、环境信息、microSD 图片、离线语音指令、AI 对话、联网天气、网络校时
+核心，提供月历、环境信息、microSD 图片与音乐、离线语音指令、AI 对话、联网天气、网络校时
 和安全的双槽固件更新。
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.26.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.27.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
-当前源码为 **v0.27.0 候选**，将 microSD 音乐、设备菜单和设置门户优化合并为一版。
-音乐使用与实机验收见 [microSD 音乐播放](docs/music-player.md)；正式版仍为 v0.26.0。
+v0.27.0 新增本地音乐与门户歌曲管理，并简化设备设置。具体变化见
+[版本说明](dist/v0.27.0/README.md)，歌曲准备与操作见 [microSD 音乐播放](docs/music-player.md)。
 
 ## 效果预览
 
@@ -60,7 +60,7 @@
 - 四页系统中心依次为对话、设置、在线更新和状态；页脚直接写出下一目的地或动作，
   不再用泛化的“下一页”“系统”或“门户”代替用户目标；
 - 日常页、系统页与快捷菜单停留在用户选中的页面，不自动返回；正常开机仍进入时钟；
-- v0.27.0 候选新增 microSD 音乐：歌曲放入卡内的 rlcd/music/ 目录，支持 MP3 和
+- microSD 音乐：歌曲放入卡内的 rlcd/music/ 目录，支持 MP3 和
   16 位 PCM WAV；可播放、暂停、切歌及直接调音量，返回时钟后继续播放。
   设置门户可上传歌曲、查看列表、在设备播放和确认删除，无需反复取卡或重启；
 - “设置”页支持手动提前省电，设备端[快捷设置](docs/device-settings.md)可调音量、开关
@@ -102,7 +102,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.26.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.27.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -110,11 +110,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.26.0
+cd dist/v0.27.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.26.0/esp32-rlcd-firmware-v0.26.0-factory.bin \
+  --firmware dist/v0.27.0/esp32-rlcd-firmware-v0.27.0-factory.bin \
   --confirm
 ```
 
@@ -184,7 +184,7 @@ cd ../..
   数据与费用边界；
 - [天气 Beta](docs/weather.md)：QWeather 凭据、级联选址、刷新、离线缓存和费用边界；
 - [microSD 图片准备](docs/microsd-images.md)：FAT32、固定目录、图片格式、导入与管理边界；
-- [microSD 音乐播放](docs/music-player.md)：歌曲准备、按键和候选验收；
+- [microSD 音乐播放](docs/music-player.md)：歌曲上传、管理与设备播放；
 - [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉与交互原则；
 - [开发计划](docs/roadmap.md)：已经确定的后续版本范围与验收边界；
 - [开发与发布指南](docs/development.md)：依赖、版本、测试和 Release 流程；
