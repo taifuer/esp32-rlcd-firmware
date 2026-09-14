@@ -61,14 +61,14 @@ static void assert_footer_uses_concrete_targets(const char *footer)
 static void test_targeted_navigation_footers(void)
 {
     assert(strcmp(display_interaction_weather_footer(),
-                  "BOOT: CALENDAR | KEY: CHAT | HOLD KEY 2s: REFRESH") ==
+                  "BOOT: CALENDAR | KEY: SETTINGS | HOLD KEY 2s: REFRESH") ==
            0);
     assert(strcmp(display_interaction_calendar_footer(true, false),
-                  "BOOT: IMAGE | KEY: CHAT") == 0);
+                  "BOOT: IMAGE | KEY: SETTINGS") == 0);
     assert(strcmp(display_interaction_calendar_footer(false, false),
-                  "BOOT: HOME | KEY: CHAT") == 0);
+                  "BOOT: CHAT | KEY: SETTINGS") == 0);
     assert(strcmp(display_interaction_status_footer(),
-                  "BOOT: HOME | KEY: CHAT | HOLD KEY 2s: SYNC TIME") == 0);
+                  "BOOT: HOME | KEY: SETTINGS | HOLD KEY 2s: SYNC TIME") == 0);
     assert(strcmp(display_interaction_chat_footer(),
                   "BOOT: HOME | KEY: SETTINGS") == 0);
     assert(strcmp(display_interaction_chat_next_turn_footer(),
@@ -120,7 +120,7 @@ static void test_image_navigation_footer(void)
     char short_footer[12] = "stale";
 
     assert(strcmp(display_interaction_calendar_footer(false, true),
-                  "BOOT: MUSIC | KEY: CHAT") == 0);
+                  "BOOT: MUSIC | KEY: SETTINGS") == 0);
     assert(display_interaction_format_image_navigation(
         footer, sizeof(footer), 0U, 2U, true));
     assert(strcmp(footer, "BOOT: MUSIC | KEY: NEXT IMAGE | 1/2") == 0);
@@ -129,17 +129,17 @@ static void test_image_navigation_footer(void)
     assert(display_interaction_format_image_navigation(
         footer, sizeof(footer), 1U, 6U, false));
     assert(strcmp(footer,
-                  "BOOT: HOME | KEY: NEXT IMAGE | 2/6") == 0);
+                  "BOOT: CHAT | KEY: NEXT IMAGE | 2/6") == 0);
     assert_footer_uses_concrete_targets(footer);
 
     assert(display_interaction_format_image_navigation(
         footer, sizeof(footer), 99U, 6U, false));
     assert(strcmp(footer,
-                  "BOOT: HOME | KEY: NEXT IMAGE | 1/6") == 0);
+                  "BOOT: CHAT | KEY: NEXT IMAGE | 1/6") == 0);
 
     assert(display_interaction_format_image_navigation(
         footer, sizeof(footer), 0U, 1U, false));
-    assert(strcmp(footer, "BOOT: HOME | KEY: CHAT") == 0);
+    assert(strcmp(footer, "BOOT: CHAT | KEY: SETTINGS") == 0);
     assert_footer_uses_concrete_targets(footer);
 
     assert(!display_interaction_format_image_navigation(
@@ -162,14 +162,14 @@ static void test_settings_footer_names_next_saving_action(void)
 
     assert(strcmp(
                turn_on,
-               "HOLD BOOT 2s: MANUAL SAVING ON | HOLD KEY 2s: QUICK SETTINGS") ==
+               "HOLD BOOT 2s: MANUAL SAVING ON") ==
            0);
     assert(strcmp(
                turn_off,
-               "HOLD BOOT 2s: MANUAL SAVING OFF | HOLD KEY 2s: QUICK SETTINGS") ==
+               "HOLD BOOT 2s: MANUAL SAVING OFF") ==
            0);
-    assert(strstr(turn_on, "QUICK SETTINGS") != NULL);
-    assert(strstr(turn_off, "QUICK SETTINGS") != NULL);
+    assert(strstr(turn_on, "HOLD KEY") == NULL);
+    assert(strstr(turn_off, "HOLD KEY") == NULL);
     assert_footer_uses_concrete_targets(turn_on);
     assert_footer_uses_concrete_targets(turn_off);
 }

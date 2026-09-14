@@ -185,6 +185,7 @@ typedef struct {
     display_online_update_state_t state;
     bool recovery_mode;
     bool beta_channel;
+    bool target_changed;
     const char *current_version;
     const char *latest_version;
     const char *last_checked;
@@ -237,9 +238,7 @@ void display_show_image_delete_status(display_image_delete_status_t status);
 void display_show_system_status(const display_system_status_t *status);
 void display_show_voice(const display_voice_status_t *status);
 void display_show_settings(const display_settings_status_t *status);
-void display_show_quick_settings(const quick_settings_t *menu,
-                                 const app_settings_t *saved,
-                                 bool apply_pending, bool rtc_valid);
+void display_show_quick_settings(const quick_settings_t *menu);
 void display_show_alarm(const display_alarm_status_t *status);
 void display_show_online_update(const display_online_update_status_t *status);
 

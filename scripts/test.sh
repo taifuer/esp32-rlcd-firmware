@@ -40,6 +40,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_music_library"
 node tests/test_recovery_portal.mjs
 node tests/test_settings_portal.mjs
+node tests/test_device_navigation.mjs
 
 if [[ ! -f "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" ]]; then
   echo "未找到固定版本的 U8g2 字体测试依赖，请先执行: ./scripts/bootstrap.sh" >&2
@@ -320,6 +321,15 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   tests/test_online_update_policy.c \
   "${RLCD_TEST_TMP}/cJSON.o" -lm \
   -o "${RLCD_TEST_TMP}/test_online_update_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -D_POSIX_C_SOURCE=200809L -fsanitize=undefined -fno-sanitize-recover=all \
+  -Itests/online_update_stubs -Isrc/update/include \
+  -I"${RLCD_CJSON_DIR}/cJSON" \
+  src/update/online_update_manifest.c src/update/online_update_policy.c \
+  tests/test_online_update_service.c "${RLCD_TEST_TMP}/cJSON.o" -lm \
+  -o "${RLCD_TEST_TMP}/test_online_update_service"
+"${RLCD_TEST_TMP}/test_online_update_service"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/gallery -Isrc/image/include \

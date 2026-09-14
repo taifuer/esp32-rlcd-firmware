@@ -18,6 +18,23 @@ const javascript = html.match(/<script>([\s\S]*)<\/script>/)[1];
 new vm.Script(javascript);
 const ids = [...html.matchAll(/id="([^"]+)"/g)].map(match => match[1]);
 assert.equal(new Set(ids).size, ids.length, 'HTML IDs are unique');
+// Validate the actual C-embedded markup, not just the mock form map below.
+const markup = html.replace(/<script>[\s\S]*?<\/script>|<style>[\s\S]*?<\/style>/g, '');
+const stack = [], voidTags = new Set(['meta', 'input', 'hr', 'br', 'img', 'link']);
+for (const [, closing, tag] of markup.matchAll(/<(\/?)([a-z][a-z0-9]*)\b[^>]*>/g)) {
+  if (voidTags.has(tag)) continue;
+  if (closing) assert.equal(stack.pop(), tag, 'balanced portal HTML: ' + tag);
+  else stack.push(tag);
+}
+assert.deepEqual(stack, []);
+for (const [id, expected] of Object.entries({
+  settings: ['section', 'timezone', 'unit', 'volume'],
+  alarmForm: ['section', 'alarm_volume', 'alarm', 'alarm_hour', 'alarm_minute', 'alarm_days'],
+  updatesForm: ['section', 'updates'],
+})) {
+  const form = html.split('<form id="' + id + '"')[1].split('</form>')[0];
+  assert.deepEqual([...form.matchAll(/\bname="([^"]+)"/g)].map(match => match[1]), expected);
+}
 assert.match(html, /<footer>© .*target="_blank" rel="noopener noreferrer">ESP32 固件/);
 assert.match(html, /<details><summary class="section-toggle">天气/);
 assert.match(html, /<details><summary class="section-toggle">AI 对话 Beta/);
@@ -31,15 +48,22 @@ class Element {
   appendChild(child) { this.children.push(child); }
   removeChild(child) { this.children.splice(this.children.indexOf(child), 1); }
   get firstChild() { return this.children[0] || null; }
-  setAttribute() {}
+  attributes = {}; controls = [];
+  setAttribute(name, value) { this.attributes[name] = value; }
   focus() {}
-  querySelectorAll() { return settingsInputs; }
+  querySelectorAll() { return this.controls; }
 }
 const elements = Object.fromEntries(ids.map(id => [id, new Element()]));
 const days = [1, 2, 4, 8, 16, 32, 64].map(bit => Object.assign(new Element(), {dataset: {bit: String(bit)}}));
-const settingsNames = {timezone: 'timezone', unit: 'unit', volume: 'volume', alarmVolume: 'alarm_volume', alarm: 'alarm',
-  alarmHour: 'alarm_hour', alarmMinute: 'alarm_minute', alarmDays: 'alarm_days', updates: 'updates'};
-const settingsInputs = [...Object.keys(settingsNames).map(id => elements[id]), elements.alarmTime, ...days];
+const forms = {
+  settings: {section: 'general', names: {timezone: 'timezone', unit: 'unit', volume: 'volume'}},
+  alarmForm: {section: 'alarm', names: {alarmVolume: 'alarm_volume', alarm: 'alarm', alarmHour: 'alarm_hour', alarmMinute: 'alarm_minute', alarmDays: 'alarm_days'}},
+  updatesForm: {section: 'updates', names: {updates: 'updates'}},
+};
+for (const [id, form] of Object.entries(forms)) elements[id].controls = Object.keys(form.names).map(name => elements[name]);
+elements.alarmForm.controls.push(elements.alarmTime, elements.alarmPreview, ...days);
+elements.panelNetwork.hidden = elements.panelMedia.hidden = elements.panelMaintenance.hidden = true;
+elements.musicSection.open = true;
 elements.wifiForm.hidden = true;
 let state = {
   token: 'test-token', timezone: 480, unit: 'c', volume: 50, alarm_volume: 68, updates: 'stable',
@@ -92,8 +116,10 @@ const context = vm.createContext({
   FormData: class extends Map {
     constructor(form) {
       super();
-      assert.equal(form, elements.settings);
-      for (const [id, name] of Object.entries(settingsNames)) {
+      const definition = Object.entries(forms).find(([id]) => form === elements[id])?.[1];
+      assert.ok(definition, 'known independent form');
+      this.set('section', definition.section);
+      for (const [id, name] of Object.entries(definition.names)) {
         if (!elements[id].disabled) this.set(name, String(elements[id].value));
       }
     }
@@ -120,10 +146,23 @@ elements.wifiSsid.value = 'Unsaved network';
 state.volume = 70;
 await vm.runInContext("load('settings')", context);
 assert.equal(elements.volume.value, 70);
+assert.equal(elements.alarmVolume.value, 25, 'general refresh preserves alarm draft');
 assert.equal(elements.conversationKey.value, 'unsaved-test-key');
 assert.equal(elements.weatherKey.value, 'weather-test-key');
 assert.equal(elements.wifiSsid.value, 'Unsaved network');
 elements.volume.value = 90;
+elements.updates.value = 'beta';
+for (const name of ['Network', 'Media', 'Maintenance', 'General']) {
+  elements['nav' + name].onclick();
+  for (const section of ['General', 'Network', 'Media', 'Maintenance']) {
+    assert.equal(elements['panel' + section].hidden, section !== name);
+    assert.equal(elements['nav' + section].attributes['aria-pressed'], section === name ? 'true' : 'false');
+  }
+  assert.equal(elements.volume.value, 90);
+  assert.equal(elements.alarmVolume.value, 25);
+  assert.equal(elements.updates.value, 'beta');
+  assert.equal(elements.conversationKey.value, 'unsaved-test-key');
+}
 await vm.runInContext("load('images')", context);
 assert.equal(elements.volume.value, 90);
 assert.equal(elements.conversationKey.value, 'unsaved-test-key');
@@ -140,12 +179,30 @@ pendingPost = new Promise(resolve => { finishPost = resolve; });
 const submission = elements.settings.onsubmit({preventDefault() {}, target: elements.settings});
 assert.equal(elements.volume.disabled, true);
 assert.match(lastBody, /volume=90/); // serialize BEFORE disabling the current form
+assert.equal(new URLSearchParams(lastBody).get('section'), 'general');
+assert.doesNotMatch(lastBody, /alarm|updates/);
+assert.equal(elements.alarmVolume.disabled, false, 'saving general does not lock alarm');
 elements.conversationKey.value = 'edited-while-other-form-saves';
 finishPost();
 await submission;
 assert.equal(elements.volume.disabled, false);
 assert.equal(elements.conversationKey.value, 'edited-while-other-form-saves');
 pendingPost = null;
+elements.alarmTime.value = '08:45';
+await elements.alarmForm.onsubmit({preventDefault() {}, target: elements.alarmForm});
+assert.equal(lastPath, '/api/settings');
+assert.match(lastBody, /section=alarm/);
+assert.match(lastBody, /alarm_volume=25/);
+assert.match(lastBody, /alarm_hour=8&alarm_minute=45/);
+assert.doesNotMatch(lastBody, /timezone|unit|updates/);
+assert.equal(elements.updates.value, 'beta', 'alarm save leaves update draft untouched');
+const previousBody = lastBody;
+confirmed = false;
+await elements.updatesForm.onsubmit({preventDefault() {}, target: elements.updatesForm});
+assert.equal(lastBody, previousBody, 'Beta requires confirmation');
+confirmed = true;
+await elements.updatesForm.onsubmit({preventDefault() {}, target: elements.updatesForm});
+assert.equal(lastBody, 'section=updates&updates=beta');
 failPost = true;
 elements.volume.value = 42;
 await elements.settings.onsubmit({preventDefault() {}, target: elements.settings});

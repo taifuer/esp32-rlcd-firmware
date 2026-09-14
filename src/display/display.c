@@ -7,6 +7,7 @@
 #include "calendar_month.h"
 #include "display_interaction_model.h"
 #include "music_display_model.h"
+#include "settings_display_layout.h"
 #include "network_credentials.h"
 #include "qrcode.h"
 #include "u8g2.h"
@@ -44,7 +45,7 @@ enum {
     SETUP_QR_AREA_SIZE = 170,
     SETUP_QR_QUIET_MODULES = 4,
     SETUP_QR_MAX_SCALE = 5,
-    SYSTEM_PAGE_COUNT = 4,
+    SYSTEM_PAGE_COUNT = 3,
     SYSTEM_SIDE_MARGIN = 12,
     SYSTEM_TITLE_BASELINE_Y = 32,
     SYSTEM_DIVIDER_Y = 44,
@@ -158,20 +159,6 @@ static void draw_system_footer(const char *text)
                    BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(SYSTEM_FOOTER_BASELINE_Y, text);
-}
-
-static void draw_settings_footer(bool manual_saving_requested)
-{
-    u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN,
-                   SYSTEM_FOOTER_DIVIDER_Y,
-                   BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
-    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    draw_centered(270,
-                  display_interaction_settings_navigation_footer());
-    draw_centered(
-        294,
-        display_interaction_settings_action_footer(
-            manual_saving_requested));
 }
 
 static void draw_daily_footer(const char *text)
@@ -1347,7 +1334,7 @@ void display_show_music(const display_music_t *music)
     snprintf(value, sizeof(value), "VOLUME %u%%", (unsigned)music->volume);
     draw_centered(225, music->failed ? "CHECK FILE / CARD | KEY: RETRY" : value);
     u8g2_DrawHLine(s_u8g2, 12, 250, 376);
-    draw_centered(270, music->playing ? "BOOT: HOME | KEY: PAUSE" : "BOOT: HOME | KEY: PLAY");
+    draw_centered(270, music->playing ? "BOOT: CHAT | KEY: PAUSE" : "BOOT: CHAT | KEY: PLAY");
     draw_centered(294, "HOLD KEY 2s: NEXT | HOLD BOOT 2s: VOLUME");
     u8g2_SendBuffer(s_u8g2);
 }
@@ -1419,7 +1406,7 @@ void display_show_system_status(const display_system_status_t *status)
     }
 
     char value[64];
-    draw_system_header("STATUS", 4U);
+    draw_system_header("STATUS", 3U);
 
     if (!status->rtc_ready) {
         snprintf(value, sizeof(value), "NOT FOUND");
@@ -1496,7 +1483,7 @@ void display_show_voice(const display_voice_status_t *status)
 
     char value[48];
     const char *detail = status->detail != NULL ? status->detail : "";
-    draw_system_header("CHAT", 1U);
+    draw_system_header("CHAT", 0U);
     u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
 
     switch (status->state) {
@@ -1664,40 +1651,6 @@ void display_show_voice(const display_voice_status_t *status)
     u8g2_SendBuffer(s_u8g2);
 }
 
-static void format_utc_offset(char *buffer, size_t capacity,
-                              int16_t offset_minutes)
-{
-    if (buffer == NULL || capacity == 0U) {
-        return;
-    }
-
-    const int32_t signed_minutes = offset_minutes;
-    if (signed_minutes == 0) {
-        snprintf(buffer, capacity, "UTC");
-        return;
-    }
-
-    const uint32_t absolute_minutes =
-        (uint32_t)(signed_minutes < 0 ? -signed_minutes : signed_minutes);
-    snprintf(buffer, capacity, "UTC%c%02u:%02u",
-             signed_minutes < 0 ? '-' : '+',
-             (unsigned)(absolute_minutes / 60U),
-             (unsigned)(absolute_minutes % 60U));
-}
-
-static const char *alarm_repeat_name(uint8_t weekdays)
-{
-    switch (weekdays) {
-    case 0x7fU:
-        return "DAILY";
-    case 0x3eU:
-        return "MON-FRI";
-    case 0x41U:
-        return "WEEKENDS";
-    default:
-        return "CUSTOM";
-    }
-}
 
 void display_show_settings(const display_settings_status_t *status)
 {
@@ -1705,8 +1658,7 @@ void display_show_settings(const display_settings_status_t *status)
         return;
     }
 
-    char value[40];
-    draw_system_header("SETTINGS", status->recovery_mode ? 0U : 2U);
+    draw_system_header("SETTINGS", status->recovery_mode ? 0U : 1U);
 
     if (status->recovery_mode) {
         draw_system_row(112, "MODE", "RECOVERY");
@@ -1719,113 +1671,39 @@ void display_show_settings(const display_settings_status_t *status)
         return;
     }
 
-    const char *power;
-    if (status->power_apply_pending) {
-        power = status->effective_low_power ? "SAVING | PENDING"
-                                            : "NORMAL | PENDING";
-    } else if (status->usb_data_host_connected) {
-        power = "NORMAL | USB";
-    } else if (status->manual_saving_requested) {
-        power = "SAVING | MANUAL";
-    } else if (status->automatic_saving_active) {
-        power = "SAVING | LOW BAT";
-    } else {
-        power = status->effective_low_power ? "SAVING" : "NORMAL";
+    const char *power = settings_display_power_text(
+        status->power_apply_pending, status->effective_low_power,
+        status->usb_data_host_connected, status->manual_saving_requested,
+        status->automatic_saving_active);
+    settings_display_line_t lines[SETTINGS_DISPLAY_LINE_COUNT];
+    settings_display_lines(power, status->manual_saving_requested, lines);
+    for (unsigned i = 0; i < SETTINGS_DISPLAY_LINE_COUNT; ++i) {
+        u8g2_SetFont(s_u8g2, lines[i].font);
+        draw_centered(lines[i].baseline_y, lines[i].text);
     }
-    draw_system_row(72, "POWER", power);
-    format_utc_offset(value, sizeof(value), status->utc_offset_minutes);
-    draw_system_row(108, "TIME ZONE", value);
-    draw_system_row(144, "TEMP UNIT",
-                    status->temperature_fahrenheit ? "FAHRENHEIT" : "CELSIUS");
-    if (status->playback_volume_percent <= 100U) {
-        snprintf(value, sizeof(value), "%u %%",
-                 status->playback_volume_percent);
-    } else {
-        snprintf(value, sizeof(value), "NOT SET");
-    }
-    draw_system_row(180, "VOLUME", value);
-    if (status->alarm_enabled && status->alarm_hour < 24U &&
-        status->alarm_minute < 60U &&
-        (status->alarm_weekdays & 0x7fU) != 0U) {
-        snprintf(value, sizeof(value), "%02u:%02u %s",
-                 status->alarm_hour, status->alarm_minute,
-                 alarm_repeat_name(status->alarm_weekdays));
-    } else {
-        snprintf(value, sizeof(value), "OFF");
-    }
-    draw_system_row(216, "ALARM", value);
-
-    draw_settings_footer(status->manual_saving_requested);
+    u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN,
+                   SYSTEM_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
     u8g2_SendBuffer(s_u8g2);
 }
 
-void display_show_quick_settings(const quick_settings_t *menu,
-                                 const app_settings_t *saved,
-                                 bool apply_pending, bool rtc_valid)
+void display_show_quick_settings(const quick_settings_t *menu)
 {
-    if (s_u8g2 == NULL || menu == NULL || !menu->active || saved == NULL) {
-        return;
-    }
-    draw_system_header(menu->editing ? quick_settings_item_name(menu->item)
-                                     : "QUICK SETTINGS", 0U);
-    char value[40];
-    if (menu->editing) {
-        if (menu->item == QUICK_SETTINGS_VOLUME) {
-            snprintf(value, sizeof(value), "%u %%", menu->draft);
-        } else {
-            snprintf(value, sizeof(value), "%s", menu->draft ? "ON" : "OFF");
-        }
-        u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
-        draw_centered(137, value);
-        u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-        if (menu->item == QUICK_SETTINGS_VOLUME) {
-            draw_centered(188, menu->draft == 0U ? "MUTED" : "PLAYBACK VOLUME");
-            draw_centered(212, "LIVE PREVIEW | BOOT: CANCEL");
-        } else if (menu->item == QUICK_SETTINGS_ALARM) {
-            snprintf(value, sizeof(value), "%02u:%02u | %s",
-                     saved->alarm_hour, saved->alarm_minute,
-                     alarm_repeat_name(saved->alarm_weekdays));
-            draw_centered(188, value);
-            draw_centered(212, rtc_valid ? "CHANGE SCHEDULE IN WEB SETTINGS"
-                                        : "SET RTC TIME IN WEB SETTINGS");
-        }
-    } else {
-        for (unsigned index = 0U; index < QUICK_SETTINGS_ITEM_COUNT; ++index) {
-            const int baseline = 90 + (int)index * 54;
-            if ((unsigned)menu->item == index) {
-                u8g2_DrawBox(s_u8g2, 12, baseline - 25, 376, 36);
-                u8g2_SetDrawColor(s_u8g2, 0);
-            }
-            u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
-            u8g2_DrawStr(s_u8g2, 20, baseline,
-                         quick_settings_item_name((quick_settings_item_t)index));
-            if (index == QUICK_SETTINGS_VOLUME) {
-                snprintf(value, sizeof(value), "%u %%", saved->audio_playback_volume);
-            } else if (index == QUICK_SETTINGS_ALARM) {
-                snprintf(value, sizeof(value), "%s %02u:%02u",
-                         saved->alarm_enabled ? "ON" : "OFF",
-                         saved->alarm_hour, saved->alarm_minute);
-            } else {
-                snprintf(value, sizeof(value), ">");
-            }
-            draw_utf8_right_aligned(378, baseline, value);
-            u8g2_SetDrawColor(s_u8g2, 1);
-        }
-    }
+    if (s_u8g2 == NULL || menu == NULL || !menu->active) return;
+    draw_system_header("VOLUME", 0U);
+    char value[16];
+    snprintf(value, sizeof(value), "%u %%", menu->draft);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
+    draw_centered(137, value);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    if (menu->notice == QUICK_SETTINGS_NOTICE_SAVED) {
-        draw_centered(239, apply_pending ? "SAVED | APPLYING" : "SAVED");
-    } else if (menu->notice == QUICK_SETTINGS_NOTICE_SAVE_FAILED) {
+    draw_centered(188, menu->draft == 0U ? "MUTED" : "PLAYBACK VOLUME");
+    draw_centered(212, "LIVE PREVIEW");
+    if (menu->notice == QUICK_SETTINGS_NOTICE_SAVE_FAILED)
         draw_centered(239, "SAVE FAILED | TRY AGAIN OR CANCEL");
-    } else if (menu->notice == QUICK_SETTINGS_NOTICE_UNAVAILABLE) {
-        draw_centered(239, "NOT AVAILABLE | CHECK WEB SETTINGS");
-    }
     u8g2_DrawHLine(s_u8g2, SYSTEM_SIDE_MARGIN, SYSTEM_FOOTER_DIVIDER_Y,
                    BOARD_DISPLAY_WIDTH - 2 * SYSTEM_SIDE_MARGIN);
-    draw_centered(270, display_interaction_quick_navigation(menu->editing));
-    draw_centered(294, !menu->editing && menu->item == QUICK_SETTINGS_ALARM
-        ? "HOLD KEY 2s: TOGGLE ALARM"
-        : display_interaction_quick_action(menu->editing, menu->item == QUICK_SETTINGS_WEB));
+    draw_centered(270, display_interaction_volume_navigation());
+    draw_centered(294, display_interaction_volume_action());
     u8g2_SendBuffer(s_u8g2);
 }
 
@@ -1872,7 +1750,7 @@ void display_show_online_update(const display_online_update_status_t *status)
     format_version(latest_version, sizeof(latest_version),
                    status->latest_version);
 
-    draw_system_header("ONLINE UPDATE", status->recovery_mode ? 0U : 3U);
+    draw_system_header("ONLINE UPDATE", status->recovery_mode ? 0U : 2U);
     switch (status->state) {
     case DISPLAY_ONLINE_UPDATE_STATE_CHECKING:
         draw_online_update_modal(
@@ -1884,7 +1762,9 @@ void display_show_online_update(const display_online_update_status_t *status)
         snprintf(detail, sizeof(detail), "%s  ->  %s", current_version,
                  latest_version);
         draw_online_update_modal("INSTALL UPDATE?", detail,
-                                 "Keep power connected",
+                                 status->target_changed
+                                     ? "Target changed; confirm again"
+                                     : "Keep power connected",
                                  "BOOT: CANCEL | HOLD KEY 3s: INSTALL");
         break;
     case DISPLAY_ONLINE_UPDATE_STATE_CONNECTING:

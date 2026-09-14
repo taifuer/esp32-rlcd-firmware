@@ -6,14 +6,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.27.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.28.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
-v0.27.0 新增本地音乐与门户歌曲管理，并简化设备设置。开发中的
-[v0.28.0 候选](docs/v0.28-plan.md)继续优化网页访问、歌曲上传与音量；尚非正式版。具体变化见
-[版本说明](dist/v0.27.0/README.md)，歌曲准备与操作见 [microSD 音乐播放](docs/music-player.md)。
+v0.28.0 支持同 Wi-Fi 打开网页设置、歌曲多选上传与独立闹钟音量，简化设备页面和在线更新。
+具体变化见
+[版本说明](dist/v0.28.0/README.md)，歌曲准备与操作见 [microSD 音乐播放](docs/music-player.md)。
 
 ## 效果预览
 
@@ -28,12 +28,14 @@ v0.27.0 新增本地音乐与门户歌曲管理，并简化设备设置。开发
 | ![音乐播放页效果图](docs/assets/music.svg) | ![AI 对话页效果图](docs/assets/voice.svg) |
 | 设置 | 在线更新 |
 | ![设置页效果图](docs/assets/settings.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
-| 快捷设置 | 闹钟 |
-| ![快捷设置菜单](docs/assets/quick-settings.svg) | ![闹钟提醒](docs/assets/alarm.svg) |
+| 音量调节 | 闹钟 |
+| ![音乐音量调节](docs/assets/volume.svg) | ![闹钟提醒](docs/assets/alarm.svg) |
 
 效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
 
 ## 当前功能
+
+以下对应 v0.28.0。
 
 - 三段式首屏显示公历、农历、星期、温湿度、三态环境舒适度、电量和网络结果；`NORMAL`
   等大显示 `HH:MM:SS`，`SAVING` 显示 `HH:MM`；
@@ -58,17 +60,16 @@ v0.27.0 新增本地音乐与门户歌曲管理，并简化设备设置。开发
   完整结束。回答默认简短，回复文字会跟随本地播放进度滚动显示最新 4 行。停用、离线、
   省电或未配置时自动使用本地 MultiNet；默认模型为 `qwen3-omni-flash-realtime`，无需创建百炼应用或填写
   Workspace ID、App ID，也不使用唤醒词或后台监听；
-- 四页系统中心依次为对话、设置、在线更新和状态；页脚直接写出下一目的地或动作，
-  不再用泛化的“下一页”“系统”或“门户”代替用户目标；
-- 日常页、系统页与快捷菜单停留在用户选中的页面，不自动返回；正常开机仍进入时钟；
+- Chat 属于日常功能；系统页只留设置、在线更新和状态，页脚明确写出按键目的地；
+- 日常页与系统页停留在用户选中的页面，不自动返回；正常开机仍进入时钟；
 - microSD 音乐：歌曲放入卡内的 rlcd/music/ 目录，支持 MP3 和
   16 位 PCM WAV；可播放、暂停、切歌及直接调音量，返回时钟后继续播放。
-  设置门户可上传歌曲、查看列表、在设备播放和确认删除，无需反复取卡或重启；
-- “设置”页支持手动提前省电，设备端[快捷设置](docs/device-settings.md)可调音量、开关
-  闹钟和打开网页；设置门户支持时区、温度单位、播放音量、单个每周闹钟、
+  设置门户可多选并依次上传歌曲、查看列表、在设备播放和确认删除，无需反复取卡或重启；
+- “设置”页保留手动提前省电，按住 KEY 2 秒直接打开[网页设置](docs/device-settings.md)，
+  无需二级菜单；网页按常用、联网、媒体、维护分区，支持时区、温度单位、播放音量、单个每周闹钟、
   更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、天气、microSD 图片管理
   和本地 OTA；
-- 离线闹钟按 RTC 本地时间触发；到点播放提示音并显示大字提醒，支持停止、首次延后
+- 离线闹钟按 RTC 本地时间触发；到点播放提示音并显示大字提醒，音量独立于媒体播放，支持试听、停止、首次延后
   5 分钟和 60 秒自动停止，断网及 `SAVING` 模式不影响已保存规则；
 - `NORMAL` 保持 `HH:MM:SS` 和家庭 Wi-Fi 连接，并使用 ESP-IDF `WIFI_PS_MIN_MODEM`
   降低关联空闲功耗；`SAVING` 隐藏秒数、降低刷新和采样频率，并关闭自动校时与自动更新
@@ -86,7 +87,7 @@ v0.27.0 新增本地音乐与门户歌曲管理，并简化设备设置。开发
 
 `NORMAL` 自动校时完成后保持 Wi-Fi 连接，只在后台检查是否有更新，不会弹出页面、静默安装
 或打断日常功能。
-“在线更新”页按住 `KEY` 2 秒检查；发现新版本后再次按住 2 秒进入 `REVIEW`，确认页再按住
+“在线更新”页按住 `KEY` 2 秒刷新清单，有新版便显示确认页；松开后再按住
 3 秒才安装。正式固件默认只检查稳定版；开发者可在“设置”门户主动加入测试通道。完整说明见
 [界面与按键](docs/home-screen.md)和[固件安装与更新](docs/firmware-update.md)。
 
@@ -103,7 +104,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.27.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.28.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -111,11 +112,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.27.0
+cd dist/v0.28.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.27.0/esp32-rlcd-firmware-v0.27.0-factory.bin \
+  --firmware dist/v0.28.0/esp32-rlcd-firmware-v0.28.0-factory.bin \
   --confirm
 ```
 
@@ -180,7 +181,7 @@ cd ../..
 - [固件安装与更新](docs/firmware-update.md)：在线更新、设置门户本地 OTA、双槽与失败恢复；
 - [自动配网与网络校时](docs/network-time.md)：配网、NVS、SNTP 与离线行为；
 - [界面与按键](docs/home-screen.md)：首屏、月历、条件图片页、系统中心和实体按键；
-- [设备设置](docs/device-settings.md)：音量、闹钟快捷操作、网页入口与页面停留规则；
+- [设备设置](docs/device-settings.md)：网页入口、设置分区、设备端操作与页面停留规则；
 - [AI 对话 Beta](docs/cloud-voice.md)：API Key 获取、多轮交互、离线回退、
   数据与费用边界；
 - [天气 Beta](docs/weather.md)：QWeather 凭据、级联选址、刷新、离线缓存和费用边界；

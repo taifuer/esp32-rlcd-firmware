@@ -34,6 +34,8 @@ static const char EXPECTED_APP_PROJECT[] = "rlcd_firmware";
 static bool s_initialized;
 static bool s_cancel_requested;
 static bool s_manifest_valid;
+static bool s_task_active;
+static bool s_review_after_check;
 static online_update_channel_t s_channel = ONLINE_UPDATE_CHANNEL_STABLE;
 static online_update_manifest_t s_manifest;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -72,6 +74,15 @@ static bool cancellation_requested(void)
     cancelled = s_cancel_requested;
     portEXIT_CRITICAL(&s_lock);
     return cancelled;
+}
+
+static void finish_task(void)
+{
+    /* All network/HTTP cleanup must finish before a new task can be admitted. */
+    portENTER_CRITICAL(&s_lock);
+    s_task_active = false;
+    portEXIT_CRITICAL(&s_lock);
+    vTaskDelete(NULL);
 }
 
 static void checked_now_string(
@@ -227,86 +238,85 @@ static esp_err_t load_and_evaluate_manifest(
     return ESP_OK;
 }
 
+/* Caller owns s_lock. A successful HTTP request alone never authorizes OTA. */
+static void publish_manifest_result_locked(
+    esp_err_t error, online_update_error_t policy_error,
+    const online_update_manifest_t *manifest, const char *checked,
+    bool review, bool target_changed)
+{
+    s_manifest_valid = false;
+    memset(&s_manifest, 0, sizeof(s_manifest));
+    s_status.latest_version[0] = '\0';
+    s_status.target_changed = false;
+    snprintf(s_status.last_checked, sizeof(s_status.last_checked), "%s", checked);
+    s_status.last_error = error;
+    s_status.policy_error = policy_error;
+    s_status.downloaded_bytes = 0U;
+    s_status.total_bytes = 0U;
+    s_status.percent = 0U;
+    if (error != ESP_OK) {
+        s_status.state = ONLINE_UPDATE_STATE_FAILED;
+        return;
+    }
+    if (policy_error == ONLINE_UPDATE_ERROR_NONE) {
+        s_manifest = *manifest;
+        s_manifest_valid = true;
+        s_status.state = review ? ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION
+                                : ONLINE_UPDATE_STATE_AVAILABLE;
+        s_status.target_changed = target_changed;
+    } else if (policy_error == ONLINE_UPDATE_ERROR_SAME_VERSION ||
+               policy_error == ONLINE_UPDATE_ERROR_DOWNGRADE) {
+        s_status.state = ONLINE_UPDATE_STATE_UP_TO_DATE;
+    } else {
+        s_status.state = ONLINE_UPDATE_STATE_FAILED;
+        return;
+    }
+    snprintf(s_status.latest_version, sizeof(s_status.latest_version), "%s",
+             manifest->version);
+}
+
 static void check_task(void *argument)
 {
     (void)argument;
     esp_err_t error = network_time_begin_online_session(
         ONLINE_SESSION_TIMEOUT_MS);
+    const bool network_owned = error == ESP_OK;
     online_update_error_t policy_error = ONLINE_UPDATE_ERROR_NONE;
     online_update_manifest_t manifest = {0};
     if (error == ESP_OK && !cancellation_requested()) {
         error = load_and_evaluate_manifest(&manifest, &policy_error);
     }
+    if (network_owned) (void)network_time_end_online_session();
     char checked[ONLINE_FIRMWARE_UPDATE_CHECKED_CAPACITY] = {0};
     checked_now_string(checked);
 
-    bool cancelled = false;
-    online_update_state_t published_state = ONLINE_UPDATE_STATE_FAILED;
     portENTER_CRITICAL(&s_lock);
-    if (s_cancel_requested) {
-        cancelled = true;
+    const bool cancelled = s_cancel_requested || error == ESP_ERR_NOT_FINISHED;
+    if (cancelled) {
         s_status.state = s_manifest_valid ? ONLINE_UPDATE_STATE_AVAILABLE
-                                          : ONLINE_UPDATE_STATE_IDLE;
+                                         : ONLINE_UPDATE_STATE_IDLE;
         s_status.last_error = ESP_OK;
         s_status.policy_error = ONLINE_UPDATE_ERROR_NONE;
-    } else if (error == ESP_OK) {
-        memcpy(s_status.last_checked, checked, sizeof(checked));
-        if (policy_error == ONLINE_UPDATE_ERROR_NONE) {
-            s_manifest = manifest;
-            s_manifest_valid = true;
-            snprintf(s_status.latest_version,
-                     sizeof(s_status.latest_version), "%s",
-                     manifest.version);
-            s_status.state = ONLINE_UPDATE_STATE_AVAILABLE;
-            s_status.last_error = ESP_OK;
-            s_status.policy_error = ONLINE_UPDATE_ERROR_NONE;
-        } else if (policy_error == ONLINE_UPDATE_ERROR_SAME_VERSION ||
-                   policy_error == ONLINE_UPDATE_ERROR_DOWNGRADE) {
-            s_manifest_valid = false;
-            snprintf(s_status.latest_version,
-                     sizeof(s_status.latest_version), "%s",
-                     manifest.version);
-            s_status.state = ONLINE_UPDATE_STATE_UP_TO_DATE;
-            s_status.last_error = ESP_OK;
-            s_status.policy_error = policy_error;
-        } else {
-            s_manifest_valid = false;
-            s_status.state = ONLINE_UPDATE_STATE_FAILED;
-            s_status.last_error = ESP_OK;
-            s_status.policy_error = policy_error;
-        }
-    } else if (error == ESP_ERR_NOT_FINISHED) {
-        cancelled = true;
-        s_status.state = s_manifest_valid ? ONLINE_UPDATE_STATE_AVAILABLE
-                                          : ONLINE_UPDATE_STATE_IDLE;
-        s_status.last_error = ESP_OK;
-        s_status.policy_error = ONLINE_UPDATE_ERROR_NONE;
+        s_status.target_changed = false;
     } else {
-        s_manifest_valid = false;
-        memcpy(s_status.last_checked, checked, sizeof(checked));
-        s_status.state = ONLINE_UPDATE_STATE_FAILED;
-        s_status.last_error = error;
-        s_status.policy_error = policy_error;
+        publish_manifest_result_locked(error, policy_error, &manifest, checked,
+                                       s_review_after_check, false);
     }
-    published_state = s_status.state;
+    const online_update_state_t published_state = s_status.state;
     portEXIT_CRITICAL(&s_lock);
 
     if (cancelled) {
         ESP_LOGI(TAG, "online update check cancelled");
-    } else if (published_state == ONLINE_UPDATE_STATE_AVAILABLE) {
+    } else if (published_state == ONLINE_UPDATE_STATE_AVAILABLE ||
+               published_state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION) {
         ESP_LOGI(TAG, "online update available: v%s", manifest.version);
     } else if (published_state == ONLINE_UPDATE_STATE_UP_TO_DATE) {
-        ESP_LOGI(TAG, "firmware is up to date (remote v%s)",
-                 manifest.version);
-    } else if (error == ESP_OK) {
-        ESP_LOGW(TAG, "update manifest rejected: %s",
-                 online_update_error_name(policy_error));
+        ESP_LOGI(TAG, "firmware is up to date (remote v%s)", manifest.version);
     } else {
-        ESP_LOGW(TAG, "online update check failed: %s",
-                 esp_err_to_name(error));
+        ESP_LOGW(TAG, "update check failed: %s / %s", esp_err_to_name(error),
+                 online_update_error_name(policy_error));
     }
-    (void)network_time_end_online_session();
-    vTaskDelete(NULL);
+    finish_task();
 }
 
 static bool app_description_matches(const esp_app_desc_t *description,
@@ -541,23 +551,20 @@ cleanup:
 static void install_task(void *argument)
 {
     (void)argument;
-    set_state(ONLINE_UPDATE_STATE_CONNECTING, ESP_OK,
-              ONLINE_UPDATE_ERROR_NONE);
+    set_state(ONLINE_UPDATE_STATE_CONNECTING, ESP_OK, ONLINE_UPDATE_ERROR_NONE);
     esp_err_t error = audio_music_stop_and_wait(1500);
     if (error != ESP_OK) {
         set_state(ONLINE_UPDATE_STATE_FAILED, error, ONLINE_UPDATE_ERROR_NONE);
-        vTaskDelete(NULL);
+        finish_task();
         return;
     }
     error = network_time_begin_online_session(ONLINE_SESSION_TIMEOUT_MS);
+    const bool network_owned = error == ESP_OK;
     online_update_error_t policy_error = ONLINE_UPDATE_ERROR_NONE;
     online_update_manifest_t fresh = {0};
-    if (error == ESP_OK && cancellation_requested()) {
-        error = ESP_ERR_NOT_FINISHED;
-    }
-    if (error == ESP_OK) {
-        error = load_and_evaluate_manifest(&fresh, &policy_error);
-    }
+    if (error == ESP_OK && cancellation_requested()) error = ESP_ERR_NOT_FINISHED;
+    if (error == ESP_OK) error = load_and_evaluate_manifest(&fresh, &policy_error);
+
     bool target_unchanged = false;
     portENTER_CRITICAL(&s_lock);
     if (error == ESP_OK && policy_error == ONLINE_UPDATE_ERROR_NONE &&
@@ -570,19 +577,16 @@ static void install_task(void *argument)
                    sizeof(fresh.ota_sha256)) == 0;
     }
     portEXIT_CRITICAL(&s_lock);
+
+    bool image_installed = false;
     if (error == ESP_OK && policy_error == ONLINE_UPDATE_ERROR_NONE &&
-        !target_unchanged) {
-        policy_error = ONLINE_UPDATE_ERROR_MANIFEST_OTA;
-        error = ESP_ERR_INVALID_STATE;
-    }
-    if (error == ESP_OK && policy_error == ONLINE_UPDATE_ERROR_NONE) {
+        target_unchanged) {
         bool committed = false;
         portENTER_CRITICAL(&s_lock);
         if (!s_cancel_requested &&
             s_status.state == ONLINE_UPDATE_STATE_CONNECTING) {
             s_status.state = ONLINE_UPDATE_STATE_DOWNLOADING;
-            s_status.last_error = ESP_OK;
-            s_status.policy_error = ONLINE_UPDATE_ERROR_NONE;
+            s_status.target_changed = false;
             s_status.downloaded_bytes = 0U;
             s_status.total_bytes = fresh.ota_size;
             s_status.percent = 0U;
@@ -591,31 +595,42 @@ static void install_task(void *argument)
         portEXIT_CRITICAL(&s_lock);
         error = committed ? download_update(&fresh, &policy_error)
                           : ESP_ERR_NOT_FINISHED;
+        image_installed = committed && error == ESP_OK &&
+                          policy_error == ONLINE_UPDATE_ERROR_NONE;
     }
 
-    (void)network_time_end_online_session();
-    if (error == ESP_ERR_NOT_FINISHED) {
-        set_state(ONLINE_UPDATE_STATE_AVAILABLE, ESP_OK,
-                  ONLINE_UPDATE_ERROR_NONE);
+    if (network_owned) (void)network_time_end_online_session();
+    if (error == ESP_ERR_NOT_FINISHED || cancellation_requested()) {
+        set_state(ONLINE_UPDATE_STATE_AVAILABLE, ESP_OK, ONLINE_UPDATE_ERROR_NONE);
         ESP_LOGI(TAG, "online update installation cancelled before writing");
-        vTaskDelete(NULL);
+        finish_task();
         return;
     }
-    if (error == ESP_OK) {
+    /* A valid manifest is not proof of an installed image: end + boot selection
+     * must both have succeeded. Rejected or changed targets never reboot. */
+    if (image_installed) {
         set_progress(fresh.ota_size, fresh.ota_size);
-        set_state(ONLINE_UPDATE_STATE_SUCCESS, ESP_OK,
-                  ONLINE_UPDATE_ERROR_NONE);
+        set_state(ONLINE_UPDATE_STATE_SUCCESS, ESP_OK, ONLINE_UPDATE_ERROR_NONE);
         ESP_LOGI(TAG, "online update v%s verified; restarting", fresh.version);
         vTaskDelay(pdMS_TO_TICKS(ONLINE_RESTART_DELAY_MS));
         boot_recovery_note_planned_restart();
         esp_restart();
+        return;
     }
-
-    set_state(ONLINE_UPDATE_STATE_FAILED, error, policy_error);
-    ESP_LOGE(TAG, "online update failed: %s / %s",
-             esp_err_to_name(error),
-             online_update_error_name(policy_error));
-    vTaskDelete(NULL);
+    char checked[ONLINE_FIRMWARE_UPDATE_CHECKED_CAPACITY] = {0};
+    checked_now_string(checked);
+    portENTER_CRITICAL(&s_lock);
+    publish_manifest_result_locked(error, policy_error, &fresh, checked,
+                                   true, !target_unchanged);
+    portEXIT_CRITICAL(&s_lock);
+    if (error == ESP_OK && policy_error == ONLINE_UPDATE_ERROR_NONE) {
+        ESP_LOGI(TAG, "update target changed to v%s; confirmation required",
+                 fresh.version);
+    } else {
+        ESP_LOGW(TAG, "online update not installed: %s / %s",
+                 esp_err_to_name(error), online_update_error_name(policy_error));
+    }
+    finish_task();
 }
 
 esp_err_t online_firmware_update_init(const char *current_version,
@@ -656,7 +671,7 @@ esp_err_t online_firmware_update_set_beta_channel(
         online_update_select_channel(beta_updates_enabled);
     bool changed = false;
     portENTER_CRITICAL(&s_lock);
-    if (online_update_state_is_busy(s_status.state) ||
+    if (s_task_active || online_update_state_is_busy(s_status.state) ||
         s_status.state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION) {
         portEXIT_CRITICAL(&s_lock);
         return ESP_ERR_INVALID_STATE;
@@ -672,6 +687,7 @@ esp_err_t online_firmware_update_set_beta_channel(
         s_status.downloaded_bytes = 0U;
         s_status.total_bytes = 0U;
         s_status.percent = 0U;
+        s_status.target_changed = false;
         s_status.beta_channel =
             channel == ONLINE_UPDATE_CHANNEL_TESTING;
         memset(s_status.latest_version, 0,
@@ -689,7 +705,7 @@ esp_err_t online_firmware_update_set_beta_channel(
     return ESP_OK;
 }
 
-esp_err_t online_firmware_update_request_check(void)
+static esp_err_t request_check(bool review)
 {
     if (!s_initialized) {
         return ESP_ERR_INVALID_STATE;
@@ -697,15 +713,18 @@ esp_err_t online_firmware_update_request_check(void)
     esp_err_t result = ESP_OK;
     portENTER_CRITICAL(&s_lock);
     const online_update_state_t state = s_status.state;
-    if (online_update_state_is_busy(state) ||
+    if (s_task_active || online_update_state_is_busy(state) ||
         state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION) {
         result = ESP_ERR_INVALID_STATE;
     } else {
+        s_task_active = true;
+        s_review_after_check = review;
         if (state != ONLINE_UPDATE_STATE_AVAILABLE) {
             s_manifest_valid = false;
         }
         s_cancel_requested = false;
         s_status.state = ONLINE_UPDATE_STATE_CHECKING;
+        s_status.target_changed = false;
         s_status.last_error = ESP_OK;
         s_status.policy_error = ONLINE_UPDATE_ERROR_NONE;
         s_status.downloaded_bytes = 0U;
@@ -720,27 +739,22 @@ esp_err_t online_firmware_update_request_check(void)
         pdPASS) {
         set_state(ONLINE_UPDATE_STATE_FAILED, ESP_ERR_NO_MEM,
                   ONLINE_UPDATE_ERROR_NONE);
+        portENTER_CRITICAL(&s_lock);
+        s_task_active = false;
+        portEXIT_CRITICAL(&s_lock);
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
 }
 
+esp_err_t online_firmware_update_request_check(void)
+{
+    return request_check(false);
+}
+
 esp_err_t online_firmware_update_request_confirmation(void)
 {
-    if (!s_initialized) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    esp_err_t result = ESP_ERR_INVALID_STATE;
-    portENTER_CRITICAL(&s_lock);
-    if (s_status.state == ONLINE_UPDATE_STATE_AVAILABLE &&
-        s_manifest_valid) {
-        s_status.state = ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION;
-        s_status.last_error = ESP_OK;
-        s_status.policy_error = ONLINE_UPDATE_ERROR_NONE;
-        result = ESP_OK;
-    }
-    portEXIT_CRITICAL(&s_lock);
-    return result;
+    return request_check(true);
 }
 
 esp_err_t online_firmware_update_start_install(void)
@@ -750,8 +764,10 @@ esp_err_t online_firmware_update_start_install(void)
     }
     esp_err_t result = ESP_ERR_INVALID_STATE;
     portENTER_CRITICAL(&s_lock);
-    if (s_status.state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION &&
+    if (!s_task_active &&
+        s_status.state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION &&
         s_manifest_valid) {
+        s_task_active = true;
         s_cancel_requested = false;
         s_status.state = ONLINE_UPDATE_STATE_CONNECTING;
         s_status.last_error = ESP_OK;
@@ -766,6 +782,9 @@ esp_err_t online_firmware_update_start_install(void)
         pdPASS) {
         set_state(ONLINE_UPDATE_STATE_FAILED, ESP_ERR_NO_MEM,
                   ONLINE_UPDATE_ERROR_NONE);
+        portENTER_CRITICAL(&s_lock);
+        s_task_active = false;
+        portEXIT_CRITICAL(&s_lock);
         return ESP_ERR_NO_MEM;
     }
     return ESP_OK;
@@ -777,6 +796,7 @@ esp_err_t online_firmware_update_cancel(void)
     portENTER_CRITICAL(&s_lock);
     if (s_status.state == ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION) {
         s_status.state = ONLINE_UPDATE_STATE_AVAILABLE;
+        s_status.target_changed = false;
         s_status.last_error = ESP_OK;
         s_status.policy_error = ONLINE_UPDATE_ERROR_NONE;
         result = ESP_OK;

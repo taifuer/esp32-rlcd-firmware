@@ -42,6 +42,9 @@ static void test_semver(void)
     int result = 0;
 
     expect_comparison("0.10.0", "0.9.0", 1);
+    expect_comparison("0.28.0-dev.2", "0.28.0-dev.1", 1);
+    expect_comparison("0.28.0-dev.2", "0.27.0", 1);
+    expect_comparison("0.27.0", "0.27.0-dev.2", 1);
     expect_comparison("1.0.0-dev", "1.0.0-rc.1", -1);
     expect_comparison("1.0.0-rc.2", "1.0.0-rc.10", -1);
     expect_comparison("1.0.0-rc.1", "1.0.0", -1);

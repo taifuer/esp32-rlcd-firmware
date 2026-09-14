@@ -23,6 +23,7 @@ typedef struct {
     size_t total_bytes;
     uint8_t percent;
     bool beta_channel;
+    bool target_changed;
     char current_version[ONLINE_FIRMWARE_UPDATE_VERSION_CAPACITY];
     char latest_version[ONLINE_FIRMWARE_UPDATE_VERSION_CAPACITY];
     char last_checked[ONLINE_FIRMWARE_UPDATE_CHECKED_CAPACITY];
@@ -34,6 +35,8 @@ esp_err_t online_firmware_update_init(const char *current_version,
 esp_err_t online_firmware_update_set_beta_channel(
     bool beta_updates_enabled);
 esp_err_t online_firmware_update_request_check(void);
+/* Fetch the current channel again before showing an install confirmation.
+ * Background checks never open confirmation; neither path installs anything. */
 esp_err_t online_firmware_update_request_confirmation(void);
 esp_err_t online_firmware_update_start_install(void);
 esp_err_t online_firmware_update_cancel(void);

@@ -10,13 +10,6 @@ extern "C" {
 #define QUICK_SETTINGS_EDIT_TIMEOUT_MS 30000U
 
 typedef enum {
-    QUICK_SETTINGS_VOLUME = 0,
-    QUICK_SETTINGS_ALARM,
-    QUICK_SETTINGS_WEB,
-    QUICK_SETTINGS_ITEM_COUNT,
-} quick_settings_item_t;
-
-typedef enum {
     QUICK_SETTINGS_NEXT = 0,
     QUICK_SETTINGS_ACTIVATE,
     QUICK_SETTINGS_BACK,
@@ -25,28 +18,22 @@ typedef enum {
 typedef enum {
     QUICK_SETTINGS_ACTION_NONE = 0,
     QUICK_SETTINGS_ACTION_SAVE,
-    QUICK_SETTINGS_ACTION_OPEN_WEB,
 } quick_settings_action_t;
 
 typedef enum {
     QUICK_SETTINGS_NOTICE_NONE = 0,
-    QUICK_SETTINGS_NOTICE_SAVED,
     QUICK_SETTINGS_NOTICE_SAVE_FAILED,
-    QUICK_SETTINGS_NOTICE_UNAVAILABLE,
 } quick_settings_notice_t;
 
 typedef struct {
     bool active;
-    bool editing;
     bool release_required;
-    bool volume_only;
-    quick_settings_item_t item;
     uint8_t draft;
     uint32_t inactive_ms;
     quick_settings_notice_t notice;
 } quick_settings_t;
 
-void quick_settings_open(quick_settings_t *menu);
+/* Contextual music-volume editor; device settings open the web directly. */
 bool quick_settings_open_volume(quick_settings_t *menu, const app_settings_t *latest);
 void quick_settings_close(quick_settings_t *menu);
 uint8_t quick_settings_playback_volume(const quick_settings_t *menu,
@@ -55,16 +42,14 @@ uint8_t quick_settings_playback_volume(const quick_settings_t *menu,
  * including the frame which observes its release. */
 bool quick_settings_release_gate(quick_settings_t *menu, bool any_pressed);
 quick_settings_action_t quick_settings_input(
-    quick_settings_t *menu, quick_settings_input_t input,
-    const app_settings_t *latest);
+    quick_settings_t *menu, quick_settings_input_t input);
 bool quick_settings_save_request(const quick_settings_t *menu,
                                   app_setting_field_t *field, uint8_t *value);
 void quick_settings_save_result(quick_settings_t *menu, bool success);
-/* Only an unsaved editor expires, returning to the menu. Browsing stays. */
+/* An unsaved editor expires back to the music page without saving. */
 bool quick_settings_tick(quick_settings_t *menu, uint32_t elapsed_ms,
                           bool any_pressed);
-const char *quick_settings_item_name(quick_settings_item_t item);
-const char *quick_settings_hold_title(const quick_settings_t *menu);
+const char *quick_settings_hold_title(void);
 
 #ifdef __cplusplus
 }

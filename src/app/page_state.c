@@ -17,6 +17,8 @@ static app_page_t next_daily_page(const app_page_state_t *state)
     if ((state->current == APP_PAGE_CALENDAR || state->current == APP_PAGE_IMAGE) && state->music_available) {
         return APP_PAGE_MUSIC;
     }
+    if (state->current == APP_PAGE_CALENDAR || state->current == APP_PAGE_IMAGE ||
+        state->current == APP_PAGE_MUSIC) return APP_PAGE_VOICE;
     return APP_PAGE_HOME;
 }
 
@@ -24,8 +26,6 @@ static app_page_t next_system_page(app_page_t page)
 {
     switch (page) {
     case APP_PAGE_STATUS:
-        return APP_PAGE_VOICE;
-    case APP_PAGE_VOICE:
         return APP_PAGE_SETTINGS;
     case APP_PAGE_SETTINGS:
         return APP_PAGE_ONLINE_UPDATE;
@@ -115,12 +115,14 @@ app_page_t app_page_state_current(const app_page_state_t *state)
 bool app_page_is_daily(app_page_t page)
 {
     return page == APP_PAGE_HOME || page == APP_PAGE_WEATHER ||
-           page == APP_PAGE_CALENDAR || page == APP_PAGE_IMAGE || page == APP_PAGE_MUSIC;
+           page == APP_PAGE_CALENDAR || page == APP_PAGE_IMAGE ||
+           page == APP_PAGE_MUSIC || page == APP_PAGE_VOICE;
 }
 
 bool app_page_is_system(app_page_t page)
 {
-    return page >= APP_PAGE_STATUS && page <= APP_PAGE_ONLINE_UPDATE;
+    return page == APP_PAGE_SETTINGS || page == APP_PAGE_ONLINE_UPDATE ||
+           page == APP_PAGE_STATUS;
 }
 
 app_page_action_t app_page_key_hold_action(app_page_t page)
@@ -222,5 +224,5 @@ void app_page_state_key_short_press(app_page_state_t *state)
     }
     state->current = app_page_is_system(state->current)
                          ? next_system_page(state->current)
-                         : APP_PAGE_VOICE;
+                         : APP_PAGE_SETTINGS;
 }

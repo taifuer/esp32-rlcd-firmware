@@ -3,7 +3,7 @@
 本文面向只想使用发布固件、不参与源码开发的用户。开发者请参阅
 [开发与发布指南](development.md)和[开发烧录指南](flashing.md)。
 
-本文的下载与烧录示例以 v0.27.0 正式版为准；功能交互同时跟随当前源码。
+本文的下载与烧录示例以 v0.28.0 正式版为准；功能交互同时跟随当前源码。
 AI 对话仍是默认关闭的 Beta 功能；未开启、离线或处于 `SAVING` 时继续使用本地
 MultiNet 指令识别。
 
@@ -12,7 +12,7 @@ MultiNet 指令识别。
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.27.0/`](../dist/v0.27.0/)。
+[`dist/v0.28.0/`](../dist/v0.28.0/)。
 GitHub Releases 只保留最新正式版本，历史版本继续在 `dist/` 中按版本保存。
 v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明；v0.18.0
 起还包含离线语音模型。
@@ -25,13 +25,13 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 
 | 文件 | 用途 | 安装方式 |
 | --- | --- | --- |
-| `esp32-rlcd-firmware-v0.27.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，包含语音模型并清除 NVS |
-| `esp32-rlcd-firmware-v0.27.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
-| `esp32-rlcd-firmware-v0.27.0-model.bin` | 为旧设备补装自 v0.18.0 起提供的离线语音模型 | 仅与同版本 OTA 通过项目 USB 脚本写入，不可单独启动或上传网页 |
+| `esp32-rlcd-firmware-v0.28.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，包含语音模型并清除 NVS |
+| `esp32-rlcd-firmware-v0.28.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
+| `esp32-rlcd-firmware-v0.28.0-model.bin` | 为旧设备补装自 v0.18.0 起提供的离线语音模型 | 仅与同版本 OTA 通过项目 USB 脚本写入，不可单独启动或上传网页 |
 
 目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
 参数；全部发布二进制的 SHA-256 见
-[`dist/v0.27.0/SHA256SUMS`](../dist/v0.27.0/SHA256SUMS)。
+[`dist/v0.28.0/SHA256SUMS`](../dist/v0.28.0/SHA256SUMS)。
 
 不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
 镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
@@ -40,13 +40,13 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 ### 从旧版本升级
 
 v0.7.0—v0.9.0 没有在线更新客户端，可从原系统中心最后一页的本地更新入口上传
-v0.27.0 `-ota.bin`，或使用 USB 写入。v0.10.0 及更新版本可直接从 `ONLINE UPDATE`
+v0.28.0 `-ota.bin`，或使用 USB 写入。v0.10.0 及更新版本可直接从 `ONLINE UPDATE`
 升级到当前稳定版，不需要逐版本安装；v0.6.0 及更早版本必须使用 Factory 固件完整安装。
 
 在线更新和网页本地 OTA 只更新应用，不写语音模型。从 v0.16.0 等旧正式版升级后，时钟、
 低功耗及其他功能可以正常使用，但对话页会提示模型不可用。要使用离线语音指令，可执行
 一次“USB 应用与模型更新”；该方法保留 Wi-Fi 和其他 NVS 设置。首次安装或允许重新配网时，
-直接写入 v0.27.0 Factory 即可同时安装应用和模型。
+直接写入 v0.28.0 Factory 即可同时安装应用和模型。
 
 设备默认只检查 `stable.json`；只有在设置门户明确开启 Beta 固件更新后才检查
 `testing.json`，版本名本身不会切换通道。联网后的自动流程只记录检查结果，不会自动下载
@@ -83,7 +83,7 @@ v0.27.0 `-ota.bin`，或使用 USB 写入。v0.10.0 及更新版本可直接从 
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.27.0
+cd dist/v0.28.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -91,18 +91,18 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.27.0/esp32-rlcd-firmware-v0.27.0-factory.bin
-shasum -a 256 dist/v0.27.0/esp32-rlcd-firmware-v0.27.0-ota.bin
-shasum -a 256 dist/v0.27.0/esp32-rlcd-firmware-v0.27.0-model.bin
+shasum -a 256 dist/v0.28.0/esp32-rlcd-firmware-v0.28.0-factory.bin
+shasum -a 256 dist/v0.28.0/esp32-rlcd-firmware-v0.28.0-ota.bin
+shasum -a 256 dist/v0.28.0/esp32-rlcd-firmware-v0.28.0-model.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.27.0\esp32-rlcd-firmware-v0.27.0-factory.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.27.0\esp32-rlcd-firmware-v0.27.0-ota.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.27.0\esp32-rlcd-firmware-v0.27.0-model.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.27.0\SHA256SUMS
+(Get-FileHash .\dist\v0.28.0\esp32-rlcd-firmware-v0.28.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.28.0\esp32-rlcd-firmware-v0.28.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.28.0\esp32-rlcd-firmware-v0.28.0-model.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.28.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -122,7 +122,7 @@ Get-Content .\dist\v0.27.0\SHA256SUMS
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.27.0/esp32-rlcd-firmware-v0.27.0-factory.bin \
+  --firmware dist/v0.28.0/esp32-rlcd-firmware-v0.28.0-factory.bin \
   --confirm
 ```
 
@@ -163,7 +163,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.27.0\esp32-rlcd-firmware-v0.27.0-factory.bin
+  0x0 .\dist\v0.28.0\esp32-rlcd-firmware-v0.28.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -181,7 +181,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.27.0/esp32-rlcd-firmware-v0.27.0-factory.bin
+  0x0 dist/v0.28.0/esp32-rlcd-firmware-v0.28.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -198,13 +198,13 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
 ## 旧设备补装离线语音模型
 
 已经运行 v0.7.0 或更新版本、并且希望保留 Wi-Fi 与设备偏好的设备，可通过 Windows + WSL
-一次写入 v0.27.0 应用和同版本模型。离线语音模型自 v0.18.0 起提供。先把 OTA、模型和
-`SHA256SUMS` 放在同一目录；从 Release 下载或使用仓库 `dist/v0.27.0/` 即已满足这一
+一次写入 v0.28.0 应用和同版本模型。离线语音模型自 v0.18.0 起提供。先把 OTA、模型和
+`SHA256SUMS` 放在同一目录；从 Release 下载或使用仓库 `dist/v0.28.0/` 即已满足这一
 条件。进入 ROM 下载模式后执行：
 
 ```bash
 ./scripts/update-app.sh --port COM5 \
-  --firmware dist/v0.27.0/esp32-rlcd-firmware-v0.27.0-ota.bin \
+  --firmware dist/v0.28.0/esp32-rlcd-firmware-v0.28.0-ota.bin \
   --confirm
 ```
 
@@ -264,9 +264,9 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 
 | 按键 | 正常运行时的用途 |
 | --- | --- |
-| `BOOT` | 日常页面中短按切换首屏、已开启的天气、月历、可用的图片与音乐页；音乐页和系统中心中短按返回首屏 |
-| `KEY` | 主界面、天气和日历中短按进入对话页；多图图片页中切换下一张；音乐页播放/暂停；系统中心依次切换“对话 → 设置 → 在线更新 → 状态” |
-| `KEY` 长按 | 天气刷新、图片删除确认、音乐下一首、状态校时、开始对话、进入快捷设置均为 2 秒；在线更新页按住 2 秒检查或复核，确认页按住 3 秒安装 |
+| `BOOT` | 日常页依次切换时钟、可选天气、月历、可选图片、可选音乐、对话；系统中心中返回时钟 |
+| `KEY` | 主界面、天气、日历和空闲对话页进入设置；多图图片页切换下一张；音乐页播放/暂停；系统中心依次切换“设置 → 在线更新 → 状态” |
+| `KEY` 长按 | 天气刷新、图片删除确认、音乐下一首、状态校时、开始对话、直接打开网页设置均为 2 秒；在线更新页按住 2 秒检查，松开后在确认页按住 3 秒安装 |
 | `BOOT` 长按 | “设置”页按住 2 秒切换手动省电；音乐页按住 2 秒直接调音量；其他运行页面不执行隐藏操作 |
 | `PWR` | 开机或长按关机 |
 
@@ -294,8 +294,9 @@ v0.26.0 起，切到哪一页就停在哪一页，由用户手动切换，不需
 这些指令或其他设备动作。完整配置、数据上传、凭据和费用说明见
 [AI 对话 Beta](cloud-voice.md)。
 
-v0.27.0 按[网页设置入口](device-settings.md#网页设置)打开门户后，会开启最多 5 分钟的临时 WPA2 热点并显示二维码、随机
-密码和 `http://192.168.4.1`。手机进入“设备设置”页面后可以：
+按[网页设置入口](device-settings.md#打开网页设置)打开门户后，同一家庭 Wi-Fi 下可扫码授权
+访问；没有连接或主动切换时使用临时 WPA2 热点。门户闲置 5 分钟关闭，用户操作可续期，
+一次最多 30 分钟，已开始的写入另有最多 10 分钟时限。手机进入页面后可以：
 
 - 修改时区、摄氏/华氏温标、回放音量、单个每周闹钟和 Beta 固件更新偏好；
 - 可开启或停用 AI 对话、保存或清除 API Key，并在高级设置中从
@@ -309,8 +310,9 @@ v0.27.0 按[网页设置入口](device-settings.md#网页设置)打开门户后�
 - 清除家庭 Wi-Fi 配置；该操作不会删除其他偏好，设备不重启，设置热点关闭后原地进入配网；
 - 上传本项目发布的 `-ota.bin` 完成本地升级；不要上传 `-factory.bin`。
 
-v0.28.0 候选另支持同 Wi-Fi 访问、歌曲多选上传和独立闹钟音量；入口与两种访问模式的
-区别见[设备设置](device-settings.md)。使用候选时，编辑凭据和本地升级仍需设备热点。
+网页分为常用、联网、媒体、维护四区，支持歌曲多选上传和独立闹钟音量；各区保存不清除
+其他区域的输入。编辑 Wi-Fi、天气和 AI 凭据或本地升级必须使用设备热点；局域网入口仅
+用于普通设置、校时和媒体管理。访问方式和限制见[设备设置](device-settings.md)。
 
 电源模式无需进入热点设置：设备根据电量和 USB 数据主机状态自动决定，低电时进入
 `SAVING`，连接电脑 USB 时立即退出；“设置”页按住 `BOOT` 2 秒可手动提前进入或取消
@@ -365,7 +367,7 @@ USB 校时脚本。若希望关机仍保持时间，应按微雪产品文档使�
 
 ### 对话页显示模型不可用
 
-这通常表示设备从旧版本仅通过在线更新或网页 OTA 安装了 v0.27.0 应用。其他功能不受
+这通常表示设备从旧版本仅通过在线更新或网页 OTA 安装了 v0.28.0 应用。其他功能不受
 影响；按“旧设备补装离线语音模型”通过 USB 同时写入同版本 OTA 和模型，或使用 Factory
 重新完整安装。`-model.bin` 不能单独启动，也不能上传到设置门户。
 

@@ -327,6 +327,7 @@ bool app_settings_parse_form(const char *body, size_t length,
 
     app_settings_t parsed = *base;
     unsigned seen_fields = 0U;
+    unsigned section_fields = 0U;
     size_t start = 0U;
     while (start < length) {
         size_t end = start;
@@ -355,8 +356,24 @@ bool app_settings_parse_form(const char *body, size_t length,
         if (!decode_form_part(&body[start], equals - start, key,
                               sizeof(key)) ||
             !decode_form_part(&body[equals + 1U], end - equals - 1U, value,
-                              sizeof(value)) ||
-            !assign_form_field(key, value, &parsed, &seen_fields)) {
+                              sizeof(value))) {
+            return false;
+        }
+        if (strcmp(key, "section") == 0) {
+            if (section_fields != 0U) return false;
+            if (strcmp(value, "general") == 0) {
+                section_fields = FORM_FIELD_TIMEZONE | FORM_FIELD_UNIT |
+                                 FORM_FIELD_VOLUME;
+            } else if (strcmp(value, "alarm") == 0) {
+                section_fields = FORM_FIELD_ALARM | FORM_FIELD_ALARM_HOUR |
+                                 FORM_FIELD_ALARM_MINUTE | FORM_FIELD_ALARM_DAYS |
+                                 FORM_FIELD_ALARM_VOLUME;
+            } else if (strcmp(value, "updates") == 0) {
+                section_fields = FORM_FIELD_UPDATES;
+            } else {
+                return false;
+            }
+        } else if (!assign_form_field(key, value, &parsed, &seen_fields)) {
             return false;
         }
 
@@ -370,8 +387,10 @@ bool app_settings_parse_form(const char *body, size_t length,
         }
     }
 
-    /* Older portal clients preserve the independent alarm volume. */
-    if ((seen_fields & ~FORM_FIELD_ALARM_VOLUME) != FORM_FIELD_ALL ||
+    /* Scoped forms cannot overwrite drafts/settings in another section.
+     * Older full-form clients preserve the independent alarm volume. */
+    if ((section_fields != 0U ? seen_fields != section_fields
+          : (seen_fields & ~FORM_FIELD_ALARM_VOLUME) != FORM_FIELD_ALL) ||
         !app_settings_validate(&parsed)) {
         return false;
     }

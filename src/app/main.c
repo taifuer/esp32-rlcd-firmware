@@ -1861,6 +1861,11 @@ void app_main(void)
         (void)online_firmware_update_get_status(&online_update_status);
         if (online_update_status.state != previous_online_update_state ||
             online_update_status.percent != previous_online_update_percent) {
+            if (online_update_status.state ==
+                    ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION &&
+                previous_online_update_state != online_update_status.state) {
+                dual_button_release_gate = true;
+            }
             previous_online_update_state = online_update_status.state;
             previous_online_update_percent = online_update_status.percent;
             online_update_data_changed = true;
@@ -1976,8 +1981,7 @@ void app_main(void)
                         ? ESP_OK
                         : ESP_ERR_INVALID_ARG;
                 if (!recovery_mode && apply_error == ESP_OK &&
-                    !(quick_settings.active && quick_settings.editing &&
-                      quick_settings.item == QUICK_SETTINGS_VOLUME) &&
+                    !quick_settings.active &&
                     snapshot.settings.audio_playback_volume !=
                         settings.audio_playback_volume) {
                     apply_error =
@@ -2107,8 +2111,7 @@ void app_main(void)
         const app_page_t input_page = app_page_state_current(&page_state);
         if (quick_settings.active &&
             (recovery_mode ||
-             (input_page != APP_PAGE_SETTINGS &&
-              !(quick_settings.volume_only && input_page == APP_PAGE_MUSIC)) ||
+             input_page != APP_PAGE_MUSIC ||
              firmware_update_ui_active || gallery_download_ui_active ||
              voice_session_active || manual_sync_ui != MANUAL_SYNC_UI_NONE)) {
             quick_settings_close(&quick_settings);
@@ -2561,9 +2564,6 @@ void app_main(void)
                                      boot_pressed_or_debounced);
             if (!release_blocked && (key_event != BUTTON_EVENT_NONE ||
                                      boot_event != BUTTON_EVENT_NONE)) {
-                app_settings_t latest_settings;
-                const bool settings_readable =
-                    app_settings_get(&latest_settings) == ESP_OK;
                 quick_settings_action_t action = QUICK_SETTINGS_ACTION_NONE;
                 if (boot_event == BUTTON_EVENT_SHORT_PRESS ||
                     key_event == BUTTON_EVENT_SHORT_PRESS ||
@@ -2575,8 +2575,7 @@ void app_main(void)
                                   ? QUICK_SETTINGS_NEXT
                                   : QUICK_SETTINGS_ACTIVATE;
                     action = quick_settings_input(
-                        &quick_settings, menu_input,
-                        settings_readable ? &latest_settings : NULL);
+                        &quick_settings, menu_input);
                 }
                 if (action == QUICK_SETTINGS_ACTION_SAVE) {
                     app_setting_field_t field = APP_SETTING_VOLUME;
@@ -2593,23 +2592,6 @@ void app_main(void)
                     }
                     ESP_LOGI(TAG, "quick setting field=%u save: %s",
                              (unsigned)field, esp_err_to_name(save_error));
-                } else if (action == QUICK_SETTINGS_ACTION_OPEN_WEB) {
-                    const esp_err_t start_error = firmware_update_start();
-                    if (start_error == ESP_OK) {
-                        quick_settings_close(&quick_settings);
-                        dual_button_release_gate = true;
-                    } else {
-                        quick_settings.notice =
-                            QUICK_SETTINGS_NOTICE_UNAVAILABLE;
-                    }
-                    (void)firmware_update_get_status(&firmware_update_status);
-                    firmware_update_ui_active =
-                        firmware_update_status.state !=
-                        FIRMWARE_UPDATE_STATE_IDLE;
-                    previous_update_state = firmware_update_status.state;
-                    previous_update_percent = firmware_update_status.percent;
-                    ESP_LOGI(TAG, "quick settings web portal: %s",
-                             esp_err_to_name(start_error));
                 }
                 render_requested = true;
             }
@@ -2854,12 +2836,6 @@ void app_main(void)
                        !firmware_update_ui_active) {
                 esp_err_t action_error = ESP_ERR_INVALID_STATE;
                 if (online_update_status.state ==
-                    ONLINE_UPDATE_STATE_AVAILABLE) {
-                    action_error =
-                        online_firmware_update_request_confirmation();
-                    ESP_LOGI(TAG,
-                             "KEY long press: reviewing online update");
-                } else if (online_update_status.state ==
                            ONLINE_UPDATE_STATE_AWAITING_CONFIRMATION) {
                     action_error =
                         online_firmware_update_start_install();
@@ -2867,10 +2843,11 @@ void app_main(void)
                              "KEY long press: online update confirmed");
                 } else if (!online_update_busy) {
                     action_error =
-                        online_firmware_update_request_check();
+                        online_firmware_update_request_confirmation();
                     ESP_LOGI(TAG,
-                             "KEY long press: checking online update");
+                             "KEY long press: refreshing update before review");
                 }
+                if (action_error == ESP_OK) dual_button_release_gate = true;
                 if (action_error != ESP_OK) {
                     ESP_LOGW(TAG, "online update action unavailable: %s",
                              esp_err_to_name(action_error));
@@ -2888,18 +2865,15 @@ void app_main(void)
                        !online_update_busy &&
                        !online_update_confirmation_active &&
                        !boot_pressed_or_debounced) {
-                const esp_err_t start_error = recovery_mode
-                    ? firmware_update_start() : ESP_OK;
-                if (!recovery_mode) {
-                    quick_settings_open(&quick_settings);
-                }
+                const esp_err_t start_error = firmware_update_start();
+                dual_button_release_gate = true;
                 if (start_error != ESP_OK) {
                     ESP_LOGW(TAG, "could not open settings portal: %s",
                              esp_err_to_name(start_error));
                 } else {
                     ESP_LOGI(TAG,
                              "KEY long press: %s opened",
-                             recovery_mode ? "recovery portal" : "quick settings");
+                             recovery_mode ? "recovery portal" : "web settings");
                 }
                 (void)firmware_update_get_status(&firmware_update_status);
                 firmware_update_ui_active =
@@ -3103,8 +3077,7 @@ void app_main(void)
                                  button_interaction_active)) {
             render_requested = true;
         }
-        const bool preview_requested = quick_settings.active &&
-            quick_settings.editing && quick_settings.item == QUICK_SETTINGS_VOLUME;
+        const bool preview_requested = quick_settings.active;
         if (!recovery_mode && (preview_requested || volume_preview_active)) {
             app_settings_t latest;
             if (app_settings_get(&latest) == ESP_OK) {
@@ -3696,7 +3669,7 @@ void app_main(void)
                     previous_display_mode != APP_DISPLAY_HOLD_PROMPT ||
                     previous_portal_seconds != quick_hold_seconds) {
                     display_show_hold_prompt(
-                        quick_settings_hold_title(&quick_settings),
+                        quick_settings_hold_title(),
                         quick_hold_seconds);
                 }
                 previous_display_mode = APP_DISPLAY_HOLD_PROMPT;
@@ -3704,12 +3677,7 @@ void app_main(void)
             } else {
                 if (render_requested ||
                     previous_display_mode != APP_DISPLAY_QUICK_SETTINGS) {
-                    app_settings_snapshot_t saved = {.settings = settings};
-                    (void)app_settings_get_snapshot(&saved);
-                    display_show_quick_settings(
-                        &quick_settings, &saved.settings,
-                        saved.generation != settings_generation,
-                        dashboard.time_valid);
+                    display_show_quick_settings(&quick_settings);
                 }
                 previous_display_mode = APP_DISPLAY_QUICK_SETTINGS;
                 previous_portal_seconds = 0U;
@@ -3986,7 +3954,10 @@ void app_main(void)
                 previous_display_mode = APP_DISPLAY_MANUAL_SYNC_RESULT;
             }
             previous_portal_seconds = 0U;
-        } else if (display_ready && app_page_is_system(active_page)) {
+        } else if (display_ready &&
+                   (app_page_is_system(active_page) ||
+                    active_page == APP_PAGE_VOICE)) {
+            /* Chat is a daily page, but shares the detail renderer below. */
             app_display_mode_t system_display_mode = APP_DISPLAY_STATUS;
             if (active_page == APP_PAGE_VOICE) {
                 system_display_mode = APP_DISPLAY_VOICE;
@@ -4184,6 +4155,7 @@ void app_main(void)
                             online_update_status.state),
                         .recovery_mode = recovery_mode,
                         .beta_channel = online_update_status.beta_channel,
+                        .target_changed = online_update_status.target_changed,
                         .current_version =
                             online_update_status.current_version,
                         .latest_version =

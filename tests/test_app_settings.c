@@ -63,6 +63,50 @@ static void test_defaults_and_validation(void)
     app_settings_defaults(NULL);
 }
 
+static void test_scoped_forms(void)
+{
+    app_settings_t base, parsed;
+    app_settings_defaults(&base);
+    base.manual_saving_requested = true;
+    base.update_channel = APP_UPDATE_CHANNEL_BETA;
+    base.alarm_enabled = true;
+    base.alarm_volume = 19U;
+    const char *general = "section=general&timezone=330&unit=f&volume=42";
+    assert(app_settings_parse_form(general, strlen(general), &base, &parsed));
+    assert(parsed.utc_offset_minutes == 330 && parsed.audio_playback_volume == 42U);
+    assert(parsed.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT);
+    assert(parsed.alarm_enabled && parsed.alarm_volume == 19U);
+    assert(parsed.update_channel == APP_UPDATE_CHANNEL_BETA && parsed.manual_saving_requested);
+    const char *alarm = "alarm=off&alarm_hour=23&alarm_minute=59&alarm_days=65&alarm_volume=0&section=alarm";
+    assert(app_settings_parse_form(alarm, strlen(alarm), &base, &parsed));
+    assert(!parsed.alarm_enabled && parsed.alarm_hour == 23U && parsed.alarm_minute == 59U);
+    assert(parsed.alarm_weekdays == 65U && parsed.alarm_volume == 0U);
+    assert(parsed.audio_playback_volume == base.audio_playback_volume);
+    assert(parsed.utc_offset_minutes == base.utc_offset_minutes);
+    assert(parsed.update_channel == base.update_channel && parsed.manual_saving_requested);
+    const char *updates = "section=updates&updates=stable";
+    assert(app_settings_parse_form(updates, strlen(updates), &base, &parsed));
+    assert(parsed.update_channel == APP_UPDATE_CHANNEL_STABLE);
+    assert(parsed.alarm_enabled && parsed.alarm_volume == 19U && parsed.manual_saving_requested);
+    const char *invalid[] = {
+        "section=unknown&volume=50", "section=&volume=50",
+        "section=general&timezone=480&unit=c", /* required field missing */
+        "section=general&timezone=480&unit=c&volume=50&updates=stable",
+        "section=updates&updates=beta&volume=50", /* no cross-section writes */
+        "section=updates&updates=beta&section=updates",
+        "section=updates&updates=beta&section=general",
+        "section=updates&updates=beta&updates=stable",
+        "section=alarm&alarm=on&alarm_hour=7&alarm_minute=30&alarm_days=62",
+        "section=alarm&alarm=on&alarm_hour=24&alarm_minute=30&alarm_days=62&alarm_volume=50",
+        "timezone=480&unit=c&volume=50", /* not a complete legacy form */
+    };
+    for (size_t i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        parsed = base;
+        assert(!app_settings_parse_form(invalid[i], strlen(invalid[i]), &base, &parsed));
+        assert(memcmp(&parsed, &base, sizeof(base)) == 0);
+    }
+}
+
 static void test_legacy_power_mapping(void)
 {
     for (uint16_t schema = 1U; schema <= 4U; ++schema) {
@@ -481,6 +525,7 @@ static void test_form_parser_preserves_device_setting(void)
 int main(void)
 {
     test_defaults_and_validation();
+    test_scoped_forms();
     test_scoped_edits();
     test_legacy_power_mapping();
     test_timezone_format();

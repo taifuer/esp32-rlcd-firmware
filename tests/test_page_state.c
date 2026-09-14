@@ -54,7 +54,8 @@ int main(void)
     assert(app_page_is_daily(APP_PAGE_IMAGE));
     assert(!app_page_is_daily(APP_PAGE_STATUS));
     assert(app_page_is_system(APP_PAGE_STATUS));
-    assert(app_page_is_system(APP_PAGE_VOICE));
+    assert(!app_page_is_system(APP_PAGE_VOICE));
+    assert(app_page_is_daily(APP_PAGE_VOICE));
     assert(app_page_is_system(APP_PAGE_SETTINGS));
     assert(app_page_is_system(APP_PAGE_ONLINE_UPDATE));
     assert(!app_page_is_system(APP_PAGE_HOME));
@@ -126,127 +127,58 @@ int main(void)
     assert(app_page_boot_hold_threshold_ms(APP_PAGE_HOME) == 0U);
     assert(app_page_boot_hold_threshold_ms(APP_PAGE_ONLINE_UPDATE) == 0U);
 
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-
-    app_page_state_set_image_available(&state, true);
-    assert(app_page_state_open_page(&state, APP_PAGE_IMAGE));
-    assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
-    assert(app_page_state_open_page(&state, APP_PAGE_HOME));
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-
-    app_page_state_set_weather_enabled(&state, true);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_WEATHER);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-    app_page_state_set_weather_enabled(&state, false);
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-    assert(!app_page_state_open_page(&state, APP_PAGE_WEATHER));
-    app_page_state_set_weather_enabled(&state, true);
+    /* All availability combinations keep Chat in the daily ring, last. */
+    for (unsigned flags = 0U; flags < 8U; ++flags) {
+        app_page_state_init(&state);
+        app_page_state_set_weather_enabled(&state, (flags & 1U) != 0U);
+        app_page_state_set_image_available(&state, (flags & 2U) != 0U);
+        app_page_state_set_music_available(&state, (flags & 4U) != 0U);
+        app_page_t ring[6] = {APP_PAGE_HOME};
+        unsigned count = 1U;
+        if (flags & 1U) ring[count++] = APP_PAGE_WEATHER;
+        ring[count++] = APP_PAGE_CALENDAR;
+        if (flags & 2U) ring[count++] = APP_PAGE_IMAGE;
+        if (flags & 4U) ring[count++] = APP_PAGE_MUSIC;
+        ring[count++] = APP_PAGE_VOICE;
+        for (unsigned repeat = 0U; repeat < 3U; ++repeat)
+            for (unsigned index = 0U; index < count; ++index) {
+                assert(app_page_state_current(&state) == ring[index]);
+                assert(app_page_is_daily(ring[index]));
+                assert(!app_page_is_system(ring[index]));
+                app_page_state_boot_short_press(&state);
+            }
+        for (unsigned index = 0U; index < count; ++index) {
+            assert(app_page_state_open_page(&state, ring[index]));
+            app_page_state_key_short_press(&state);
+            assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
+        }
+        const app_page_t system[] = {APP_PAGE_SETTINGS, APP_PAGE_ONLINE_UPDATE, APP_PAGE_STATUS};
+        for (unsigned repeat = 0U; repeat < 3U; ++repeat)
+            for (unsigned index = 0U; index < 3U; ++index) {
+                assert(app_page_state_current(&state) == system[index]);
+                assert(app_page_is_system(system[index]));
+                app_page_state_boot_short_press(&state);
+                assert(app_page_state_current(&state) == APP_PAGE_HOME);
+                assert(app_page_state_open_page(&state, system[index]));
+                app_page_state_key_short_press(&state);
+            }
+    }
+    assert(!app_page_state_open_page(&state, (app_page_t)-1));
+    assert(!app_page_state_open_page(&state, (app_page_t)(APP_PAGE_ONLINE_UPDATE + 1)));
+    assert(!app_page_is_system((app_page_t)-1));
+    assert(!app_page_is_daily((app_page_t)-1));
     assert(app_page_state_open_page(&state, APP_PAGE_WEATHER));
     app_page_state_set_weather_enabled(&state, false);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
-
-    app_page_state_set_weather_enabled(&state, true);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_WEATHER);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-    app_page_state_set_weather_enabled(&state, false);
-
-    app_page_state_boot_short_press(&state);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
-    app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_VOICE);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-
-    app_page_state_boot_short_press(&state);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
+    assert(!app_page_state_open_page(&state, APP_PAGE_WEATHER));
+    assert(app_page_state_open_page(&state, APP_PAGE_IMAGE));
     app_page_state_set_image_available(&state, false);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
-
-    assert(app_page_state_open_page(&state, APP_PAGE_CALENDAR));
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
     assert(!app_page_state_open_page(&state, APP_PAGE_IMAGE));
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-    assert(!app_page_state_open_page(&state, (app_page_t)-1));
-    assert(!app_page_state_open_page(
-        &state, (app_page_t)(APP_PAGE_ONLINE_UPDATE + 1)));
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-
-    assert(app_page_state_open_page(&state, APP_PAGE_STATUS));
-    assert(app_page_state_open_page(&state, APP_PAGE_VOICE));
-    assert(app_page_state_open_page(&state, APP_PAGE_SETTINGS));
-    assert(app_page_state_open_page(&state, APP_PAGE_ONLINE_UPDATE));
-    assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
-    app_page_state_go_home(&state);
-
-    app_page_state_set_image_available(&state, true);
-    app_page_state_go_home(&state);
-    app_page_state_boot_short_press(&state);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
-    app_page_state_go_home(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-    app_page_state_boot_short_press(&state);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_IMAGE);
-    app_page_state_go_home(&state);
-    app_page_state_set_image_available(&state, false);
-
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-
-    app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_VOICE);
-    app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
-    app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
-    app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_STATUS);
-    app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_VOICE);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-
-    app_page_state_boot_short_press(&state);
-    app_page_state_key_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_VOICE);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
-
-    assert(!app_page_state_open_page(&state, APP_PAGE_MUSIC));
-    app_page_state_set_music_available(&state, true);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_CALENDAR);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_MUSIC);
-    app_page_state_boot_short_press(&state);
-    assert(app_page_state_current(&state) == APP_PAGE_HOME);
     assert(app_page_state_open_page(&state, APP_PAGE_MUSIC));
     app_page_state_set_music_available(&state, false);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
+    assert(!app_page_state_open_page(&state, APP_PAGE_MUSIC));
     app_page_state_set_recovery_mode(&state, true);
     assert(state.recovery_mode);
     assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);

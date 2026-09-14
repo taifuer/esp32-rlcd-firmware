@@ -72,9 +72,9 @@ bool app_manual_saving_from_legacy_power(uint16_t schema_version,
                                          bool *manual_requested);
 bool app_settings_format_posix_tz(int16_t utc_offset_minutes,
                                   char *buffer, size_t capacity);
-/* Apply a complete settings-portal form to a validated base record. Fields
- * not exposed by the portal, including the device-side manual saving
- * request, are preserved from base. */
+/* Apply a scoped (section=general|alarm|updates) or legacy complete form.
+ * Unrelated fields, including the device-side manual saving request,
+ * are preserved from the latest validated base record. */
 bool app_settings_parse_form(const char *body, size_t length,
                              const app_settings_t *base,
                              app_settings_t *settings);

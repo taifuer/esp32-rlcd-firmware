@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware dashboard</title>
+  <desc id="description">A white-on-black monochrome 400 by 300 dashboard with date, lunar date, weekday, Wi-Fi status, battery, large time, temperature, an environment comfort face and humidity.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" stroke="#eef3e8">
+    <text x="12" y="31" stroke="none" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="15.5" font-weight="600">2026年8月19日</text>
+    <text x="154" y="31" stroke="none" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="15.5" font-weight="600">七月初七</text>
+    <text x="248" y="31" stroke="none" font-family="Noto Sans CJK SC, Microsoft YaHei, sans-serif" font-size="15.5" font-weight="600">星期三</text>
+
+    <g transform="translate(303 20)" stroke="none" shape-rendering="crispEdges">
+      <path d="M5 0h8v1H5zM3 1h4v1H3zM11 1h4v1h-4zM1 2h3v1H1zM14 2h3v1h-3zM0 3h2v1H0zM16 3h2v1h-2zM6 5h6v1H6zM4 6h3v1H4zM11 6h3v1h-3zM3 7h2v1H3zM13 7h2v1h-2zM8 9h2v1H8zM7 10h4v2H7zM8 12h2v1H8z"/>
+    </g>
+
+    <g transform="translate(329 20)" fill="none" stroke-width="1.4" shape-rendering="crispEdges">
+      <rect x="0" y="0" width="28" height="14"/>
+      <rect x="28" y="4" width="3" height="6" fill="#eef3e8" stroke="none"/>
+      <rect x="2" y="2" width="23" height="10" fill="#eef3e8" stroke="none"/>
+    </g>
+    <text x="367" y="32" stroke="none" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="10.5" font-weight="700">93%</text>
+
+    <path d="M12 55H388M12 244H388" fill="none" stroke-width="1" shape-rendering="crispEdges"/>
+
+    <text x="200" y="179" stroke="none" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="70" font-weight="400" letter-spacing="-4">22:00:47</text>
+
+    <text x="100" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" font-weight="500">31.3 °C</text>
+    <g fill="none" stroke-width="1" shape-rendering="crispEdges">
+      <rect x="191" y="264" width="3" height="3" fill="#eef3e8" stroke="none"/>
+      <rect x="207" y="264" width="3" height="3" fill="#eef3e8" stroke="none"/>
+      <path d="M191 278L196 273M192 278L197 273M197 273H203M203 273L208 278M204 273L209 278"/>
+    </g>
+    <text x="300" y="280" stroke="none" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" font-weight="500">73 %</text>
+  </g>
+</svg>
