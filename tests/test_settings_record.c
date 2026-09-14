@@ -33,6 +33,7 @@ static void assert_settings_equal(const app_settings_t *actual,
     assert(actual->temperature_unit == expected->temperature_unit);
     assert(actual->audio_playback_volume ==
            expected->audio_playback_volume);
+    assert(actual->alarm_volume == expected->alarm_volume);
     assert(actual->update_channel == expected->update_channel);
     assert(actual->alarm_enabled == expected->alarm_enabled);
     assert(actual->alarm_hour == expected->alarm_hour);
@@ -52,7 +53,7 @@ static void test_codec_round_trip_and_layout(void)
     assert(encoded[1] == 'C');
     assert(encoded[2] == 'F');
     assert(encoded[3] == 'G');
-    assert(encoded[4] == 6U && encoded[5] == 0U);
+    assert(encoded[4] == 7U && encoded[5] == 0U);
     assert(encoded[6] == SETTINGS_RECORD_ENCODED_SIZE &&
            encoded[7] == 0U);
     assert(encoded[8] == 0x12U && encoded[9] == 0x34U &&
@@ -70,6 +71,7 @@ static void test_codec_round_trip_and_layout(void)
     assert(encoded[23] == APP_SETTINGS_ALARM_WEEKENDS_MASK);
     assert(encoded[24] == 0U);
     assert(encoded[25] == 0U); /* retired DISPLAY: canonical CLOCK on write */
+    assert(encoded[26] == 68U); /* independent alarm volume, CRC covered */
 
     settings_record_t decoded = {0};
     assert(settings_record_decode(encoded, sizeof(encoded), &decoded));
@@ -154,6 +156,7 @@ static void test_schema6_and_dev1_compatibility(void)
 {
     for (uint8_t value = 0U; value <= 2U; ++value) {
         app_settings_t settings = make_settings(39U, APP_UPDATE_CHANNEL_BETA);
+        settings.alarm_volume = 39U;
         uint8_t encoded[SETTINGS_RECORD_ENCODED_SIZE];
         assert(settings_record_encode(100U, &settings, encoded, sizeof(encoded)));
         assert(encoded[25] == 0U);
@@ -228,7 +231,7 @@ static void test_schema5_record_migration(void)
         assert(settings_record_encode(decoded.generation,
                                       &decoded.settings, canonical,
                                       sizeof(canonical)));
-        assert(canonical[4] == 6U);
+        assert(canonical[4] == 7U);
         assert(canonical[12] == APP_SETTINGS_SCHEMA_VERSION);
         assert(canonical[14] ==
                (expected_manual[legacy_power] ? 1U : 0U));
@@ -290,6 +293,7 @@ static void test_schema4_record_migration(void)
          ++legacy_power) {
         app_settings_t expected =
             make_settings(73U, APP_UPDATE_CHANNEL_BETA);
+        expected.alarm_volume = 73U;
         expected.manual_saving_requested = legacy_power == 1U;
 
         for (uint8_t legacy_rotation = 0U; legacy_rotation <= 2U;
@@ -309,7 +313,7 @@ static void test_schema4_record_migration(void)
             assert(settings_record_encode(decoded.generation,
                                           &decoded.settings, canonical,
                                           sizeof(canonical)));
-            assert(canonical[4] == 6U);
+            assert(canonical[4] == 7U);
             assert(canonical[12] == APP_SETTINGS_SCHEMA_VERSION);
             assert(canonical[14] ==
                    (expected.manual_saving_requested ? 1U : 0U));

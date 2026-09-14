@@ -1546,6 +1546,21 @@ esp_err_t network_time_begin_online_session_from_maintenance(
     return connect_acquired_online_session(timeout_ms);
 }
 
+esp_err_t network_time_online_to_maintenance(void)
+{
+    if (!s_initialized || s_events == NULL) return ESP_ERR_INVALID_STATE;
+    portENTER_CRITICAL(&s_status_lock);
+    const bool accepted = network_session_policy_transfer(
+        &s_session_policy, NETWORK_SESSION_OWNER_ONLINE,
+        NETWORK_SESSION_OWNER_MAINTENANCE);
+    portEXIT_CRITICAL(&s_status_lock);
+    if (!accepted) return ESP_ERR_INVALID_STATE;
+    xEventGroupSetBits(s_events, NETWORK_EVENT_MAINTENANCE_CHANGED);
+    const esp_err_t error = stop_wifi();
+    if (error != ESP_OK) network_time_end_maintenance();
+    return error;
+}
+
 esp_err_t network_time_end_online_session(void)
 {
     if (!s_initialized || s_events == NULL) {

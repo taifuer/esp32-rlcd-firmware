@@ -6,6 +6,7 @@
 #include "board_pins.h"
 #include "calendar_month.h"
 #include "display_interaction_model.h"
+#include "music_display_model.h"
 #include "network_credentials.h"
 #include "qrcode.h"
 #include "u8g2.h"
@@ -828,6 +829,33 @@ void display_show_network_setup(const char *ssid, const char *password, const ch
     u8g2_SendBuffer(s_u8g2);
 }
 
+void display_show_settings_lan_ready(const char *url, const char *qr_url,
+                                     const char *code)
+{
+    if (s_u8g2 == NULL) return;
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    u8g2_SetFont(s_u8g2, u8g2_font_helvB18_tf);
+    draw_centered(32, "WEB SETTINGS");
+    display_qr_context_t context = {
+        .area_left = (BOARD_DISPLAY_WIDTH - 170) / 2,
+        .area_top = 48, .area_size = 170,
+        .quiet_modules = SETUP_QR_QUIET_MODULES,
+        .max_scale = SETUP_QR_MAX_SCALE, .standard_polarity = true,
+    };
+    const bool rendered = qr_url != NULL &&
+        draw_qr_payload(qr_url, &context, ESP_QRCODE_ECC_MED);
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    if (!rendered) draw_centered(138, "Open the address below");
+    draw_centered(236, url != NULL ? url : "-");
+    char line[64];
+    snprintf(line, sizeof(line), "ACCESS CODE: %s", code != NULL ? code : "-");
+    draw_centered(254, line);
+    draw_centered(272, "Same Wi-Fi | Scan to open");
+    draw_centered(292, "BOOT: CLOSE | KEY: USE HOTSPOT");
+    u8g2_SendBuffer(s_u8g2);
+}
+
 void display_show_settings_portal_ready(const char *ssid,
                                         const char *password,
                                         const char *url)
@@ -1262,6 +1290,12 @@ void display_show_monochrome_image(
     u8g2_SendBuffer(s_u8g2);
 }
 
+static int music_title_measure(const char *text, void *context)
+{
+    (void)context;
+    return (int)u8g2_GetUTF8Width(s_u8g2, text);
+}
+
 void display_show_music(const display_music_t *music)
 {
     if (s_u8g2 == NULL || music == NULL) return;
@@ -1298,20 +1332,13 @@ void display_show_music(const display_music_t *music)
     title[used] = '\0';
     char *extension = strrchr(title, '.');
     if (extension != NULL) *extension = '\0';
-    /* Truncate complete UTF-8 code points, measured in the actual font. */
-    if (u8g2_GetUTF8Width(s_u8g2, title) > 368U) {
-        size_t length = strlen(title);
-        do {
-            if (length == 0U) break;
-            --length;
-            while (length > 0U && ((unsigned char)title[length] & 0xc0U) == 0x80U) --length;
-            title[length] = '\0';
-        } while (u8g2_GetUTF8Width(s_u8g2, title) > 344U);
-        memcpy(title + length, "...", 4);
+    char lines[2][MUSIC_TITLE_LINE_CAPACITY];
+    if (music_display_title_lines(title, 368, music_title_measure, NULL, lines)) {
+        draw_utf8_centered_in_region(12, 376, lines[1][0] != '\0' ? 86 : 101, lines[0]);
+        if (lines[1][0] != '\0') draw_utf8_centered_in_region(12, 376, 114, lines[1]);
     }
-    draw_utf8_centered_in_region(12, 376, 91, title);
-    u8g2_SetFont(s_u8g2, u8g2_font_helvB18_tf);
-    draw_centered(141, music->state != NULL ? music->state : "STOPPED");
+    u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
+    draw_centered(152, music->state != NULL ? music->state : "STOPPED");
     u8g2_SetFont(s_u8g2, u8g2_font_logisoso20_tf);
     snprintf(value, sizeof(value), "%02u:%02u", (unsigned)(music->elapsed_seconds / 60U),
              (unsigned)(music->elapsed_seconds % 60U));
@@ -1753,7 +1780,7 @@ void display_show_quick_settings(const quick_settings_t *menu,
         u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
         if (menu->item == QUICK_SETTINGS_VOLUME) {
             draw_centered(188, menu->draft == 0U ? "MUTED" : "PLAYBACK VOLUME");
-            draw_centered(212, "0 - 100% | SAVE TO APPLY");
+            draw_centered(212, "LIVE PREVIEW | BOOT: CANCEL");
         } else if (menu->item == QUICK_SETTINGS_ALARM) {
             snprintf(value, sizeof(value), "%02u:%02u | %s",
                      saved->alarm_hour, saved->alarm_minute,

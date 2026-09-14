@@ -26,6 +26,14 @@ void quick_settings_close(quick_settings_t *menu)
     }
 }
 
+uint8_t quick_settings_playback_volume(const quick_settings_t *menu,
+                                       uint8_t saved_volume)
+{
+    return menu != NULL && menu->active && menu->editing &&
+                   menu->item == QUICK_SETTINGS_VOLUME && menu->draft <= 100U
+               ? menu->draft : saved_volume;
+}
+
 bool quick_settings_release_gate(quick_settings_t *menu, bool any_pressed)
 {
     if (menu == NULL || !menu->active || !menu->release_required) {

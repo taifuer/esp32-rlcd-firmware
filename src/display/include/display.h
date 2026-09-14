@@ -205,6 +205,8 @@ typedef enum {
 esp_err_t display_init(void);
 void display_show_status(const char *title, const char *detail);
 void display_show_network_setup(const char *ssid, const char *password, const char *url);
+void display_show_settings_lan_ready(const char *url, const char *qr_url,
+                                     const char *code);
 void display_show_settings_portal_ready(const char *ssid,
                                         const char *password,
                                         const char *url);

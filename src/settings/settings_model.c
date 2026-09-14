@@ -13,6 +13,7 @@ enum {
     FORM_FIELD_ALARM_HOUR = 1U << 5,
     FORM_FIELD_ALARM_MINUTE = 1U << 6,
     FORM_FIELD_ALARM_DAYS = 1U << 7,
+    FORM_FIELD_ALARM_VOLUME = 1U << 8,
     FORM_FIELD_ALL = FORM_FIELD_TIMEZONE | FORM_FIELD_UNIT |
                      FORM_FIELD_VOLUME |
                      FORM_FIELD_UPDATES | FORM_FIELD_ALARM |
@@ -34,6 +35,7 @@ void app_settings_defaults(app_settings_t *settings)
         .temperature_unit = APP_TEMPERATURE_UNIT_CELSIUS,
         .audio_playback_volume =
             APP_SETTINGS_DEFAULT_AUDIO_PLAYBACK_VOLUME,
+        .alarm_volume = APP_SETTINGS_DEFAULT_AUDIO_PLAYBACK_VOLUME,
         .update_channel = APP_UPDATE_CHANNEL_STABLE,
         .alarm_enabled = false,
         .alarm_hour = APP_SETTINGS_DEFAULT_ALARM_HOUR,
@@ -58,6 +60,7 @@ bool app_settings_validate(const app_settings_t *settings)
             settings->temperature_unit ==
                 APP_TEMPERATURE_UNIT_FAHRENHEIT) &&
            settings->audio_playback_volume <= 100U &&
+           settings->alarm_volume <= 100U &&
            (settings->update_channel == APP_UPDATE_CHANNEL_STABLE ||
             settings->update_channel == APP_UPDATE_CHANNEL_BETA) &&
            settings->alarm_hour < 24U &&
@@ -255,6 +258,11 @@ static bool assign_form_field(const char *key, const char *value,
             return false;
         }
         settings->audio_playback_volume = (uint8_t)volume;
+    } else if (strcmp(key, "alarm_volume") == 0) {
+        field = FORM_FIELD_ALARM_VOLUME;
+        int volume = 0;
+        if (!parse_decimal(value, 0, 100, &volume)) return false;
+        settings->alarm_volume = (uint8_t)volume;
     } else if (strcmp(key, "updates") == 0) {
         field = FORM_FIELD_UPDATES;
         if (strcmp(value, "stable") == 0) {
@@ -362,7 +370,9 @@ bool app_settings_parse_form(const char *body, size_t length,
         }
     }
 
-    if (seen_fields != FORM_FIELD_ALL || !app_settings_validate(&parsed)) {
+    /* Older portal clients preserve the independent alarm volume. */
+    if ((seen_fields & ~FORM_FIELD_ALARM_VOLUME) != FORM_FIELD_ALL ||
+        !app_settings_validate(&parsed)) {
         return false;
     }
     *settings = parsed;

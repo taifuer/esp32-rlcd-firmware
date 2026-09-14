@@ -10,6 +10,15 @@ trap 'rm -rf -- "${RLCD_TEST_TMP}"' EXIT
 cd "${RLCD_PROJECT_DIR}"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -Isrc/audio/include tests/test_audio_alert_policy.c -o "${RLCD_TEST_TMP}/test_audio_alert_policy"
+"${RLCD_TEST_TMP}/test_audio_alert_policy"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/display tests/test_music_display.c -o "${RLCD_TEST_TMP}/test_music_display"
+"${RLCD_TEST_TMP}/test_music_display"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/music/include src/music/music_format.c tests/test_music_format.c \
   -o "${RLCD_TEST_TMP}/test_music_format"

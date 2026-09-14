@@ -21,6 +21,12 @@ static void assert_qr_encodes(const char *ssid, const char *password)
 
 int main(void)
 {
+    uint8_t temporary[qrcodegen_BUFFER_LEN_FOR_VERSION(10)] = {0};
+    uint8_t qr[qrcodegen_BUFFER_LEN_FOR_VERSION(10)] = {0};
+    /* Longest printed IPv4 address plus a 128-bit demonstration token. */
+    assert(qrcodegen_encodeText("http://255.255.255.255/#00123456789abcdeffedcba987654321",
+        temporary, qr, qrcodegen_Ecc_MEDIUM, 1, 10, qrcodegen_Mask_AUTO, false));
+    assert(170 / (qrcodegen_getSize(qr) + 8) >= 3); /* integer scale and 4-module quiet zone */
     assert_qr_encodes("ESP32-RLCD-A1B2C3", "ABCDEFG2");
 
     char maximum_ssid[NETWORK_SSID_MAX_LENGTH + 1U];

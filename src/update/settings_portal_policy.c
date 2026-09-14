@@ -82,6 +82,72 @@ uint32_t settings_portal_deadline_remaining(uint32_t started_at,
     return elapsed >= timeout_ticks ? 0U : timeout_ticks - elapsed;
 }
 
+uint32_t settings_portal_clock_remaining(const settings_portal_clock_t *clock,
+                                         uint32_t now_ms, bool recovery)
+{
+    if (clock == NULL) return 0U;
+    /* An admitted transaction finishes within its own finite deadline, even
+     * if it crossed the idle/absolute admission deadline. */
+    if (clock->transaction_active) {
+        return settings_portal_deadline_remaining(clock->transaction_ms, now_ms,
+                                                   SETTINGS_PORTAL_TRANSACTION_MS);
+    }
+    if (recovery) return UINT32_MAX;
+    const uint32_t idle = settings_portal_deadline_remaining(
+        clock->activity_ms, now_ms, SETTINGS_PORTAL_IDLE_MS);
+    const uint32_t absolute = settings_portal_deadline_remaining(
+        clock->started_ms, now_ms, SETTINGS_PORTAL_MAX_MS);
+    return idle < absolute ? idle : absolute;
+}
+
+bool settings_portal_lan_post_allowed(const char *uri)
+{
+    static const char *const allowed[] = {
+        "/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/activity",
+        "/api/images/select", "/api/images/delete", "/api/images/upload",
+        "/api/music/play", "/api/music/stop", "/api/music/delete", "/api/music/upload",
+    };
+    if (uri == NULL) return false;
+    const size_t size = strcspn(uri, "?");
+    for (size_t i = 0U; i < sizeof(allowed) / sizeof(allowed[0]); ++i) {
+        if (strlen(allowed[i]) == size && memcmp(uri, allowed[i], size) == 0) return true;
+    }
+    return false;
+}
+
+bool settings_portal_host_matches(const char *url, const char *host)
+{
+    if (url == NULL || host == NULL || strncmp(url, "http://", 7U) != 0 || url[7] == '\0') return false;
+    const size_t size = strcspn(host, ":");
+    return strlen(url + 7U) == size && memcmp(host, url + 7U, size) == 0 &&
+        (host[size] == '\0' || strcmp(host + size, ":80") == 0);
+}
+
+bool settings_portal_pair_code_matches(const char *expected,
+                                       const char *body, size_t length)
+{
+    if (expected == NULL || strlen(expected) != 8U || body == NULL ||
+        length != 13U || memcmp(body, "code=", 5U) != 0) return false;
+    unsigned difference = 0U;
+    for (size_t i = 0U; i < 8U; ++i) difference |= (unsigned char)expected[i] ^ (unsigned char)body[5U + i];
+    return difference == 0U;
+}
+
+bool settings_portal_parse_volume_form(const char *body, size_t length,
+                                       uint8_t *volume)
+{
+    if (body == NULL || volume == NULL || length < 8U || length > 10U ||
+        memcmp(body, "volume=", 7U) != 0) return false;
+    unsigned value = 0U;
+    for (size_t i = 7U; i < length; ++i) {
+        if (body[i] < '0' || body[i] > '9') return false;
+        value = value * 10U + (unsigned)(body[i] - '0');
+    }
+    if (value > 100U) return false;
+    *volume = (uint8_t)value;
+    return true;
+}
+
 bool settings_portal_parse_unix_form(const char *body, size_t length,
                                      int64_t *unix_seconds)
 {

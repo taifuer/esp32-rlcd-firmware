@@ -3,7 +3,8 @@
 #include <limits.h>
 
 #define SETTINGS_RECORD_MAGIC UINT32_C(0x47464352)
-#define SETTINGS_RECORD_FORMAT_VERSION 6U
+#define SETTINGS_RECORD_FORMAT_VERSION 7U
+#define SETTINGS_RECORD_SCHEMA7_FORMAT_VERSION 6U
 #define SETTINGS_RECORD_SCHEMA6_FORMAT_VERSION 5U
 #define SETTINGS_RECORD_SCHEMA5_FORMAT_VERSION 4U
 #define SETTINGS_RECORD_SCHEMA5_VERSION 5U
@@ -34,6 +35,7 @@ enum {
     /* v0.26.0-dev.1 used this byte for CLOCK/WEATHER/IMAGE. Decode valid
      * legacy values but ignore them; keep schema/slots stable for upgrades. */
     LEGACY_DEFAULT_DISPLAY_OFFSET = 25,
+    ALARM_VOLUME_OFFSET = 26,
     CHECKSUM_OFFSET = 28,
     SCHEMA3_CHECKSUM_OFFSET = 24,
     SCHEMA2_CHECKSUM_OFFSET = 20,
@@ -119,22 +121,23 @@ bool settings_record_encode(uint32_t generation,
     /* Canonical legacy value: fixed image. */
     encoded[LEGACY_IMAGE_ROTATION_OFFSET] = 0U;
     encoded[LEGACY_DEFAULT_DISPLAY_OFFSET] = 0U;
+    encoded[ALARM_VOLUME_OFFSET] = settings->alarm_volume;
     put_u32(encoded, CHECKSUM_OFFSET,
             record_checksum(encoded, CHECKSUM_OFFSET));
     return true;
 }
 
 static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
-                                  settings_record_t *record, bool schema6)
+                                  settings_record_t *record, uint16_t schema)
 {
     if (encoded == NULL || record == NULL ||
         encoded_size != SETTINGS_RECORD_ENCODED_SIZE ||
         get_u32(encoded, MAGIC_OFFSET) != SETTINGS_RECORD_MAGIC ||
         get_u16(encoded, FORMAT_OFFSET) !=
-            (schema6 ? SETTINGS_RECORD_SCHEMA6_FORMAT_VERSION
-                     : SETTINGS_RECORD_FORMAT_VERSION) ||
-        get_u16(encoded, SCHEMA_OFFSET) !=
-            (schema6 ? 6U : APP_SETTINGS_SCHEMA_VERSION) ||
+            (schema == 6U ? SETTINGS_RECORD_SCHEMA6_FORMAT_VERSION
+             : schema == 7U ? SETTINGS_RECORD_SCHEMA7_FORMAT_VERSION
+                            : SETTINGS_RECORD_FORMAT_VERSION) ||
+        get_u16(encoded, SCHEMA_OFFSET) != schema ||
         get_u16(encoded, SIZE_OFFSET) != SETTINGS_RECORD_ENCODED_SIZE ||
         get_u32(encoded, CHECKSUM_OFFSET) !=
             record_checksum(encoded, CHECKSUM_OFFSET)) {
@@ -149,7 +152,7 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
     if (encoded[MANUAL_SAVING_OFFSET] > 1U ||
         encoded[ALARM_ENABLED_OFFSET] > 1U ||
         encoded[LEGACY_IMAGE_ROTATION_OFFSET] > 2U ||
-        (!schema6 && encoded[LEGACY_DEFAULT_DISPLAY_OFFSET] > 2U)) {
+        (schema >= 7U && encoded[LEGACY_DEFAULT_DISPLAY_OFFSET] > 2U)) {
         return false;
     }
     const app_settings_t settings = {
@@ -160,6 +163,8 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
         .temperature_unit =
             (app_temperature_unit_t)encoded[TEMPERATURE_UNIT_OFFSET],
         .audio_playback_volume = encoded[AUDIO_VOLUME_OFFSET],
+        .alarm_volume = schema >= 8U ? encoded[ALARM_VOLUME_OFFSET]
+                                    : encoded[AUDIO_VOLUME_OFFSET],
         .update_channel =
             (app_update_channel_t)encoded[UPDATE_CHANNEL_OFFSET],
         .alarm_enabled = encoded[ALARM_ENABLED_OFFSET] == 1U,
@@ -181,14 +186,22 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
 bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
                             settings_record_t *record)
 {
-    return decode_recent_record(encoded, encoded_size, record, false);
+    return decode_recent_record(encoded, encoded_size, record,
+                                APP_SETTINGS_SCHEMA_VERSION);
+}
+
+bool settings_record_decode_schema7(const uint8_t *encoded,
+                                    size_t encoded_size,
+                                    settings_record_t *record)
+{
+    return decode_recent_record(encoded, encoded_size, record, 7U);
 }
 
 bool settings_record_decode_schema6(const uint8_t *encoded,
                                     size_t encoded_size,
                                     settings_record_t *record)
 {
-    return decode_recent_record(encoded, encoded_size, record, true);
+    return decode_recent_record(encoded, encoded_size, record, 6U);
 }
 
 bool settings_record_decode_schema5(const uint8_t *encoded,
@@ -229,6 +242,7 @@ bool settings_record_decode_schema5(const uint8_t *encoded,
     settings.temperature_unit =
         (app_temperature_unit_t)encoded[TEMPERATURE_UNIT_OFFSET];
     settings.audio_playback_volume = encoded[AUDIO_VOLUME_OFFSET];
+    settings.alarm_volume = settings.audio_playback_volume;
     settings.update_channel =
         (app_update_channel_t)encoded[UPDATE_CHANNEL_OFFSET];
     settings.alarm_enabled = encoded[ALARM_ENABLED_OFFSET] == 1U;
@@ -284,6 +298,7 @@ bool settings_record_decode_schema4(const uint8_t *encoded,
     settings.temperature_unit =
         (app_temperature_unit_t)encoded[TEMPERATURE_UNIT_OFFSET];
     settings.audio_playback_volume = encoded[AUDIO_VOLUME_OFFSET];
+    settings.alarm_volume = settings.audio_playback_volume;
     settings.update_channel =
         (app_update_channel_t)encoded[UPDATE_CHANNEL_OFFSET];
     settings.alarm_enabled = encoded[ALARM_ENABLED_OFFSET] == 1U;
@@ -338,6 +353,7 @@ bool settings_record_decode_schema3(const uint8_t *encoded,
     settings.temperature_unit =
         (app_temperature_unit_t)encoded[TEMPERATURE_UNIT_OFFSET];
     settings.audio_playback_volume = encoded[AUDIO_VOLUME_OFFSET];
+    settings.alarm_volume = settings.audio_playback_volume;
     settings.update_channel =
         (app_update_channel_t)encoded[UPDATE_CHANNEL_OFFSET];
     settings.alarm_enabled = encoded[ALARM_ENABLED_OFFSET] == 1U;
@@ -389,6 +405,7 @@ bool settings_record_decode_schema2(const uint8_t *encoded,
     settings.temperature_unit =
         (app_temperature_unit_t)encoded[TEMPERATURE_UNIT_OFFSET];
     settings.audio_playback_volume = encoded[AUDIO_VOLUME_OFFSET];
+    settings.alarm_volume = settings.audio_playback_volume;
     settings.update_channel =
         (app_update_channel_t)encoded[UPDATE_CHANNEL_OFFSET];
     if (!app_settings_validate(&settings)) {

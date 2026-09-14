@@ -1421,6 +1421,8 @@ void app_main(void)
     app_page_state_init(&page_state);
     app_page_state_set_recovery_mode(&page_state, recovery_mode);
     quick_settings_t quick_settings = {0};
+    bool volume_preview_active = false;
+    uint8_t preview_volume = settings.audio_playback_volume;
     char recovery_reset[32] = {0};
     const char *recovery_phase = NULL;
     if (recovery_mode) {
@@ -1974,6 +1976,8 @@ void app_main(void)
                         ? ESP_OK
                         : ESP_ERR_INVALID_ARG;
                 if (!recovery_mode && apply_error == ESP_OK &&
+                    !(quick_settings.active && quick_settings.editing &&
+                      quick_settings.item == QUICK_SETTINGS_VOLUME) &&
                     snapshot.settings.audio_playback_volume !=
                         settings.audio_playback_volume) {
                     apply_error =
@@ -2102,7 +2106,9 @@ void app_main(void)
             alarm_scheduler.state == ALARM_SCHEDULER_RINGING;
         const app_page_t input_page = app_page_state_current(&page_state);
         if (quick_settings.active &&
-            (recovery_mode || input_page != APP_PAGE_SETTINGS ||
+            (recovery_mode ||
+             (input_page != APP_PAGE_SETTINGS &&
+              !(quick_settings.volume_only && input_page == APP_PAGE_MUSIC)) ||
              firmware_update_ui_active || gallery_download_ui_active ||
              voice_session_active || manual_sync_ui != MANUAL_SYNC_UI_NONE)) {
             quick_settings_close(&quick_settings);
@@ -2267,7 +2273,7 @@ void app_main(void)
                 ESP_LOGI(TAG,
                          "alarm preempted voice session");
             }
-            const esp_err_t alert_error = audio_alert_start();
+            const esp_err_t alert_error = audio_alert_start(settings.alarm_volume);
             if (alert_error != ESP_OK) {
                 ESP_LOGW(TAG,
                          "alarm visual started without audio: %s",
@@ -2611,6 +2617,10 @@ void app_main(void)
             boot_event = BUTTON_EVENT_NONE;
         }
         if (key_event == BUTTON_EVENT_SHORT_PRESS) {
+            if (firmware_update_ui_active && firmware_update_status.local_network &&
+                firmware_update_status.state == FIRMWARE_UPDATE_STATE_READY) {
+                (void)firmware_update_use_hotspot();
+            }
             if (manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                 !firmware_update_ui_active &&
                 !online_update_confirmation_active &&
@@ -3092,6 +3102,20 @@ void app_main(void)
         if (quick_settings_tick(&quick_settings, button_elapsed_ms,
                                  button_interaction_active)) {
             render_requested = true;
+        }
+        const bool preview_requested = quick_settings.active &&
+            quick_settings.editing && quick_settings.item == QUICK_SETTINGS_VOLUME;
+        if (!recovery_mode && (preview_requested || volume_preview_active)) {
+            app_settings_t latest;
+            if (app_settings_get(&latest) == ESP_OK) {
+                const uint8_t target = quick_settings_playback_volume(
+                    &quick_settings, latest.audio_playback_volume);
+                if ((!volume_preview_active || target != preview_volume || !preview_requested) &&
+                    audio_diagnostics_set_playback_volume(target) == ESP_OK) {
+                    preview_volume = target;
+                    volume_preview_active = preview_requested;
+                }
+            }
         }
 
         if (manual_sync_ui != MANUAL_SYNC_UI_NONE &&
@@ -3868,13 +3892,20 @@ void app_main(void)
                 if (firmware_update_status.state ==
                     FIRMWARE_UPDATE_STATE_STARTING) {
                     display_show_status("STARTING SETTINGS",
-                                        "Opening temporary Wi-Fi");
+                                        "Preparing temporary access");
                 } else if (firmware_update_status.state ==
                            FIRMWARE_UPDATE_STATE_READY) {
-                    display_show_settings_portal_ready(
-                        firmware_update_status.access_point_ssid,
-                        firmware_update_status.access_point_password,
-                        firmware_update_status.access_url);
+                    if (firmware_update_status.local_network) {
+                        display_show_settings_lan_ready(
+                            firmware_update_status.access_url,
+                            firmware_update_status.access_qr_url,
+                            firmware_update_status.access_point_password);
+                    } else {
+                        display_show_settings_portal_ready(
+                            firmware_update_status.access_point_ssid,
+                            firmware_update_status.access_point_password,
+                            firmware_update_status.access_url);
+                    }
                 } else if (firmware_update_status.state ==
                            FIRMWARE_UPDATE_STATE_WIFI_VALIDATING) {
                     display_show_status("TESTING WI-FI",

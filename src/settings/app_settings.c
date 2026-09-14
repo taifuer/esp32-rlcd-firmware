@@ -26,8 +26,8 @@
 #define SETTINGS_SCHEMA5_RECORD_SLOT_B_KEY "cfg5_b"
 #define SETTINGS_SCHEMA6_RECORD_SLOT_A_KEY "cfg6_a"
 #define SETTINGS_SCHEMA6_RECORD_SLOT_B_KEY "cfg6_b"
-#define SETTINGS_RECORD_SLOT_A_KEY "cfg7_a"
-#define SETTINGS_RECORD_SLOT_B_KEY "cfg7_b"
+#define SETTINGS_RECORD_SLOT_A_KEY "cfg8_a"
+#define SETTINGS_RECORD_SLOT_B_KEY "cfg8_b"
 
 static const char *TAG = "app_settings";
 static SemaphoreHandle_t s_mutex;
@@ -81,6 +81,7 @@ static esp_err_t load_v1_fields(nvs_handle_t handle,
     error = nvs_get_u8(handle, SETTINGS_AUDIO_VOLUME_KEY, &value_u8);
     if (error == ESP_OK && value_u8 <= 100U) {
         settings->audio_playback_volume = value_u8;
+        settings->alarm_volume = value_u8;
     } else if (!recoverable_field_error(error) && error != ESP_OK) {
         return error;
     }
@@ -534,6 +535,27 @@ static esp_err_t recover_legacy_settings(nvs_handle_t handle,
                                          app_settings_t *settings,
                                          uint16_t maximum_schema)
 {
+    if (maximum_schema >= 7U) {
+        settings_record_t records[2] = {0};
+        bool valid[2] = {false, false};
+        const char *keys[] = {"cfg7_a", "cfg7_b"};
+        for (size_t index = 0U; index < 2U; ++index) {
+            uint8_t encoded[SETTINGS_RECORD_SCHEMA7_ENCODED_SIZE];
+            size_t size = sizeof(encoded);
+            const esp_err_t error = nvs_get_blob(handle, keys[index], encoded, &size);
+            if (error == ESP_OK) {
+                valid[index] = settings_record_decode_schema7(encoded, size, &records[index]);
+            } else if (!recoverable_field_error(error) && error != ESP_ERR_NVS_INVALID_LENGTH) {
+                return error;
+            }
+        }
+        const settings_record_slot_t latest = settings_record_select_latest(
+            valid[0] ? &records[0] : NULL, valid[1] ? &records[1] : NULL);
+        if (latest != SETTINGS_RECORD_SLOT_NONE) {
+            *settings = records[latest == SETTINGS_RECORD_SLOT_A ? 0 : 1].settings;
+            return ESP_OK;
+        }
+    }
     bool schema6_found = false;
     esp_err_t error = ESP_OK;
     if (maximum_schema >= 6U) {
@@ -623,7 +645,7 @@ static esp_err_t recover_settings_without_schema(
     if (!current_found) {
         *active_slot = SETTINGS_RECORD_SLOT_NONE;
         *generation = 0U;
-        return recover_legacy_settings(handle, settings, 6U);
+        return recover_legacy_settings(handle, settings, 7U);
     }
     return ESP_OK;
 }
@@ -738,6 +760,7 @@ static bool settings_equal(const app_settings_t *left,
            left->temperature_unit == right->temperature_unit &&
            left->audio_playback_volume ==
                right->audio_playback_volume &&
+           left->alarm_volume == right->alarm_volume &&
            left->update_channel == right->update_channel &&
            left->alarm_enabled == right->alarm_enabled &&
            left->alarm_hour == right->alarm_hour &&
@@ -858,7 +881,7 @@ esp_err_t app_settings_init(void)
         } else if (error == ESP_OK && schema == 1U) {
             error = load_v1_fields(handle, &loaded);
             needs_migration = error == ESP_OK;
-        } else if (error == ESP_OK && schema >= 2U && schema <= 6U) {
+        } else if (error == ESP_OK && schema >= 2U && schema <= 7U) {
             error = recover_legacy_settings(handle, &loaded, schema);
             needs_migration = error == ESP_OK;
         } else if (error == ESP_OK &&
@@ -877,7 +900,7 @@ esp_err_t app_settings_init(void)
                 error = load_current_schema(handle, &loaded, &active_slot,
                                             &generation);
             } else if (error == ESP_OK) {
-                error = recover_legacy_settings(handle, &loaded, 6U);
+                error = recover_legacy_settings(handle, &loaded, 7U);
                 needs_migration = error == ESP_OK;
             }
         }

@@ -1,5 +1,6 @@
 #include "audio_diagnostics.h"
 #include "audio_alert.h"
+#include "audio_alert_policy.h"
 #include "audio_conversation.h"
 #include "audio_conversation_control.h"
 #include "audio_conversation_flow.h"
@@ -147,6 +148,10 @@ typedef struct {
     bool alert_requested;
     bool alert_running;
     bool alert_stop_requested;
+    bool alert_preview_requested;
+    bool alert_preview_running;
+    uint8_t alert_pending_volume;
+    uint8_t alert_running_volume;
     bool music_requested;
     bool music_running;
     bool music_storage_change;
@@ -1091,12 +1096,14 @@ static esp_err_t write_note(int16_t *playback_buffer,
 static bool alert_should_stop(TickType_t started)
 {
     bool requested = false;
+    bool preview = false;
     lock_context();
     requested = s_audio.alert_stop_requested;
+    preview = s_audio.alert_preview_running;
     unlock_context();
     const uint32_t elapsed_ms =
         (uint32_t)(xTaskGetTickCount() - started) * portTICK_PERIOD_MS;
-    return requested || elapsed_ms >= AUDIO_ALERT_SAFETY_TIMEOUT_MS;
+    return requested || elapsed_ms >= (preview ? 3000U : AUDIO_ALERT_SAFETY_TIMEOUT_MS);
 }
 
 static esp_err_t alert_write_silence(int16_t *playback_buffer,
@@ -1598,6 +1605,7 @@ static void finish_alert(esp_err_t error)
 {
     lock_context();
     s_audio.alert_running = false;
+    s_audio.alert_preview_running = false;
     s_audio.alert_stop_requested = false;
     s_audio.alert_cancelled_session = false;
     unlock_context();
@@ -1614,11 +1622,11 @@ static void run_audio_alert(void)
     int16_t playback_buffer[AUDIO_TONE_CHUNK_FRAMES];
     uint8_t volume = 0U;
     lock_context();
-    volume = s_playback_volume;
+    volume = s_audio.alert_running_volume;
     unlock_context();
 
     if (volume == 0U) {
-        ESP_LOGI(TAG, "alert is silent because playback volume is 0%%");
+        ESP_LOGI(TAG, "alert is silent because alarm volume is 0%%");
         finish_alert(ESP_OK);
         return;
     }
@@ -3174,6 +3182,10 @@ static void audio_worker_task(void *argument)
             } else if (s_audio.alert_requested) {
                 s_audio.alert_requested = false;
                 s_audio.alert_running = true;
+                s_audio.alert_preview_running = s_audio.alert_preview_requested;
+                s_audio.alert_preview_requested = false;
+                s_audio.alert_running_volume = s_audio.alert_pending_volume;
+                s_audio.alert_stop_requested = false;
                 work = AUDIO_WORK_ALERT;
             } else if (s_audio.music_requested) {
                 s_audio.music_requested = false;
@@ -3423,12 +3435,19 @@ esp_err_t audio_diagnostics_start(void)
     return ESP_OK;
 }
 
-esp_err_t audio_alert_start(void)
+static esp_err_t request_alert(uint8_t volume_percent, bool preview)
 {
+    if (volume_percent > 100U) return ESP_ERR_INVALID_ARG;
     lock_context();
     if (!s_audio.status.initialized || !s_audio.status.speaker_ready ||
-        s_audio.worker_task == NULL || s_audio.alert_requested ||
-        s_audio.alert_running) {
+        s_audio.worker_task == NULL ||
+        !audio_alert_request_allowed(preview, s_audio.alert_requested,
+            s_audio.alert_preview_requested, s_audio.alert_running,
+            s_audio.alert_preview_running,
+            audio_session_state_is_active(s_audio.status.state) ||
+                s_audio.voice_requested || s_audio.voice_status.running ||
+                s_audio.conversation_requested || s_audio.conversation_status.running ||
+                s_audio.music_storage_change)) {
         unlock_context();
         return ESP_ERR_INVALID_STATE;
     }
@@ -3444,16 +3463,47 @@ esp_err_t audio_alert_start(void)
     }
     music_stop_locked();
     s_audio.alert_requested = true;
-    s_audio.alert_stop_requested = false;
+    s_audio.alert_preview_requested = preview;
+    s_audio.alert_pending_volume = volume_percent;
+    s_audio.alert_stop_requested = s_audio.alert_running;
     unlock_context();
 
     xTaskNotifyGive(s_audio.worker_task);
     return ESP_OK;
 }
 
+esp_err_t audio_alert_start(uint8_t volume_percent)
+{
+    return request_alert(volume_percent, false);
+}
+
+esp_err_t audio_alert_preview(uint8_t volume_percent)
+{
+    return request_alert(volume_percent, true);
+}
+
+void audio_alert_cancel_preview(void)
+{
+    lock_context();
+    if (s_audio.alert_requested && s_audio.alert_preview_requested) {
+        s_audio.alert_requested = false;
+        s_audio.alert_preview_requested = false;
+    }
+    if (s_audio.alert_running && s_audio.alert_preview_running) {
+        s_audio.alert_stop_requested = true;
+    }
+    unlock_context();
+}
+
 esp_err_t audio_alert_stop(void)
 {
     lock_context();
+    /* A real alarm can be queued behind its preview. Stopping the alarm
+     * must cancel that queued playback as well as the currently running one. */
+    if (s_audio.alert_running) {
+        s_audio.alert_requested = false;
+        s_audio.alert_preview_requested = false;
+    }
     if (s_audio.alert_requested && !s_audio.alert_running) {
         s_audio.alert_requested = false;
         s_audio.alert_stop_requested = false;

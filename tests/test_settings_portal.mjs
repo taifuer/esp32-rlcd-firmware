@@ -37,12 +37,12 @@ class Element {
 }
 const elements = Object.fromEntries(ids.map(id => [id, new Element()]));
 const days = [1, 2, 4, 8, 16, 32, 64].map(bit => Object.assign(new Element(), {dataset: {bit: String(bit)}}));
-const settingsNames = {timezone: 'timezone', unit: 'unit', volume: 'volume', alarm: 'alarm',
+const settingsNames = {timezone: 'timezone', unit: 'unit', volume: 'volume', alarmVolume: 'alarm_volume', alarm: 'alarm',
   alarmHour: 'alarm_hour', alarmMinute: 'alarm_minute', alarmDays: 'alarm_days', updates: 'updates'};
 const settingsInputs = [...Object.keys(settingsNames).map(id => elements[id]), elements.alarmTime, ...days];
 elements.wifiForm.hidden = true;
 let state = {
-  token: 'test-token', timezone: 480, unit: 'c', volume: 50, updates: 'stable',
+  token: 'test-token', timezone: 480, unit: 'c', volume: 50, alarm_volume: 68, updates: 'stable',
   alarm: 'off', alarm_hour: 7, alarm_minute: 30, alarm_days: 62,
   wifi_configured: true, wifi_ssid: 'Test Wi-Fi', sd_state: 'ready', image_count: 0,
   weather: {available: true, enabled: false, configured: false, key_saved: false,
@@ -51,6 +51,9 @@ let state = {
     model: 'qwen3-omni-flash-realtime', api_host: 'dashscope.aliyuncs.com', shared_endpoint: true},
 };
 let failPost = false, lastBody = '', pendingPost;
+let unauthorized = false;
+const getRequests = [];
+const sessionToken = '00123456789abcdeffedcba987654321';
 let lastPath = '', confirmed = true, lastConfirmation = '', request;
 let music = {ready: true, scanned: true, truncated: false, state: 'stopped', elapsed: 0,
   selected_index: 0, tracks: [{name: '01 - 音乐 & 测试.mp3', bytes: 1234567}, {name: '02.wav', bytes: 5678}]};
@@ -70,9 +73,16 @@ const context = vm.createContext({
     if (options.method === 'POST') {
       lastPath = path;
       lastBody = options.body;
+      if (path === '/api/pair') {
+        assert.equal(options.headers['X-RLCD-Pair'], '1');
+        unauthorized = false;
+        return {ok: true, text: async () => sessionToken};
+      }
       if (pendingPost) await pendingPost;
       return {ok: !failPost, text: async () => failPost ? '保存失败' : '已保存'};
     }
+    getRequests.push({path, options});
+    if (unauthorized) return {ok: false, status: 401, text: async () => '需要授权'};
     if (path === '/api/state') return {ok: true, json: async () => structuredClone(state)};
     if (path === '/api/images') return {ok: true, json: async () => ({images: [], selected: ''})};
     if (path === '/api/music') return {ok: true, json: async () => structuredClone(music)};
@@ -94,6 +104,12 @@ const context = vm.createContext({
 vm.runInContext(javascript, context);
 await new Promise(resolve => setImmediate(resolve));
 assert.equal(elements.volume.value, 50);
+assert.equal(elements.alarmVolume.value, 68);
+elements.alarmVolume.value = 25;
+await elements.alarmPreview.onclick();
+assert.equal(lastPath, '/api/alarm/preview');
+assert.equal(lastBody, 'volume=25');
+assert.equal(state.alarm_volume, 68, 'preview does not persist');
 assert.equal(elements.portalYear.textContent, String(new Date().getFullYear()));
 elements.conversationKey.value = 'unsaved-test-key';
 elements.conversationApiHost.value = 'draft.example';
@@ -156,21 +172,39 @@ assert.match(lastBody, /&confirm=DELETE$/);
 elements.musicFile.files = [{name: '新歌 + a.mp3', size: 9000}];
 elements.musicFile.onchange();
 assert.equal(elements.musicUpload.disabled, false);
-elements.musicUpload.onclick();
+let upload = elements.musicUpload.onclick();
 assert.equal(request.path, '/api/music/upload?name=' + encodeURIComponent('新歌 + a.mp3'));
 assert.equal(request.headers['X-RLCD-Token'], 'test-token');
 assert.equal(elements.musicPlay.disabled, true);
 request.upload.onprogress({lengthComputable: true, loaded: 9000, total: 9000});
 assert.match(elements.musicMessage.textContent, /校验/);
 request.onerror();
+await upload;
 assert.equal(elements.musicPlay.disabled, false, 'connection failure releases controls');
 assert.equal(elements.musicFile.files.length, 1, 'failed upload keeps chosen file');
-elements.musicUpload.onclick();
+upload = elements.musicUpload.onclick();
 request.status = 200; request.responseText = '歌曲已写入';
 await request.onload();
-assert.equal(elements.musicMessage.textContent, '歌曲已写入');
+await upload;
+assert.equal(elements.musicMessage.textContent, '已上传 1 首歌曲。');
 assert.equal(elements.conversationKey.value, 'edited-while-other-form-saves');
 request = null;
+elements.musicFile.files = [{name: 'first.mp3', size: 9000}, {name: 'second.wav', size: 9000}, {name: 'third.mp3', size: 9000}];
+upload = elements.musicUpload.onclick();
+const firstRequest = request;
+assert.match(request.path, /first\.mp3$/);
+request.status = 200; request.onload();
+await new Promise(resolve => setImmediate(resolve));
+assert.notEqual(request, firstRequest, 'next file starts only after first finished');
+assert.match(request.path, /second\.wav$/);
+request.status = 409; request.responseText = '写入失败'; request.onload();
+await upload;
+assert.match(elements.musicMessage.textContent, /已上传 1\/3 首，队列已停止/);
+assert.match(request.path, /second\.wav$/, 'third file was not sent');
+request = null;
+elements.musicFile.files = [{name: 'a.mp3', size: 9000}, {name: 'A.MP3', size: 9000}];
+await elements.musicUpload.onclick();
+assert.equal(request, null, 'duplicates in queue rejected before any upload');
 elements.musicFile.files = [{name: 'large.mp3', size: 32000001}];
 elements.musicUpload.onclick();
 assert.equal(request, null, 'oversized upload never sent');
@@ -186,5 +220,45 @@ await vm.runInContext('loadMusic()', context);
 assert.equal(elements.musicFile.disabled, true);
 assert.equal(elements.musicPlay.disabled, true);
 assert.match(elements.musicState.textContent, /未检测到/);
+state.local_network = true;
+state.token = sessionToken;
+unauthorized = true;
+await assert.rejects(vm.runInContext('load()', context), /授权/);
+assert.equal(elements.pairPanel.hidden, false);
+elements.pairCode.value = 'abc12345';
+await elements.pairForm.onsubmit({preventDefault() {}});
+assert.equal(lastBody, 'code=ABC12345');
+assert.equal(elements.pairCode.value, '');
+assert.equal(elements.pairPanel.hidden, true);
+assert.equal(elements.lanPanel.hidden, false);
+assert.equal(elements.wifiLabel.textContent, '当前连接');
+for (const id of ['wifiEdit','forgetWifi','weatherSave','conversationSave','defaults','file','upload','starterImages']) {
+  assert.equal(elements[id].disabled, true, id + ' requires hotspot');
+}
+const beforeBlockedPost = lastPath;
+await vm.runInContext('userActivity()', context);
+assert.equal(lastPath, '/api/activity');
+lastPath = 'unchanged';
+await vm.runInContext('userActivity()', context);
+assert.equal(lastPath, 'unchanged', 'user activity is throttled; polling never renews');
+lastPath = beforeBlockedPost;
+await assert.rejects(vm.runInContext("post('/api/conversation/config','api_key=never-send-this')", context), /热点/);
+assert.equal(lastPath, beforeBlockedPost, 'blocked credentials never leave the browser');
+for (const item of getRequests.slice(-4)) assert.equal(item.options.headers['X-RLCD-Token'], sessionToken);
+confirmed = false;
+await elements.useHotspot.onclick();
+assert.equal(lastPath, beforeBlockedPost);
+confirmed = true;
+await elements.useHotspot.onclick();
+assert.equal(lastPath, '/api/hotspot');
+assert.equal(lastBody, 'confirm=HOTSPOT');
+const qrContext = vm.createContext({...context,
+  location: {hash: '#' + sessionToken, pathname: '/'},
+  history: {replaceState(data, title, path) { assert.equal(path, '/'); }},
+});
+const getCount = getRequests.length;
+vm.runInContext(javascript, qrContext);
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(getRequests[getCount].options.headers['X-RLCD-Token'], sessionToken, 'QR fragment authorizes the first request');
 assert.doesNotMatch(source.split('static const char RECOVERY_SETTINGS_PAGE[] =')[1].split('static const char SETTINGS_PAGE[] =')[0], /api\/music|musicTracks/);
-console.log('Settings portal: exact JS, scoped drafts, music CRUD, cancellation, upload errors, no card and recovery isolation passed.');
+console.log('Settings portal: drafts, sequential uploads, failure retention, LAN pairing/QR, credential guards and recovery isolation passed.');

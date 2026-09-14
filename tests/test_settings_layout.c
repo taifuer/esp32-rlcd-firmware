@@ -46,7 +46,10 @@ int main(void)
         display_interaction_quick_action(false, false),
         display_interaction_quick_action(false, true),
         display_interaction_quick_action(true, false),
-        "SAVE FAILED | TRY AGAIN OR CANCEL"};
+        "SAVE FAILED | TRY AGAIN OR CANCEL",
+        "LIVE PREVIEW | BOOT: CANCEL",
+        "BOOT: CLOSE | KEY: USE HOTSPOT",
+        "ACCESS CODE: ABC12345", "http://255.255.255.255"};
     for (unsigned index = 0U; index < sizeof(footers) / sizeof(footers[0]); ++index) {
         unsigned width = u8g2_GetStrWidth(&screen, footers[index]);
         assert(width <= 376U);

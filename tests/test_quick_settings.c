@@ -38,8 +38,10 @@ static void test_edit_cancel_save_and_latest_values(void)
     release(&menu);
     input(&menu, QUICK_SETTINGS_NEXT);
     assert(menu.draft == 70U && saved.audio_playback_volume == 68U);
+    assert(quick_settings_playback_volume(&menu, 68U) == 70U);
     input(&menu, QUICK_SETTINGS_BACK);
     assert(menu.active && !menu.editing && saved.audio_playback_volume == 68U);
+    assert(quick_settings_playback_volume(&menu, 42U) == 42U);
 
     saved.audio_playback_volume = 90U; /* another writer changed the record */
     input(&menu, QUICK_SETTINGS_ACTIVATE);
@@ -56,6 +58,7 @@ static void test_edit_cancel_save_and_latest_values(void)
     assert(field == APP_SETTING_VOLUME && value == 0U);
     quick_settings_save_result(&menu, false);
     assert(menu.editing && menu.draft == 0U);
+    assert(quick_settings_playback_volume(&menu, 90U) == 0U);
     assert(menu.notice == QUICK_SETTINGS_NOTICE_SAVE_FAILED);
     release(&menu);
     assert(input(&menu, QUICK_SETTINGS_ACTIVATE) == QUICK_SETTINGS_ACTION_SAVE);
@@ -122,6 +125,7 @@ static void test_timeout_and_preemption(void)
     assert(!quick_settings_tick(&menu, 29999U, false));
     assert(quick_settings_tick(&menu, 1U, false));
     assert(menu.active && !menu.editing && menu.draft == 0U);
+    assert(quick_settings_playback_volume(&menu, saved_volume) == saved_volume);
     assert(menu.item == QUICK_SETTINGS_VOLUME);
     assert(saved.audio_playback_volume == saved_volume);
     assert(app_page_state_current(&page) == APP_PAGE_SETTINGS);
@@ -136,6 +140,7 @@ static void test_timeout_and_preemption(void)
     release(&menu);
     input(&menu, QUICK_SETTINGS_ACTIVATE);
     quick_settings_close(&menu); /* alarm or maintenance preemption */
+    assert(quick_settings_playback_volume(&menu, 23U) == 23U);
     assert(!menu.active && !menu.editing && menu.draft == 0U);
     assert(input(&menu, QUICK_SETTINGS_ACTIVATE) == QUICK_SETTINGS_ACTION_NONE);
     quick_settings_open(&menu);

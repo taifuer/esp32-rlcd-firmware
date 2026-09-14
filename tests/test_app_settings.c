@@ -9,12 +9,13 @@ static void test_defaults_and_validation(void)
 {
     app_settings_t settings;
     app_settings_defaults(&settings);
-    assert(APP_SETTINGS_SCHEMA_VERSION == 7U);
+    assert(APP_SETTINGS_SCHEMA_VERSION == 8U);
     assert(settings.schema_version == APP_SETTINGS_SCHEMA_VERSION);
     assert(!settings.manual_saving_requested);
     assert(settings.utc_offset_minutes == 480);
     assert(settings.temperature_unit == APP_TEMPERATURE_UNIT_CELSIUS);
     assert(settings.audio_playback_volume == 68U);
+    assert(settings.alarm_volume == 68U);
     assert(settings.update_channel == APP_UPDATE_CHANNEL_STABLE);
     assert(!settings.alarm_enabled);
     assert(settings.alarm_hour == 7U);
@@ -40,6 +41,9 @@ static void test_defaults_and_validation(void)
     assert(!app_settings_validate(&settings));
     app_settings_defaults(&settings);
     settings.audio_playback_volume = 101U;
+    assert(!app_settings_validate(&settings));
+    app_settings_defaults(&settings);
+    settings.alarm_volume = 101U;
     assert(!app_settings_validate(&settings));
     app_settings_defaults(&settings);
     settings.update_channel = (app_update_channel_t)2;
@@ -392,6 +396,7 @@ static void assert_form(const char *form, bool manual_saving,
     assert(settings.utc_offset_minutes == offset);
     assert(settings.temperature_unit == unit);
     assert(settings.audio_playback_volume == volume);
+    assert(settings.alarm_volume == 68U); /* old forms retain this field */
     assert(settings.update_channel == updates);
     assert(settings.alarm_enabled == alarm_enabled);
     assert(settings.alarm_hour == alarm_hour);
@@ -401,6 +406,14 @@ static void assert_form(const char *form, bool manual_saving,
 
 static void test_form_parser_preserves_device_setting(void)
 {
+    app_settings_t base_settings, parsed;
+    app_settings_defaults(&base_settings);
+    const char *with_alarm_volume = "timezone=480&unit=c&volume=0&updates=stable&alarm=off&alarm_hour=7&alarm_minute=30&alarm_days=62&alarm_volume=25";
+    assert(app_settings_parse_form(with_alarm_volume, strlen(with_alarm_volume), &base_settings, &parsed));
+    assert(parsed.audio_playback_volume == 0U && parsed.alarm_volume == 25U);
+    char duplicate[256];
+    snprintf(duplicate, sizeof(duplicate), "%s&alarm_volume=50", with_alarm_volume);
+    assert(!app_settings_parse_form(duplicate, strlen(duplicate), &base_settings, &parsed));
     assert_form("timezone=480&unit=c&volume=68&updates=stable&alarm=off&alarm_hour=7&alarm_minute=30&alarm_days=62",
                 true, 480, APP_TEMPERATURE_UNIT_CELSIUS, 68U,
                 APP_UPDATE_CHANNEL_STABLE, false, 7U, 30U,

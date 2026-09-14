@@ -186,8 +186,9 @@ static void assert_migrated(void)
 {
     app_settings_t settings;
     assert(app_settings_get(&settings) == ESP_OK);
-    assert(settings.schema_version == 7U && persisted_schema == 7U);
+    assert(settings.schema_version == 8U && persisted_schema == 8U);
     assert(settings.audio_playback_volume == 40U);
+    assert(settings.alarm_volume == 40U);
     assert(settings.manual_saving_requested && settings.utc_offset_minutes == -300);
     assert(settings.update_channel == APP_UPDATE_CHANNEL_BETA);
     assert(settings.alarm_enabled && settings.alarm_hour == 23U);
@@ -239,17 +240,18 @@ static void test_scoped_save_failure_noop_and_restart(void)
     assert(app_settings_init() == ESP_OK);
     assert(app_settings_get_snapshot(&after) == ESP_OK);
     assert(after.settings.audio_playback_volume == 70U && !after.settings.alarm_enabled);
+    assert(after.settings.alarm_volume == 40U);
     assert(after.settings.alarm_hour == 23U && after.settings.alarm_minute == 42U);
     assert(after.settings.manual_saving_requested && after.settings.utc_offset_minutes == -300);
     previous_commits = commits;
     assert(app_settings_save_field((app_setting_field_t)2, 1U) == ESP_ERR_INVALID_ARG);
     assert(commits == previous_commits);
 
-    persisted_schema = 8U;
+    persisted_schema = 9U;
     simulate_restart();
     assert(app_settings_init() == ESP_ERR_NOT_SUPPORTED);
     assert(app_settings_save_field(APP_SETTING_VOLUME, 90U) == ESP_ERR_NOT_SUPPORTED);
-    assert(commits == previous_commits && persisted_schema == 8U);
+    assert(commits == previous_commits && persisted_schema == 9U);
 }
 
 static void test_dev1_display_is_ignored_without_reset_or_startup_writes(void)
@@ -259,8 +261,8 @@ static void test_dev1_display_is_ignored_without_reset_or_startup_writes(void)
         assert(app_settings_init() == ESP_OK);
         app_settings_snapshot_t before, after;
         assert(app_settings_get_snapshot(&before) == ESP_OK);
-        test_blob_t *slot_a = find_blob("cfg7_a", false);
-        test_blob_t *slot_b = find_blob("cfg7_b", false);
+        test_blob_t *slot_a = find_blob("cfg8_a", false);
+        test_blob_t *slot_b = find_blob("cfg8_b", false);
         assert(slot_a != NULL && slot_b != NULL);
         slot_a->bytes[25] = old_display;
         slot_b->bytes[25] = old_display;
@@ -271,7 +273,7 @@ static void test_dev1_display_is_ignored_without_reset_or_startup_writes(void)
         simulate_restart();
         assert(app_settings_init() == ESP_OK);
         assert(app_settings_get_snapshot(&after) == ESP_OK);
-        assert(commits == previous_commits && persisted_schema == 7U);
+        assert(commits == previous_commits && persisted_schema == 8U);
         assert(after.generation == before.generation);
         assert(settings_equal(&before.settings, &after.settings));
         assert(slot_a->bytes[25] == old_display && slot_b->bytes[25] == old_display);
@@ -287,8 +289,48 @@ static void test_dev1_display_is_ignored_without_reset_or_startup_writes(void)
     }
 }
 
+static void test_schema7_alarm_migration_and_independent_save(void)
+{
+    for (unsigned failure = 0U; failure <= 3U; ++failure) {
+        seed_schema6();
+        /* Construct the actual old format and slots, including muted media. */
+        test_blob_t *old = find_blob("cfg7_b", true);
+        *old = *find_blob("cfg6_b", false);
+        snprintf(old->key, sizeof(old->key), "cfg7_b");
+        old->bytes[4] = 6U;
+        old->bytes[12] = 7U;
+        old->bytes[18] = 0U;
+        old->bytes[26] = 0U;
+        update_test_checksum(old);
+        const test_blob_t before = *old;
+        persisted_schema = 7U;
+        fail_commit = failure;
+        const esp_err_t result = app_settings_init();
+        assert(result == (failure == 0U ? ESP_OK : ESP_FAIL));
+        if (failure != 0U) {
+            assert(persisted_schema == 7U);
+            simulate_restart();
+            fail_commit = 0U;
+            assert(app_settings_init() == ESP_OK);
+        }
+        app_settings_t current;
+        assert(app_settings_get(&current) == ESP_OK);
+        assert(current.audio_playback_volume == 0U && current.alarm_volume == 0U);
+        assert(current.manual_saving_requested && current.utc_offset_minutes == -300);
+        assert(memcmp(old, &before, sizeof(before)) == 0);
+        current.alarm_volume = 55U;
+        assert(app_settings_save(&current) == ESP_OK);
+        assert(app_settings_save_field(APP_SETTING_VOLUME, 20U) == ESP_OK);
+        simulate_restart();
+        assert(app_settings_init() == ESP_OK);
+        assert(app_settings_get(&current) == ESP_OK);
+        assert(current.audio_playback_volume == 20U && current.alarm_volume == 55U);
+    }
+}
+
 int main(void)
 {
+    test_schema7_alarm_migration_and_independent_save();
     test_migration_retry();
     test_scoped_save_failure_noop_and_restart();
     test_dev1_display_is_ignored_without_reset_or_startup_writes();

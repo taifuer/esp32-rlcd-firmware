@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #define SETTINGS_RECORD_ENCODED_SIZE 32U
+#define SETTINGS_RECORD_SCHEMA7_ENCODED_SIZE 32U
 #define SETTINGS_RECORD_SCHEMA6_ENCODED_SIZE 32U
 #define SETTINGS_RECORD_SCHEMA5_ENCODED_SIZE 32U
 #define SETTINGS_RECORD_SCHEMA4_ENCODED_SIZE 32U
@@ -49,6 +50,9 @@ bool settings_record_encode(uint32_t generation,
                             uint8_t *encoded, size_t encoded_size);
 bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
                             settings_record_t *record);
+bool settings_record_decode_schema7(const uint8_t *encoded,
+                                    size_t encoded_size,
+                                    settings_record_t *record);
 bool settings_record_decode_schema6(const uint8_t *encoded,
                                     size_t encoded_size,
                                     settings_record_t *record);

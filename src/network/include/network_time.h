@@ -92,6 +92,8 @@ esp_err_t network_time_begin_online_session_from_maintenance(
     uint32_t timeout_ms);
 /* End a successful online session; calling it again after release is harmless. */
 esp_err_t network_time_end_online_session(void);
+/* Atomically hand the current online owner to the settings hotspot. */
+esp_err_t network_time_online_to_maintenance(void);
 const char *network_time_state_name(network_time_state_t state);
 const char *network_time_failure_name(network_time_failure_t failure);
 

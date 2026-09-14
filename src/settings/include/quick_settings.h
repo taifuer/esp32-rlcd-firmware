@@ -49,6 +49,8 @@ typedef struct {
 void quick_settings_open(quick_settings_t *menu);
 bool quick_settings_open_volume(quick_settings_t *menu, const app_settings_t *latest);
 void quick_settings_close(quick_settings_t *menu);
+uint8_t quick_settings_playback_volume(const quick_settings_t *menu,
+                                       uint8_t saved_volume);
 /* Returns true while the opening/confirming press must still be consumed,
  * including the frame which observes its release. */
 bool quick_settings_release_gate(quick_settings_t *menu, bool any_pressed);

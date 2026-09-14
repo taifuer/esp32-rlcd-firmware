@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "app_settings.h"
+#include "audio_alert.h"
 #include "audio_music.h"
 #include "boot_recovery.h"
 #include "clock_service.h"
@@ -41,14 +42,14 @@
 #define UPDATE_EVENT_GALLERY_INSTALL BIT6
 #define UPDATE_EVENT_WIFI_CHANGED BIT7
 #define UPDATE_EVENT_WEATHER_REFRESH BIT8
+#define UPDATE_EVENT_HOTSPOT BIT9
 #define UPDATE_EVENT_SESSION                                                    \
     (UPDATE_EVENT_COMPLETE | UPDATE_EVENT_FAILED | UPDATE_EVENT_CANCEL |       \
      UPDATE_EVENT_REPROVISION | UPDATE_EVENT_GALLERY_INSTALL |                 \
-     UPDATE_EVENT_WIFI_CHANGED | UPDATE_EVENT_WEATHER_REFRESH)
+     UPDATE_EVENT_WIFI_CHANGED | UPDATE_EVENT_WEATHER_REFRESH | UPDATE_EVENT_HOTSPOT)
 #define UPDATE_EVENT_ALL                                                       \
     (UPDATE_EVENT_SESSION | UPDATE_EVENT_MUTATION_ENDED)
 
-#define SETTINGS_WINDOW_MS 300000U
 #define SETTINGS_ACTIVE_REQUEST_GRACE_MS 35000U
 #define UPDATE_RESTART_DELAY_MS 1800U
 #define UPDATE_SERVER_STOP_DELAY_MS 250U
@@ -160,7 +161,13 @@ static const char SETTINGS_PAGE[] =
     "footer a{color:inherit;text-decoration:none}footer a:hover{text-decoration:underline}"
     "@media(max-width:26rem){.button-row{grid-template-columns:1fr}.wifi-summary{align-items:flex-start;flex-direction:column;gap:.25rem}.wifi-summary strong{text-align:left}}"
     "</style></head><body><main><header><h1>设备设置</h1>"
-    "<p>普通设置保存后立即生效，无需重启。临时热点最多开放 5 分钟。</p></header>"
+    "<p>普通设置立即生效，无需重启。闲置 5 分钟后关闭；一次最多使用 30 分钟，上传中不会因闲置而中断。</p></header>"
+    "<section id=\"pairPanel\" hidden><h2>访问授权</h2><p>输入屏幕上的 8 位 ACCESS CODE，或扫描屏幕二维码。</p>"
+    "<form id=\"pairForm\"><label for=\"pairCode\">访问码</label><input id=\"pairCode\" maxlength=\"8\" minlength=\"8\" required autocomplete=\"off\" autocapitalize=\"characters\">"
+    "<button id=\"pairButton\" type=\"submit\">连接设备</button></form><p id=\"pairMessage\" role=\"status\"></p></section>"
+    "<section id=\"lanPanel\" hidden><h2>同 Wi-Fi 访问</h2><p>仅在可信局域网使用。当前连接为 HTTP，歌曲和普通设置可直接管理；"
+    "修改 Wi-Fi、天气或 AI 凭据，以及本地升级，请切换到设备热点。</p>"
+    "<button id=\"useHotspot\" type=\"button\" class=\"secondary\">切换到设备热点</button><p id=\"hotspotMessage\" role=\"status\"></p></section>"
     "<section><h2>Wi-Fi</h2><div class=\"wifi-summary\"><span id=\"wifiLabel\">已保存网络</span>"
     "<strong id=\"wifiName\">正在读取…</strong></div>"
     "<p id=\"wifiStatus\" class=\"note\">设置期间设备通过临时热点提供本页面。</p>"
@@ -184,7 +191,13 @@ static const char SETTINGS_PAGE[] =
     "<label for=\"volume\">播放音量</label><div class=\"row\">"
     "<input id=\"volume\" name=\"volume\" type=\"range\" min=\"0\" max=\"100\" step=\"1\">"
     "<output id=\"volumeValue\">--</output></div>"
-    "<p class=\"note\">用于音乐、对话和闹钟等扬声器输出；0% 静音。</p>"
+    "<p class=\"note\">用于音乐和对话；0% 静音，不影响独立闹钟音量。</p>"
+    "<label for=\"alarmVolume\">闹钟音量</label><div class=\"row\">"
+    "<input id=\"alarmVolume\" name=\"alarm_volume\" type=\"range\" min=\"0\" max=\"100\" step=\"1\">"
+    "<output id=\"alarmVolumeValue\">--</output></div>"
+    "<button id=\"alarmPreview\" type=\"button\" class=\"secondary\">试听闹钟</button>"
+    "<p class=\"note\">试听最多 3 秒，会停止当前音乐，但不保存设置。闹钟音量为 0% 时只有屏幕提醒。</p>"
+    "<p id=\"alarmPreviewMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
     "<label for=\"alarm\">启用闹钟</label><select id=\"alarm\" name=\"alarm\">"
     "<option value=\"off\">关闭</option><option value=\"on\">开启</option></select>"
     "<label for=\"alarmTime\">响铃时间</label><input id=\"alarmTime\" type=\"time\" value=\"07:30\" step=\"60\" required>"
@@ -296,7 +309,8 @@ static const char SETTINGS_PAGE[] =
     "<div class=\"button-row\"><button id=\"musicRefresh\" type=\"button\" class=\"secondary\">刷新列表</button>"
     "<button id=\"musicDelete\" type=\"button\" class=\"danger\" disabled>删除歌曲</button></div>"
     "<hr class=\"divider\"><label for=\"musicFile\">从手机或电脑选择歌曲</label>"
-    "<input id=\"musicFile\" type=\"file\" accept=\".mp3,.wav,audio/mpeg,audio/wav\" disabled>"
+    "<input id=\"musicFile\" type=\"file\" accept=\".mp3,.wav,audio/mpeg,audio/wav\" multiple disabled>"
+    "<p class=\"note\">可多选，依次上传；每首不超过 32 MB。失败会停止队列，已上传的歌曲保留。</p>"
     "<p class=\"note\">支持 MP3、16 位 PCM WAV，每次上传一首，最大 32 MB，最多 32 首。文件保存在 SD 卡 rlcd/music/，不上传至服务器。</p>"
     "<button id=\"musicUpload\" type=\"button\" disabled>上传歌曲</button>"
     "<progress id=\"musicProgress\" max=\"100\" value=\"0\" hidden></progress>"
@@ -314,21 +328,27 @@ static const char SETTINGS_PAGE[] =
     "<script>document.getElementById('portalYear').textContent=String(new Date().getFullYear());let token='',initialUpdates='stable',settingsBusy=false,wifiConfigured=false,savedWifi='',wifiBusy=false,weatherAvailable=false,weatherConfigured=false,weatherEnabled=false,initialWeatherEnabled=false,weatherBusy=false,weatherRegionRequest=0,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
     "storedImages=[],storedIndex=0,storedSelected='',storedBusy=false,storedRequest=0;"
     "let musicReady=false,musicFull=false,musicBusy=false,musicLoading=false,musicRequest=0,musicTracks=[],musicPlaying=false;"
-    "const $=id=>document.getElementById(id);const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
+    "const $=id=>document.getElementById(id);let localAccess=true;"
+    "if(typeof location!=='undefined'&&location.hash){const fragment=location.hash.slice(1);if(/^[a-f0-9]{32}$/.test(fragment))token=fragment;history.replaceState(null,'',location.pathname)}"
+    "const getOptions=()=>({cache:'no-store',headers:{'X-RLCD-Token':token}});"
+    "const LAN_POSTS=new Set(['/api/settings','/api/time','/api/hotspot','/api/alarm/preview','/api/activity','/api/images/select','/api/images/delete','/api/images/upload','/api/music/play','/api/music/stop','/api/music/delete','/api/music/upload']);"
+    "let lastActivity=0;function userActivity(){const now=Date.now();if(!token||musicBusy||imageBusy||settingsBusy||wifiBusy||weatherBusy||conversationBusy||now-lastActivity<30000)return;lastActivity=now;post('/api/activity','').catch(()=>{})}"
+    "if(document.addEventListener){document.addEventListener('input',userActivity,{passive:true});document.addEventListener('click',userActivity,{passive:true})}"
+    "const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
     "const SOURCE_MAX_BYTES=32*1024*1024,SOURCE_MAX_PIXELS=40000000;"
     "const show=(id,text)=>{$(id).textContent=text};const alarmDays=()=>document.querySelectorAll('.alarm-day');"
     "const unix=()=>String(Math.floor(Date.now()/1000));"
-    "function wifiControls(){const open=$('openWifi').checked;$('wifiForm').setAttribute('aria-busy',wifiBusy?'true':'false');"
+    "function wifiControls(){const open=$('openWifi').checked;if(localAccess){['wifiEdit','wifiSsid','wifiPassword','showWifiPassword','openWifi','wifiSave','wifiCancel','forgetWifi'].forEach(id=>$(id).disabled=true);return}$('wifiForm').setAttribute('aria-busy',wifiBusy?'true':'false');"
     "$('wifiEdit').disabled=wifiBusy;$('wifiSsid').disabled=wifiBusy;$('wifiPassword').disabled=wifiBusy||open;"
     "$('showWifiPassword').disabled=wifiBusy||open;$('openWifi').disabled=wifiBusy;$('wifiSave').disabled=wifiBusy;"
     "$('wifiCancel').disabled=wifiBusy;$('forgetWifi').disabled=wifiBusy||!wifiConfigured}"
     "function setWifiState(configured,ssid){wifiConfigured=configured===true;savedWifi=wifiConfigured&&typeof ssid==='string'?ssid:'';"
-    "$('wifiLabel').textContent=wifiConfigured?'已保存网络':'网络状态';$('wifiName').textContent=wifiConfigured?savedWifi:'尚未配置';"
-    "$('wifiStatus').textContent=wifiConfigured?'设置期间家庭 Wi-Fi 暂停；退出设置后设备会按需连接。':'尚未保存家庭 Wi-Fi，可直接在这里完成配置。';"
+    "$('wifiLabel').textContent=localAccess?'当前连接':wifiConfigured?'已保存网络':'网络状态';$('wifiName').textContent=wifiConfigured?savedWifi:'尚未配置';"
+    "$('wifiStatus').textContent=localAccess?'家庭 Wi-Fi 保持连接；更换网络请切换到设备热点。':wifiConfigured?'热点设置期间家庭 Wi-Fi 暂停；退出后按当前省电设置恢复连接。':'尚未保存家庭 Wi-Fi，可直接在这里完成配置。';"
     "$('wifiEdit').textContent=wifiConfigured?'更换 Wi-Fi':'配置 Wi-Fi';if($('wifiForm').hidden)$('wifiSsid').value=savedWifi;wifiControls()}"
     "function wifiEditing(value){$('wifiForm').hidden=!value;if(value){$('wifiSsid').value=savedWifi;$('wifiPassword').value='';"
     "$('openWifi').checked=false;$('showWifiPassword').checked=false;$('wifiPassword').type='password';$('wifiSsid').focus()}wifiControls()}"
-    "function weatherControls(){const blocked=weatherBusy||!weatherAvailable,enabled=$('weatherEnabled').value==='on',hasProvince=$('weatherProvince').value!=='';"
+    "function weatherControls(){const blocked=localAccess||weatherBusy||!weatherAvailable,enabled=$('weatherEnabled').value==='on',hasProvince=$('weatherProvince').value!=='';"
     "$('weatherForm').setAttribute('aria-busy',weatherBusy?'true':'false');$('weatherEnabled').disabled=blocked;$('weatherApiHost').disabled=blocked;"
     "$('weatherKey').disabled=blocked;$('weatherProvince').disabled=blocked;$('weatherCity').disabled=blocked||!hasProvince;"
     "$('weatherSave').disabled=blocked;$('weatherSave').textContent=enabled?'保存并获取天气':'保存天气设置';$('weatherClear').disabled=blocked;"
@@ -336,7 +356,7 @@ static const char SETTINGS_PAGE[] =
     "function weatherOptions(select,items,placeholder){while(select.firstChild)select.removeChild(select.firstChild);const empty=document.createElement('option');"
     "empty.value='';empty.textContent=placeholder;select.appendChild(empty);items.forEach(item=>{const option=document.createElement('option');"
     "option.value=String(item.id);option.textContent=item.name;select.appendChild(option)})}"
-    "async function weatherRegions(province){const suffix=province?'?province='+encodeURIComponent(province):'',response=await fetch('/api/weather/regions'+suffix,{cache:'no-store'});"
+    "async function weatherRegions(province){const suffix=province?'?province='+encodeURIComponent(province):'',response=await fetch('/api/weather/regions'+suffix,getOptions());"
     "if(!response.ok)throw new Error(await response.text()||'无法读取省市列表');const payload=await response.json();if(!payload||!Array.isArray(payload.items)||"
     "payload.items.some(item=>!item||!Number.isInteger(item.id)||item.id<=0||typeof item.name!=='string'))throw new Error('设备返回的省市列表无效');return payload.items}"
     "async function setWeatherState(state){const weather=state&&typeof state==='object'?state:null;weatherAvailable=weather!==null&&weather.available===true&&"
@@ -351,7 +371,7 @@ static const char SETTINGS_PAGE[] =
     "const cities=selectedProvince?await weatherRegions(selectedProvince):[];if(requestId!==weatherRegionRequest)return;weatherOptions($('weatherCity'),cities,selectedProvince?'请选择城市':'请先选择省份');"
     "$('weatherCity').value=weatherAvailable&&weather.city_id>0?String(weather.city_id):'';if($('weatherCity').selectedIndex<0)$('weatherCity').value='';"
     "show('weatherMessage',weatherAvailable?'':'天气设置暂不可用；其他设备设置仍可正常使用。');weatherControls()}"
-    "function conversationControls(){const blocked=conversationBusy||!conversationAvailable;$('conversationForm').setAttribute('aria-busy',conversationBusy?'true':'false');"
+    "function conversationControls(){const blocked=localAccess||conversationBusy||!conversationAvailable;$('conversationForm').setAttribute('aria-busy',conversationBusy?'true':'false');"
     "$('conversationEnabled').disabled=blocked;$('conversationModel').disabled=blocked;$('conversationApiHost').disabled=blocked;$('conversationKey').disabled=blocked;"
     "$('conversationSave').disabled=blocked;$('conversationClear').disabled=blocked}"
     "function setConversationState(state){const cloud=state&&typeof state==='object'?state:null;conversationAvailable=cloud!==null&&cloud.available===true&&cloud.service==='" SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "'&&typeof cloud.configured==='boolean'&&typeof cloud.enabled==='boolean'&&typeof cloud.model==='string'&&typeof cloud.api_host==='string'&&typeof cloud.shared_endpoint==='boolean';"
@@ -362,7 +382,7 @@ static const char SETTINGS_PAGE[] =
     "function storedControls(){const available=storedImages.length>0&&!imageBusy&&!storedBusy;"
     "$('storedPrevious').disabled=!available||storedImages.length<2;$('storedNext').disabled=!available||storedImages.length<2;"
     "$('storedSelect').disabled=!available||storedImages[storedIndex]===storedSelected;$('storedDelete').disabled=!available}"
-    "function imageControls(){const blocked=!sdReady||imageBusy;$('imageFile').disabled=blocked;$('starterImages').disabled=blocked;"
+    "function imageControls(){const blocked=!sdReady||imageBusy;$('imageFile').disabled=blocked;$('starterImages').disabled=blocked||localAccess;"
     "$('imageUpload').disabled=blocked||!imagePbm;$('threshold').disabled=imageBusy||!imageGray;$('dither').disabled=imageBusy||!imageGray;storedControls()}"
     "function imageBusyState(value){imageBusy=value;imageControls()}"
     "function musicControls(){const blocked=musicBusy||!musicReady,empty=musicTracks.length===0;"
@@ -370,7 +390,7 @@ static const char SETTINGS_PAGE[] =
     "$('musicStop').disabled=musicBusy||!musicPlaying;$('musicRefresh').disabled=musicBusy;"
     "$('musicFile').disabled=blocked||musicFull;$('musicUpload').disabled=blocked||musicFull||!$('musicFile').files.length}"
     "async function loadMusic(preferred){const current=++musicRequest;musicLoading=true;try{"
-    "const response=await fetch('/api/music',{cache:'no-store'});if(!response.ok)throw new Error(await response.text()||'无法读取歌曲列表');"
+    "const response=await fetch('/api/music',getOptions());if(!response.ok)throw new Error(await response.text()||'无法读取歌曲列表');"
     "const data=await response.json();if(current!==musicRequest)return;"
     "if(!Array.isArray(data.tracks)||data.tracks.length>32||data.tracks.some(track=>typeof track.name!=='string'||!Number.isFinite(track.bytes)))throw new Error('歌曲列表无效');"
     "const previous=preferred||$('musicTracks').value;musicTracks=data.tracks;musicReady=data.ready===true;musicFull=musicTracks.length>=32||data.truncated===true;"
@@ -395,19 +415,24 @@ static const char SETTINGS_PAGE[] =
     "$('musicRefresh').onclick=()=>{if(!musicBusy)return loadMusic()};$('musicFile').onchange=()=>musicControls();"
     "$('musicSection').ontoggle=()=>{if($('musicSection').open&&!musicBusy&&!musicLoading)loadMusic()};"
     "setInterval(()=>{if($('musicSection').open&&!document.hidden&&!musicBusy&&!musicLoading)loadMusic()},3000);"
-    "$('musicUpload').onclick=()=>{const file=$('musicFile').files[0];if(musicBusy||!musicReady||musicFull||!file)return;"
-    "if(!/\\.(mp3|wav)$/i.test(file.name)||/[\\x00-\\x1f\\x7f/\\\\:*?\"<>|]/.test(file.name)||file.name.startsWith('.')||new TextEncoder().encode(file.name).length>127||file.size<44||file.size>32000000){"
-    "show('musicMessage','请选择不超过 32 MB 的 MP3 或 PCM WAV，文件名最长 127 个 UTF-8 字节。');return}"
-    "if(musicTracks.some(track=>track.name.toLowerCase()===file.name.toLowerCase())){show('musicMessage','已有同名歌曲，请更换文件名后上传。');return}"
-    "musicBusy=true;++musicRequest;musicLoading=false;musicControls();$('musicProgress').hidden=false;$('musicProgress').value=0;"
-    "show('musicMessage','正在上传，请保持页面打开和设备供电…');const request=new XMLHttpRequest();"
-    "request.open('POST','/api/music/upload?name='+encodeURIComponent(file.name));request.timeout=300000;"
+    "function uploadSong(file,position,total){return new Promise((resolve,reject)=>{const request=new XMLHttpRequest(),label=position+'/'+total+' · '+file.name+' · ';"
+    "show('musicMessage',label+'正在上传…');$('musicProgress').value=0;request.open('POST','/api/music/upload?name='+encodeURIComponent(file.name));request.timeout=630000;"
     "request.setRequestHeader('Content-Type','application/octet-stream');request.setRequestHeader('X-RLCD-Token',token);"
     "request.upload.onprogress=event=>{if(event.lengthComputable){const percent=Math.round(event.loaded*100/event.total);$('musicProgress').value=percent;"
-    "show('musicMessage',percent===100?'上传完成，正在校验并写入…':'正在上传 '+percent+'%')}};"
-    "request.onload=async()=>{if(request.status===200){$('musicFile').value='';await loadMusic(file.name)}"
-    "show('musicMessage',request.responseText||'上传未完成，请刷新列表确认后重试。');musicBusy=false;musicControls()};"
-    "request.onerror=request.ontimeout=request.onabort=()=>{show('musicMessage','连接中断或上传超时，请重新连接并刷新列表确认结果。');musicBusy=false;musicControls()};request.send(file)};"
+    "show('musicMessage',label+(percent===100?'正在校验并写入…':percent+'%'))}};"
+    "request.onload=()=>{if(request.status===200)resolve();else reject(new Error(request.responseText||'上传失败'))};"
+    "request.onerror=request.ontimeout=request.onabort=()=>reject(new Error('连接中断或上传超时，请重新连接并刷新列表确认结果。'));request.send(file)})}"
+    "$('musicUpload').onclick=async()=>{const files=Array.from($('musicFile').files);if(musicBusy||!musicReady||musicFull||!files.length)return;"
+    "if(files.length+musicTracks.length>32){show('musicMessage','歌曲总数不能超过 32 首，请减少本次选择。');return}"
+    "const names=new Set(musicTracks.map(track=>track.name.toLowerCase()));for(const file of files){"
+    "if(!/\\.(mp3|wav)$/i.test(file.name)||/[\\x00-\\x1f\\x7f/\\\\:*?\"<>|]/.test(file.name)||file.name.startsWith('.')||new TextEncoder().encode(file.name).length>127||file.size<44||file.size>32000000){"
+    "show('musicMessage',file.name+'：请选择不超过 32 MB 的 MP3 或 PCM WAV，文件名最长 127 个 UTF-8 字节。');return}"
+    "if(names.has(file.name.toLowerCase())){show('musicMessage',file.name+'：已有同名歌曲，请更换文件名后上传。');return}names.add(file.name.toLowerCase())}"
+    "musicBusy=true;++musicRequest;musicLoading=false;musicControls();$('musicProgress').hidden=false;let completed=0;"
+    "try{for(const file of files){await uploadSong(file,completed+1,files.length);++completed;await loadMusic(file.name);"
+    "if(!musicReady)throw new Error('无法刷新歌曲列表，请确认设备连接。')}"
+    "$('musicFile').value='';show('musicMessage','已上传 '+completed+' 首歌曲。')}"
+    "catch(error){show('musicMessage','已上传 '+completed+'/'+files.length+' 首，队列已停止。'+error.message)}finally{musicBusy=false;musicControls()}};"
     "function setSdState(value,count){const state=String(value||'unknown').toLowerCase(),total=Number.isFinite(Number(count))?Math.max(0,Math.floor(Number(count))):0;"
     "const output=$('sdState');if(state==='ready'||state==='available'||state==='ok'){sdReady=true;output.dataset.state='ready';"
     "output.textContent=total>0?'microSD 可用，现有 '+total+' 张图片。':'microSD 可用，尚无图片。'}"
@@ -431,11 +456,11 @@ static const char SETTINGS_PAGE[] =
     "$('storedManager').hidden=false;$('storedPosition').textContent=(storedIndex+1)+' / '+storedImages.length;"
     "$('storedFilename').textContent=name;const canvas=$('storedCanvas'),context=canvas.getContext('2d');context.fillStyle='#000';"
     "context.fillRect(0,0,canvas.width,canvas.height);storedBusy=true;storedControls();show('storedMessage','正在载入预览…');try{"
-    "const response=await fetch('/api/images/preview?name='+encodeURIComponent(name),{cache:'no-store'});if(!response.ok)throw new Error(await response.text()||'无法读取图片预览');"
+    "const response=await fetch('/api/images/preview?name='+encodeURIComponent(name),getOptions());if(!response.ok)throw new Error(await response.text()||'无法读取图片预览');"
     "const data=new Uint8Array(await response.arrayBuffer());if(requestId!==storedRequest)return;drawStoredPbm(data);"
     "show('storedMessage',name===storedSelected?'当前正在显示这张图片。':'')}catch(error){if(requestId===storedRequest)show('storedMessage',error.message)}"
     "finally{if(requestId===storedRequest){storedBusy=false;storedControls()}}}"
-    "async function loadStoredImages(preferred){const previous=preferred||storedImages[storedIndex]||'';const response=await fetch('/api/images',{cache:'no-store'});"
+    "async function loadStoredImages(preferred){const previous=preferred||storedImages[storedIndex]||'';const response=await fetch('/api/images',getOptions());"
     "if(!response.ok)throw new Error(await response.text()||'无法读取图片列表');const state=await response.json();"
     "if(!Array.isArray(state.images)||state.images.some(name=>typeof name!=='string'))throw new Error('设备返回的图片列表无效');"
     "storedImages=state.images;storedSelected=typeof state.selected==='string'?state.selected:'';const position=storedImages.indexOf(previous);"
@@ -474,19 +499,30 @@ static const char SETTINGS_PAGE[] =
     "const sign=minutes>=0?'+':'-';const absolute=Math.abs(minutes),hours=String(Math.floor(absolute/60)).padStart(2,'0'),"
     "remainder=String(absolute%60).padStart(2,'0');option.value=minutes;option.textContent='UTC'+sign+hours+':'+remainder+"
     "(minutes===480?' · 中国标准时间':'');select.appendChild(option)}}"
-    "async function post(path,body){const headers={'Content-Type':'application/x-www-form-urlencoded',"
+    "async function post(path,body){if(localAccess&&!LAN_POSTS.has(path))throw new Error('此操作请切换到设备热点。');const headers={'Content-Type':'application/x-www-form-urlencoded',"
     "'X-RLCD-Token':token};const response=await fetch(path,{method:'POST',"
     "headers,body});const text=await response.text();if(!response.ok)throw new Error(text||'操作失败');return text;}"
-    "function settingsControls(busy){settingsBusy=busy;$('settings').setAttribute('aria-busy',busy?'true':'false');$('settings').querySelectorAll('input,select,button').forEach(input=>{input.disabled=busy})}"
-    "async function load(section='all',preferred){const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw new Error('无法读取设备设置');"
-    "const state=await response.json();token=state.token;setWifiState(state.wifi_configured,state.wifi_ssid);if(section==='all'||section==='settings'){$('timezone').value=state.timezone;"
+    "function settingsControls(busy){settingsBusy=busy;$('settings').setAttribute('aria-busy',busy?'true':'false');$('settings').querySelectorAll('input,select,button').forEach(input=>{input.disabled=busy});$('defaults').disabled=busy||localAccess}"
+    "async function load(section='all',preferred){const response=await fetch('/api/state',getOptions());if(!response.ok){if(response.status===401){$('pairPanel').hidden=false;token='';throw new Error('请先使用屏幕访问码或二维码授权。')}throw new Error('无法读取设备设置，请确认门户仍在开启。')}"
+    "const state=await response.json();token=state.token;localAccess=state.local_network===true;$('pairPanel').hidden=true;$('lanPanel').hidden=!localAccess;"
+    "['defaults','file','upload'].forEach(id=>$(id).disabled=localAccess);setWifiState(state.wifi_configured,state.wifi_ssid);if(section==='all'||section==='settings'){$('timezone').value=state.timezone;"
     "$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume;$('updates').value=state.updates;"
+    "$('alarmVolume').value=state.alarm_volume;$('alarmVolumeValue').value=state.alarm_volume;"
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
     "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});initialUpdates=state.updates;}"
     "if(section==='all'||section==='conversation')setConversationState(state.conversation);if(section==='all'||section==='weather'){try{await setWeatherState(state.weather)}catch(error){weatherAvailable=false;weatherBusy=false;weatherControls();show('weatherMessage',error.message)}}"
     "if(section==='all'||section==='images'){setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}"
     "if(section==='all'||section==='music')await loadMusic(preferred)}"
     "$('volume').oninput=()=>{$('volumeValue').value=$('volume').value};"
+    "$('pairForm').onsubmit=async event=>{event.preventDefault();const code=$('pairCode').value.trim().toUpperCase();if(!/^[A-Z0-9]{8}$/.test(code)){show('pairMessage','请输入 8 位大写字母和数字。');return}"
+    "$('pairButton').disabled=true;try{const response=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Pair':'1'},body:'code='+code});"
+    "const value=await response.text();if(!response.ok)throw new Error(value||'授权失败');if(!/^[a-f0-9]{32}$/.test(value))throw new Error('授权响应无效');token=value;$('pairCode').value='';await load();show('settingsMessage','')}catch(error){show('pairMessage',error.message)}finally{$('pairButton').disabled=false}};"
+    "$('useHotspot').onclick=async()=>{if(!confirm('切换到设备热点？当前页面将断开，请扫描设备上新的二维码连接。'))return;$('useHotspot').disabled=true;"
+    "try{show('hotspotMessage',await post('/api/hotspot','confirm=HOTSPOT'))}catch(error){show('hotspotMessage',error.message)}finally{$('useHotspot').disabled=false}};"
+    "$('alarmVolume').oninput=()=>{$('alarmVolumeValue').value=$('alarmVolume').value};"
+    "$('alarmPreview').onclick=async()=>{const button=$('alarmPreview');if(button.disabled)return;button.disabled=true;"
+    "try{show('alarmPreviewMessage',await post('/api/alarm/preview','volume='+encodeURIComponent($('alarmVolume').value)))}"
+    "catch(error){show('alarmPreviewMessage',error.message)}finally{button.disabled=false}};"
     "$('settings').onsubmit=async event=>{event.preventDefault();if(settingsBusy)return;const match=/^(\\d{2}):(\\d{2})$/.exec($('alarmTime').value);"
     "const days=Array.from(alarmDays()).reduce((mask,input)=>input.checked?mask|Number(input.dataset.bit):mask,0);"
     "if(!match||Number(match[1])>23||Number(match[2])>59){show('settingsMessage','请选择有效的响铃时间。');return}"
@@ -563,7 +599,7 @@ static const char SETTINGS_PAGE[] =
     "imageBusyState(true);show('starterMessage','正在提交下载请求…');try{const result=await post('/api/images/starter','confirm=STARTER');"
     "show('starterMessage',result||'请求已提交，请查看设备屏幕')}catch(error){show('starterMessage',error.name==='TypeError'?"
     "'连接已断开，请查看设备屏幕上的下载结果。':error.message)}finally{imageBusyState(false)}};"
-    "$('upload').onclick=()=>{const file=$('file'),button=$('upload'),progress=$('progress');if(!file.files.length){"
+    "$('upload').onclick=()=>{if(localAccess){show('updateMessage','本地升级请切换到设备热点。');return}const file=$('file'),button=$('upload'),progress=$('progress');if(!file.files.length){"
     "show('updateMessage','请先选择 OTA 固件');return}if(!confirm('开始写入固件？写入期间请保持供电。'))return;"
     "button.disabled=true;file.disabled=true;const request=new XMLHttpRequest();request.open('POST','/update');"
     "request.setRequestHeader('Content-Type','application/octet-stream');request.setRequestHeader('X-RLCD-Token',token);"
@@ -573,6 +609,7 @@ static const char SETTINGS_PAGE[] =
     "request.onerror=()=>show('updateMessage','连接中断，请查看设备屏幕');request.send(file.files[0])};"
     "zones();settingsControls(true);weatherControls();conversationControls();load().catch(error=>{show('settingsMessage',error.message);setSdState('unknown',0)}).finally(()=>settingsControls(false));</script></main></body></html>";
 
+
 static const char UPDATE_SUCCESS_PAGE[] =
     "升级成功。固件已校验，设备即将自动重启。";
 static const char UPDATE_ERROR_PAGE[] =
@@ -581,11 +618,15 @@ static const char UPDATE_ERROR_PAGE[] =
 static EventGroupHandle_t s_events;
 static httpd_handle_t s_http_server;
 static bool s_initialized;
+static bool s_task_active;
 static bool s_upload_started;
 static bool s_mutation_active;
 static bool s_session_closing;
 static bool s_session_deadline_active;
-static uint32_t s_session_started_tick;
+static settings_portal_clock_t s_session_clock;
+static unsigned s_pair_failures;
+static bool s_pair_attempted;
+static uint32_t s_pair_last_ms;
 static char s_session_token[SETTINGS_PORTAL_TOKEN_CAPACITY];
 static portMUX_TYPE s_status_lock = portMUX_INITIALIZER_UNLOCKED;
 static firmware_update_status_t s_status = {
@@ -601,7 +642,10 @@ static void reset_status_locked(firmware_update_state_t state,
     s_mutation_active = false;
     s_session_closing = false;
     s_session_deadline_active = false;
-    s_session_started_tick = 0U;
+    s_session_clock = (settings_portal_clock_t){0};
+    s_pair_failures = 0U;
+    s_pair_attempted = false;
+    s_pair_last_ms = 0U;
     s_status.state = state;
     s_status.last_error = error;
 }
@@ -628,6 +672,8 @@ static void set_access_details(const char *ssid, const char *password)
     memcpy(s_status.access_point_password, password_value,
            sizeof(password_value));
     memcpy(s_status.access_url, url_value, sizeof(url_value));
+    s_status.local_network = false;
+    memset(s_status.access_qr_url, 0, sizeof(s_status.access_qr_url));
     s_status.state = FIRMWARE_UPDATE_STATE_READY;
     s_status.last_error = ESP_OK;
     portEXIT_CRITICAL(&s_status_lock);
@@ -680,16 +726,15 @@ static esp_err_t send_page(httpd_req_t *request, const char *status,
     return httpd_resp_send(request, body, HTTPD_RESP_USE_STRLEN);
 }
 
-static uint32_t settings_window_ticks(void)
+static uint32_t session_remaining_ms_locked(uint32_t now)
 {
-    return (uint32_t)pdMS_TO_TICKS(SETTINGS_WINDOW_MS);
+    return settings_portal_clock_remaining(&s_session_clock,
+        now * portTICK_PERIOD_MS, !s_session_deadline_active);
 }
 
 static bool refresh_session_deadline_locked(uint32_t now)
 {
-    if (s_session_deadline_active &&
-        settings_portal_deadline_remaining(
-            s_session_started_tick, now, settings_window_ticks()) == 0U) {
+    if (session_remaining_ms_locked(now) == 0U) {
         s_session_closing = true;
         return true;
     }
@@ -701,7 +746,7 @@ static bool session_deadline_expired(void)
     const uint32_t now = (uint32_t)xTaskGetTickCount();
     bool expired;
     portENTER_CRITICAL(&s_status_lock);
-    expired = refresh_session_deadline_locked(now);
+    expired = refresh_session_deadline_locked(now) || s_session_closing;
     portEXIT_CRITICAL(&s_status_lock);
     return expired;
 }
@@ -711,13 +756,11 @@ static void start_session_deadline(void)
     const uint32_t now = (uint32_t)xTaskGetTickCount();
     const bool recovery_mode = boot_recovery_is_active();
     portENTER_CRITICAL(&s_status_lock);
-    if (recovery_mode) {
-        s_session_started_tick = 0U;
-        s_session_deadline_active = false;
-    } else {
-        s_session_started_tick = now;
-        s_session_deadline_active = true;
-    }
+    s_session_clock = (settings_portal_clock_t){
+        .started_ms = now * portTICK_PERIOD_MS,
+        .activity_ms = now * portTICK_PERIOD_MS,
+    };
+    s_session_deadline_active = !recovery_mode;
     portEXIT_CRITICAL(&s_status_lock);
 }
 
@@ -726,12 +769,12 @@ static TickType_t session_deadline_remaining_ticks(void)
     const uint32_t now = (uint32_t)xTaskGetTickCount();
     uint32_t remaining = portMAX_DELAY;
     portENTER_CRITICAL(&s_status_lock);
-    if (s_session_deadline_active) {
-        remaining = settings_portal_deadline_remaining(
-            s_session_started_tick, now, settings_window_ticks());
+    if (s_session_deadline_active || s_session_clock.transaction_active) {
+        remaining = session_remaining_ms_locked(now);
         if (remaining == 0U) {
             s_session_closing = true;
         }
+        remaining = pdMS_TO_TICKS(remaining);
     }
     portEXIT_CRITICAL(&s_status_lock);
     return (TickType_t)remaining;
@@ -818,8 +861,45 @@ static bool request_token_is_valid(httpd_req_t *request)
     return valid;
 }
 
+static bool local_network_portal(void)
+{
+    bool local;
+    portENTER_CRITICAL(&s_status_lock);
+    local = s_status.local_network;
+    portEXIT_CRITICAL(&s_status_lock);
+    return local;
+}
+
+static bool local_request_host_matches(httpd_req_t *request)
+{
+    char host[32] = {0};
+    char expected[FIRMWARE_UPDATE_URL_CAPACITY] = {0};
+    portENTER_CRITICAL(&s_status_lock);
+    memcpy(expected, s_status.access_url, sizeof(expected));
+    portEXIT_CRITICAL(&s_status_lock);
+    return httpd_req_get_hdr_value_str(request, "Host", host, sizeof(host)) == ESP_OK &&
+        settings_portal_host_matches(expected, host);
+}
+
+static bool authorize_get(httpd_req_t *request)
+{
+    if (local_network_portal() &&
+        (!local_request_host_matches(request) || !request_token_is_valid(request))) {
+        (void)send_page(request, "401 Unauthorized", "text/plain; charset=utf-8",
+                        "请扫描设备二维码，或输入屏幕上的访问码。\n");
+        return false;
+    }
+    return true;
+}
+
 static bool authorize_post(httpd_req_t *request)
 {
+    if (local_network_portal() &&
+        (!local_request_host_matches(request) || !settings_portal_lan_post_allowed(request->uri))) {
+        (void)send_page(request, "403 Forbidden", "text/plain; charset=utf-8",
+                        "此操作请切换到设备热点后进行。\n");
+        return false;
+    }
     if (!portal_is_ready()) {
         (void)send_page(request, "409 Conflict",
                         "text/plain; charset=utf-8",
@@ -832,6 +912,9 @@ static bool authorize_post(httpd_req_t *request)
                         "设置会话验证失败，请刷新页面后重试。\n");
         return false;
     }
+    portENTER_CRITICAL(&s_status_lock);
+    s_session_clock.activity_ms = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+    portEXIT_CRITICAL(&s_status_lock);
     return true;
 }
 
@@ -846,6 +929,8 @@ static bool begin_regular_mutation(void)
                 !s_session_closing,
             s_upload_started, s_mutation_active, false)) {
         s_mutation_active = true;
+        s_session_clock.transaction_active = true;
+        s_session_clock.transaction_ms = now * portTICK_PERIOD_MS;
         accepted = true;
     }
     portEXIT_CRITICAL(&s_status_lock);
@@ -856,6 +941,8 @@ static void end_regular_mutation(void)
 {
     portENTER_CRITICAL(&s_status_lock);
     s_mutation_active = false;
+    s_session_clock.transaction_active = false;
+    s_session_clock.activity_ms = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
     portEXIT_CRITICAL(&s_status_lock);
     xEventGroupSetBits(s_events, UPDATE_EVENT_MUTATION_ENDED);
 }
@@ -881,6 +968,8 @@ static bool begin_upload(size_t total)
                 !s_session_closing,
             s_upload_started, s_mutation_active, false)) {
         s_upload_started = true;
+        s_session_clock.transaction_active = true;
+        s_session_clock.transaction_ms = now * portTICK_PERIOD_MS;
         s_status.state = FIRMWARE_UPDATE_STATE_RECEIVING;
         s_status.received_bytes = 0U;
         s_status.total_bytes = total;
@@ -1035,6 +1124,7 @@ static bool cached_image_exists(const char *filename)
 
 static esp_err_t image_list_get_handler(httpd_req_t *request)
 {
+    if (!authorize_get(request)) return ESP_OK;
     if (!portal_is_ready()) {
         return send_page(request, "409 Conflict",
                          "text/plain; charset=utf-8",
@@ -1113,6 +1203,7 @@ static esp_err_t image_list_get_handler(httpd_req_t *request)
 
 static esp_err_t image_preview_get_handler(httpd_req_t *request)
 {
+    if (!authorize_get(request)) return ESP_OK;
     if (!portal_is_ready()) {
         return send_page(request, "409 Conflict",
                          "text/plain; charset=utf-8",
@@ -1222,6 +1313,7 @@ static bool parse_weather_region_id(const char *text, uint32_t *value)
 
 static esp_err_t weather_regions_get_handler(httpd_req_t *request)
 {
+    if (!authorize_get(request)) return ESP_OK;
     if (!portal_is_ready()) {
         return send_page(request, "409 Conflict",
                          "text/plain; charset=utf-8",
@@ -1393,6 +1485,7 @@ static esp_err_t recovery_state_get_handler(httpd_req_t *request)
 
 static esp_err_t settings_state_get_handler(httpd_req_t *request)
 {
+    if (!authorize_get(request)) return ESP_OK;
     if (!portal_is_ready()) {
         return send_page(request, "409 Conflict",
                          "text/plain; charset=utf-8",
@@ -1519,9 +1612,9 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
     }
     const int written = snprintf(
         response->json, sizeof(response->json),
-        "{\"wifi_configured\":%s,\"wifi_ssid\":\"%s\","
+        "{\"local_network\":%s,\"wifi_configured\":%s,\"wifi_ssid\":\"%s\","
         "\"timezone\":%d,\"unit\":\"%s\","
-        "\"volume\":%u,\"updates\":\"%s\","
+        "\"volume\":%u,\"alarm_volume\":%u,\"updates\":\"%s\","
         "\"alarm\":\"%s\","
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
         "\"sd_state\":\"%s\",\"image_count\":%u,"
@@ -1535,11 +1628,13 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         "\"model\":\"%s\",\"service\":\"%s\","
         "\"api_host\":\"%s\",\"shared_endpoint\":%s},"
         "\"token\":\"%s\"}",
+        local_network_portal() ? "true" : "false",
         saved_network.configured ? "true" : "false",
         response->escaped_ssid, settings.utc_offset_minutes,
         settings.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT ? "f"
                                                                      : "c",
         settings.audio_playback_volume,
+        settings.alarm_volume,
         settings.update_channel == APP_UPDATE_CHANNEL_BETA ? "beta"
                                                            : "stable",
         settings.alarm_enabled ? "on" : "off",
@@ -1788,6 +1883,25 @@ static esp_err_t settings_post_handler(httpd_req_t *request)
     }
     return finish_regular_request(
         request, "200 OK", "设置已保存并立即生效。\n");
+}
+
+static esp_err_t alarm_preview_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) return ESP_OK;
+    char body[16] = {0};
+    size_t length = 0U;
+    uint8_t volume = 0U;
+    if (receive_form(request, body, sizeof(body), &length) != ESP_OK ||
+        !settings_portal_parse_volume_form(body, length, &volume)) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                         "请选择 0—100% 的闹钟音量。\n");
+    }
+    if (!begin_regular_mutation()) return send_mutation_unavailable(request);
+    const esp_err_t error = audio_alert_preview(volume);
+    return finish_regular_request(request, error == ESP_OK ? "200 OK" : "409 Conflict",
+        error != ESP_OK ? "音频正在使用，请稍后试听。\n"
+                        : volume == 0U ? "当前闹钟静音，不会发声。\n"
+                                       : "已开始试听，最多 3 秒；设置尚未保存。\n");
 }
 
 static const char *weather_form_error_message(
@@ -2489,6 +2603,7 @@ failed:
 
 static esp_err_t music_list_get_handler(httpd_req_t *request)
 {
+    if (!authorize_get(request)) return ESP_OK;
     if (!portal_is_ready()) return send_mutation_unavailable(request);
     music_library_status_t library;
     music_library_get_status(&library);
@@ -2843,6 +2958,71 @@ failed:
     return failure_response_error;
 }
 
+static esp_err_t pair_post_handler(httpd_req_t *request)
+{
+    if (!local_network_portal() || !local_request_host_matches(request) || !portal_is_ready()) {
+        return send_page(request, "403 Forbidden", "text/plain; charset=utf-8", "设置会话不可用。\n");
+    }
+    char header[4] = {0};
+    if (httpd_req_get_hdr_value_str(request, "X-RLCD-Pair", header, sizeof(header)) != ESP_OK ||
+        strcmp(header, "1") != 0) {
+        return send_page(request, "403 Forbidden", "text/plain; charset=utf-8", "请从本页输入访问码。\n");
+    }
+    const uint32_t now = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+    if (s_pair_failures >= 8U || (s_pair_attempted && now - s_pair_last_ms < 1000U)) {
+        return send_page(request, "429 Too Many Requests", "text/plain; charset=utf-8",
+                         "尝试过于频繁。请稍后重试；连续错误后需重新开启门户或扫码。\n");
+    }
+    s_pair_attempted = true;
+    s_pair_last_ms = now;
+    char body[20] = {0};
+    char expected[FIRMWARE_UPDATE_PASSWORD_CAPACITY] = {0};
+    size_t length = 0U;
+    portENTER_CRITICAL(&s_status_lock);
+    memcpy(expected, s_status.access_point_password, sizeof(expected));
+    portEXIT_CRITICAL(&s_status_lock);
+    const bool matched = receive_form(request, body, sizeof(body), &length) == ESP_OK &&
+        settings_portal_pair_code_matches(expected, body, length);
+    memset(body, 0, sizeof(body));
+    memset(expected, 0, sizeof(expected));
+    if (!matched || !portal_is_ready()) {
+        ++s_pair_failures;
+        return send_page(request, "401 Unauthorized", "text/plain; charset=utf-8", "访问码不正确或会话已结束。\n");
+    }
+    char token[SETTINGS_PORTAL_TOKEN_CAPACITY];
+    portENTER_CRITICAL(&s_status_lock);
+    memcpy(token, s_session_token, sizeof(token));
+    s_session_clock.activity_ms = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+    portEXIT_CRITICAL(&s_status_lock);
+    const esp_err_t result = send_page(request, "200 OK", "text/plain; charset=utf-8", token);
+    memset(token, 0, sizeof(token));
+    return result;
+}
+
+static esp_err_t activity_post_handler(httpd_req_t *request)
+{
+    if (request->content_len != 0U) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8", "Invalid activity request");
+    }
+    if (!authorize_post(request)) return ESP_OK;
+    return send_page(request, "200 OK", "text/plain; charset=utf-8", "OK");
+}
+
+static esp_err_t hotspot_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) return ESP_OK;
+    char body[24] = {0};
+    size_t length = 0U;
+    if (receive_form(request, body, sizeof(body), &length) != ESP_OK ||
+        !settings_portal_confirmation_matches(body, length, "HOTSPOT")) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8", "请确认切换到设备热点。\n");
+    }
+    const esp_err_t error = firmware_update_use_hotspot();
+    return send_page(request, error == ESP_OK ? "200 OK" : "409 Conflict",
+        "text/plain; charset=utf-8", error == ESP_OK
+            ? "正在切换，请连接设备屏幕上的热点后重新打开网页。\n" : "设备正在处理其他操作，请稍后重试。\n");
+}
+
 static esp_err_t redirect_handler(httpd_req_t *request,
                                   httpd_err_code_t error)
 {
@@ -2858,7 +3038,7 @@ static esp_err_t start_web_server(void)
     const bool recovery_mode = boot_recovery_is_active();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192U;
-    config.max_uri_handlers = 28U;
+    config.max_uri_handlers = 32U;
     config.max_open_sockets = 2U;
     config.recv_wait_timeout = 15U;
     config.lru_purge_enable = true;
@@ -2963,6 +3143,10 @@ static esp_err_t start_web_server(void)
         .handler = update_post_handler,
     };
     const httpd_uri_t music_uris[] = {
+        {.uri = "/api/pair", .method = HTTP_POST, .handler = pair_post_handler},
+        {.uri = "/api/activity", .method = HTTP_POST, .handler = activity_post_handler},
+        {.uri = "/api/hotspot", .method = HTTP_POST, .handler = hotspot_post_handler},
+        {.uri = "/api/alarm/preview", .method = HTTP_POST, .handler = alarm_preview_post_handler},
         {.uri = "/api/music", .method = HTTP_GET, .handler = music_list_get_handler},
         {.uri = "/api/music/upload", .method = HTTP_POST, .handler = music_upload_post_handler},
         {.uri = "/api/music/play", .method = HTTP_POST, .handler = music_command_post_handler},
@@ -3056,8 +3240,12 @@ static void stop_web_server(void)
         httpd_stop(s_http_server);
         s_http_server = NULL;
     }
+    /* No in-flight handler can enqueue another preview after this point. */
+    audio_alert_cancel_preview();
     portENTER_CRITICAL(&s_status_lock);
     memset(s_session_token, 0, sizeof(s_session_token));
+    memset(s_status.access_qr_url, 0, sizeof(s_status.access_qr_url));
+    memset(s_status.access_point_password, 0, sizeof(s_status.access_point_password));
     portEXIT_CRITICAL(&s_status_lock);
 }
 
@@ -3238,14 +3426,107 @@ static EventBits_t finish_active_request_after_timeout(void)
     return bits & UPDATE_EVENT_SESSION;
 }
 
+static EventBits_t wait_portal_session(bool local)
+{
+    for (;;) {
+        TickType_t remaining = session_deadline_remaining_ticks();
+        if (remaining == 0U) return finish_active_request_after_timeout();
+        const TickType_t step = pdMS_TO_TICKS(1000U);
+        const EventBits_t bits = xEventGroupWaitBits(s_events, UPDATE_EVENT_SESSION,
+            pdTRUE, pdFALSE, remaining < step ? remaining : step) & UPDATE_EVENT_SESSION;
+        if (bits != 0U) return bits;
+        if (local) {
+            network_time_status_t network = {0};
+            if (network_time_get_status(&network) != ESP_OK || !network.station_connected) {
+                return finish_active_request_after_timeout();
+            }
+        }
+    }
+}
+
+/* Returns false only when the caller should open the ordinary hotspot.
+ * No radio-mode change is made during the LAN session. */
+static bool try_local_network_portal(bool *maintenance_owned)
+{
+    network_time_status_t network = {0};
+    if (boot_recovery_is_active() || network_time_get_status(&network) != ESP_OK ||
+        !network.station_connected || !network.automatic_sync_enabled) return false;
+    esp_err_t error = network_time_begin_online_session(1500U);
+    if (error != ESP_OK) return false;
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t ip = {0};
+    error = netif != NULL ? esp_netif_get_ip_info(netif, &ip) : ESP_ERR_NOT_FOUND;
+    char url[FIRMWARE_UPDATE_URL_CAPACITY] = {0};
+    char code[FIRMWARE_UPDATE_PASSWORD_CAPACITY] = {0};
+    if (error == ESP_OK && ip.ip.addr == 0U) error = ESP_ERR_INVALID_STATE;
+    if (error == ESP_OK) {
+        const int size = snprintf(url, sizeof(url), "http://" IPSTR, IP2STR(&ip.ip));
+        if (size <= 0 || (size_t)size >= sizeof(url)) error = ESP_ERR_INVALID_SIZE;
+    }
+    if (error == ESP_OK) {
+        generate_password(code, sizeof(code));
+        generate_session_token();
+        start_session_deadline();
+        portENTER_CRITICAL(&s_status_lock);
+        s_status.local_network = true;
+        memcpy(s_status.access_url, url, sizeof(url));
+        memcpy(s_status.access_point_password, code, sizeof(code));
+        snprintf(s_status.access_qr_url, sizeof(s_status.access_qr_url), "%s/#%s", url, s_session_token);
+        s_status.state = FIRMWARE_UPDATE_STATE_READY;
+        portEXIT_CRITICAL(&s_status_lock);
+        error = start_web_server();
+    }
+    memset(code, 0, sizeof(code));
+    if (error != ESP_OK) {
+        stop_web_server();
+        (void)network_time_end_online_session();
+        set_state(FIRMWARE_UPDATE_STATE_FAILED, error);
+        return true;
+    }
+    const EventBits_t bits = wait_portal_session(true);
+    /* Give a successful switch POST time to leave the socket. */
+    vTaskDelay(pdMS_TO_TICKS(UPDATE_SERVER_STOP_DELAY_MS));
+    stop_web_server();
+    if ((bits & UPDATE_EVENT_HOTSPOT) != 0U) {
+        error = network_time_online_to_maintenance();
+        if (error != ESP_OK) {
+            (void)network_time_end_online_session();
+            set_state(FIRMWARE_UPDATE_STATE_FAILED, error);
+            return true;
+        }
+        *maintenance_owned = true;
+        portENTER_CRITICAL(&s_status_lock);
+        reset_status_locked(FIRMWARE_UPDATE_STATE_STARTING, ESP_OK);
+        portEXIT_CRITICAL(&s_status_lock);
+        return false;
+    }
+    (void)network_time_end_online_session();
+    set_state((bits & UPDATE_EVENT_CANCEL) != 0U
+                  ? FIRMWARE_UPDATE_STATE_CANCELLED : FIRMWARE_UPDATE_STATE_EXPIRED,
+              (bits & UPDATE_EVENT_CANCEL) != 0U ? ESP_OK : ESP_ERR_TIMEOUT);
+    return true;
+}
+
+static void finish_update_task(void)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    s_task_active = false;
+    portEXIT_CRITICAL(&s_status_lock);
+    vTaskDelete(NULL);
+}
+
 static void update_task(void *argument)
 {
     (void)argument;
-    esp_err_t error = audio_music_stop_and_wait(1500);
-    if (error == ESP_OK) error = network_time_begin_maintenance();
+    bool maintenance_owned = false;
+    if (try_local_network_portal(&maintenance_owned)) {
+        finish_update_task();
+        return;
+    }
+    esp_err_t error = maintenance_owned ? ESP_OK : network_time_begin_maintenance();
     if (error != ESP_OK) {
         set_state(FIRMWARE_UPDATE_STATE_FAILED, error);
-        vTaskDelete(NULL);
+        finish_update_task();
         return;
     }
 
@@ -3259,17 +3540,11 @@ static void update_task(void *argument)
         (void)stop_update_ap();
         network_time_end_maintenance();
         set_state(FIRMWARE_UPDATE_STATE_FAILED, error);
-        vTaskDelete(NULL);
+        finish_update_task();
         return;
     }
 
-    EventBits_t bits = xEventGroupWaitBits(
-        s_events, UPDATE_EVENT_SESSION, pdTRUE, pdFALSE,
-        session_deadline_remaining_ticks());
-    bits &= UPDATE_EVENT_SESSION;
-    if (bits == 0U) {
-        bits = finish_active_request_after_timeout();
-    }
+    EventBits_t bits = wait_portal_session(false);
     if ((bits & UPDATE_EVENT_WEATHER_REFRESH) != 0U) {
         vTaskDelay(pdMS_TO_TICKS(UPDATE_SERVER_STOP_DELAY_MS));
         stop_web_server();
@@ -3282,7 +3557,7 @@ static void update_task(void *argument)
             ESP_LOGW(TAG, "could not start weather refresh: %s",
                      esp_err_to_name(weather_error));
         }
-        vTaskDelete(NULL);
+        finish_update_task();
         return;
     }
     if ((bits & UPDATE_EVENT_GALLERY_INSTALL) != 0U) {
@@ -3296,7 +3571,7 @@ static void update_task(void *argument)
             ESP_LOGW(TAG, "could not start gallery installation: %s",
                      esp_err_to_name(gallery_error));
         }
-        vTaskDelete(NULL);
+        finish_update_task();
         return;
     }
     if ((bits & UPDATE_EVENT_REPROVISION) != 0U) {
@@ -3311,7 +3586,7 @@ static void update_task(void *argument)
             ESP_LOGW(TAG, "could not enter provisioning mode: %s",
                      esp_err_to_name(reprovision_error));
         }
-        vTaskDelete(NULL);
+        finish_update_task();
         return;
     }
     if ((bits & UPDATE_EVENT_WIFI_CHANGED) != 0U) {
@@ -3328,7 +3603,7 @@ static void update_task(void *argument)
             ESP_LOGW(TAG, "could not reconnect saved Wi-Fi after change: %s",
                      esp_err_to_name(sync_error));
         }
-        vTaskDelete(NULL);
+        finish_update_task();
         return;
     }
     if ((bits & UPDATE_EVENT_COMPLETE) != 0U) {
@@ -3347,7 +3622,7 @@ static void update_task(void *argument)
     stop_web_server();
     (void)stop_update_ap();
     network_time_end_maintenance();
-    vTaskDelete(NULL);
+    finish_update_task();
 }
 
 esp_err_t firmware_update_init(void)
@@ -3406,9 +3681,10 @@ esp_err_t firmware_update_start(void)
 
     bool accepted = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (s_status.state == FIRMWARE_UPDATE_STATE_IDLE) {
+    if (s_status.state == FIRMWARE_UPDATE_STATE_IDLE && !s_task_active) {
         reset_status_locked(FIRMWARE_UPDATE_STATE_STARTING, ESP_OK);
         s_upload_started = false;
+        s_task_active = true;
         accepted = true;
     }
     portEXIT_CRITICAL(&s_status_lock);
@@ -3418,9 +3694,27 @@ esp_err_t firmware_update_start(void)
     xEventGroupClearBits(s_events, UPDATE_EVENT_ALL);
     if (xTaskCreate(update_task, "firmware_update", 8192U, NULL, 6U, NULL) !=
         pdPASS) {
+        portENTER_CRITICAL(&s_status_lock);
+        s_task_active = false;
+        portEXIT_CRITICAL(&s_status_lock);
         set_state(FIRMWARE_UPDATE_STATE_FAILED, ESP_ERR_NO_MEM);
         return ESP_ERR_NO_MEM;
     }
+    return ESP_OK;
+}
+
+esp_err_t firmware_update_use_hotspot(void)
+{
+    bool accepted = false;
+    portENTER_CRITICAL(&s_status_lock);
+    if (s_status.local_network && s_status.state == FIRMWARE_UPDATE_STATE_READY &&
+        !s_session_closing && !s_mutation_active && !s_upload_started) {
+        s_session_closing = true;
+        accepted = true;
+    }
+    portEXIT_CRITICAL(&s_status_lock);
+    if (!accepted) return ESP_ERR_INVALID_STATE;
+    xEventGroupSetBits(s_events, UPDATE_EVENT_HOTSPOT);
     return ESP_OK;
 }
 
@@ -3447,7 +3741,7 @@ esp_err_t firmware_update_dismiss_result(void)
 {
     bool dismissed = false;
     portENTER_CRITICAL(&s_status_lock);
-    if (firmware_update_state_is_dismissible(s_status.state)) {
+    if (!s_task_active && firmware_update_state_is_dismissible(s_status.state)) {
         reset_status_locked(FIRMWARE_UPDATE_STATE_IDLE, ESP_OK);
         s_upload_started = false;
         dismissed = true;

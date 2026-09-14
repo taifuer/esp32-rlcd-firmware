@@ -7,6 +7,44 @@
 
 int main(void)
 {
+    settings_portal_clock_t clock = {0};
+    assert(settings_portal_clock_remaining(&clock, 0U, false) == SETTINGS_PORTAL_IDLE_MS);
+    assert(settings_portal_clock_remaining(&clock, SETTINGS_PORTAL_IDLE_MS, false) == 0U);
+    clock.activity_ms = SETTINGS_PORTAL_MAX_MS - 1U;
+    assert(settings_portal_clock_remaining(&clock, SETTINGS_PORTAL_MAX_MS - 1U, false) == 1U);
+    assert(settings_portal_clock_remaining(&clock, SETTINGS_PORTAL_MAX_MS, false) == 0U);
+    clock.transaction_ms = SETTINGS_PORTAL_MAX_MS - 1U;
+    clock.transaction_active = true;
+    assert(settings_portal_clock_remaining(&clock, SETTINGS_PORTAL_MAX_MS, false) == SETTINGS_PORTAL_TRANSACTION_MS - 1U);
+    assert(settings_portal_clock_remaining(&clock, clock.transaction_ms + SETTINGS_PORTAL_TRANSACTION_MS, true) == 0U);
+    clock.transaction_active = false;
+    assert(settings_portal_clock_remaining(&clock, SETTINGS_PORTAL_MAX_MS, true) == UINT32_MAX);
+    clock.started_ms = UINT32_MAX - 9U;
+    clock.activity_ms = clock.started_ms;
+    assert(settings_portal_clock_remaining(&clock, 10U, false) == SETTINGS_PORTAL_IDLE_MS - 20U);
+    assert(settings_portal_clock_remaining(NULL, 0U, false) == 0U);
+    assert(settings_portal_pair_code_matches("ABC12345", "code=ABC12345", 13U));
+    assert(settings_portal_host_matches("http://192.168.1.23", "192.168.1.23"));
+    assert(settings_portal_host_matches("http://192.168.1.23", "192.168.1.23:80"));
+    assert(!settings_portal_host_matches("http://192.168.1.23", "evil.example"));
+    assert(!settings_portal_host_matches("http://192.168.1.23", "192.168.1.23:8080"));
+    assert(!settings_portal_host_matches("http://192.168.1.23", "192.168.1.23.evil.example"));
+    assert(!settings_portal_host_matches("http://192.168.1.23", "192.168.1.23:80:1"));
+    assert(!settings_portal_host_matches("http://", ""));
+    assert(!settings_portal_pair_code_matches("ABC12345", "code=abc12345", 13U));
+    assert(!settings_portal_pair_code_matches("ABC12345", "code=ABC12345&x=1", 17U));
+    assert(!settings_portal_pair_code_matches(NULL, "code=ABC12345", 13U));
+    const char *allowed[] = {"/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/music/upload?name=a.mp3"};
+    for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); ++i) assert(settings_portal_lan_post_allowed(allowed[i]));
+    const char *denied[] = {"/api/wifi/change", "/api/conversation/config", "/api/weather/config", "/api/images/starter", "/update", "/api/settings/", "/api/music/upload/../update", "/api/settings%00", NULL};
+    for (size_t i = 0; i < sizeof(denied) / sizeof(denied[0]); ++i) assert(!settings_portal_lan_post_allowed(denied[i]));
+    uint8_t volume = 42U;
+    assert(settings_portal_parse_volume_form("volume=0", 8U, &volume) && volume == 0U);
+    assert(settings_portal_parse_volume_form("volume=100", 10U, &volume) && volume == 100U);
+    assert(!settings_portal_parse_volume_form("volume=101", 10U, &volume) && volume == 100U);
+    assert(!settings_portal_parse_volume_form("volume=-1", 9U, &volume));
+    assert(!settings_portal_parse_volume_form("volume=1&x", 10U, &volume));
+    assert(!settings_portal_parse_volume_form("volume=", 7U, &volume));
     const uint8_t entropy[SETTINGS_PORTAL_TOKEN_BYTES] = {
         0x00U, 0x12U, 0x34U, 0x56U, 0x78U, 0x9aU, 0xbcU, 0xdeU,
         0xffU, 0xedU, 0xcbU, 0xa9U, 0x87U, 0x65U, 0x43U, 0x21U,

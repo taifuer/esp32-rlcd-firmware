@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define APP_SETTINGS_SCHEMA_VERSION 7U
+#define APP_SETTINGS_SCHEMA_VERSION 8U
 #define APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES 480
 #define APP_SETTINGS_MIN_UTC_OFFSET_MINUTES (-720)
 #define APP_SETTINGS_MAX_UTC_OFFSET_MINUTES 840
@@ -51,6 +51,7 @@ typedef struct {
     int16_t utc_offset_minutes;
     app_temperature_unit_t temperature_unit;
     uint8_t audio_playback_volume;
+    uint8_t alarm_volume;
     app_update_channel_t update_channel;
     bool alarm_enabled;
     uint8_t alarm_hour;
