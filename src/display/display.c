@@ -7,6 +7,7 @@
 #include "calendar_month.h"
 #include "display_interaction_model.h"
 #include "music_display_model.h"
+#include "market_display_layout.h"
 #include "settings_display_layout.h"
 #include "network_credentials.h"
 #include "qrcode.h"
@@ -1165,8 +1166,28 @@ void display_show_weather(const display_weather_t *weather)
         WEATHER_SOURCE_BASELINE_Y, source);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
     draw_centered(WEATHER_FOOTER_BASELINE_Y,
-                  display_interaction_weather_footer());
+                  display_interaction_weather_footer_with_market(
+                      weather->market_enabled));
     u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_market(const display_market_t *market)
+{
+    if (s_u8g2 == NULL || market == NULL) return;
+    /* Display calls are serialized by the app task. Keep this bounded layout
+     * scratch off that task's stack, like the app's other page snapshots. */
+    static market_display_line_t lines[MARKET_DISPLAY_LINE_LIMIT];
+    const size_t count = market_display_lines(market, lines);
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    u8g2_SetFontPosBaseline(s_u8g2);
+    u8g2_SetFontMode(s_u8g2, 1);
+    u8g2_DrawHLine(s_u8g2, 12, 42, 376);
+    u8g2_DrawHLine(s_u8g2, 12, 250, 376);
+    for (size_t i = 0U; i < count; ++i)
+        market_display_draw_line(s_u8g2, &lines[i]);
+    u8g2_SendBuffer(s_u8g2);
+    u8g2_SetFontMode(s_u8g2, 0);
 }
 
 void display_show_calendar(const display_dashboard_t *dashboard,

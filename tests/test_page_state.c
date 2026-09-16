@@ -10,6 +10,7 @@ static void test_browsing_stays_and_background_discovery_never_navigates(void)
     app_page_state_init(&state);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
     app_page_state_set_weather_enabled(&state, true);
+    app_page_state_set_market_enabled(&state, true);
     app_page_state_set_image_available(&state, true);
     app_page_state_set_music_available(&state, true);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
@@ -19,6 +20,7 @@ static void test_browsing_stays_and_background_discovery_never_navigates(void)
         assert(app_page_state_open_page(&state, page));
         for (unsigned poll = 0U; poll < 3600U; ++poll) {
             app_page_state_set_weather_enabled(&state, true);
+            app_page_state_set_market_enabled(&state, true);
             app_page_state_set_image_available(&state, true);
             app_page_state_set_music_available(&state, true);
             assert(app_page_state_current(&state) == page);
@@ -26,6 +28,7 @@ static void test_browsing_stays_and_background_discovery_never_navigates(void)
         app_page_state_init(&state); /* reboot does not remember this page */
         assert(app_page_state_current(&state) == APP_PAGE_HOME);
         app_page_state_set_weather_enabled(&state, true);
+        app_page_state_set_market_enabled(&state, true);
         app_page_state_set_image_available(&state, true);
         app_page_state_set_music_available(&state, true);
     }
@@ -50,6 +53,12 @@ int main(void)
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
     assert(app_page_is_daily(APP_PAGE_HOME));
     assert(app_page_is_daily(APP_PAGE_WEATHER));
+    assert(app_page_is_daily(APP_PAGE_MARKET));
+    assert(!app_page_is_system(APP_PAGE_MARKET));
+    assert(!app_page_state_open_page(&state, APP_PAGE_MARKET));
+    assert(app_page_key_hold_action(APP_PAGE_MARKET) == APP_PAGE_ACTION_REFRESH_MARKET);
+    assert(app_page_key_hold_threshold_ms(APP_PAGE_MARKET) == 2000U);
+    assert(app_page_boot_hold_action(APP_PAGE_MARKET) == APP_PAGE_ACTION_NONE);
     assert(app_page_is_daily(APP_PAGE_CALENDAR));
     assert(app_page_is_daily(APP_PAGE_IMAGE));
     assert(!app_page_is_daily(APP_PAGE_STATUS));
@@ -128,14 +137,16 @@ int main(void)
     assert(app_page_boot_hold_threshold_ms(APP_PAGE_ONLINE_UPDATE) == 0U);
 
     /* All availability combinations keep Chat in the daily ring, last. */
-    for (unsigned flags = 0U; flags < 8U; ++flags) {
+    for (unsigned flags = 0U; flags < 16U; ++flags) {
         app_page_state_init(&state);
         app_page_state_set_weather_enabled(&state, (flags & 1U) != 0U);
         app_page_state_set_image_available(&state, (flags & 2U) != 0U);
         app_page_state_set_music_available(&state, (flags & 4U) != 0U);
-        app_page_t ring[6] = {APP_PAGE_HOME};
+        app_page_state_set_market_enabled(&state, (flags & 8U) != 0U);
+        app_page_t ring[7] = {APP_PAGE_HOME};
         unsigned count = 1U;
         if (flags & 1U) ring[count++] = APP_PAGE_WEATHER;
+        if (flags & 8U) ring[count++] = APP_PAGE_MARKET;
         ring[count++] = APP_PAGE_CALENDAR;
         if (flags & 2U) ring[count++] = APP_PAGE_IMAGE;
         if (flags & 4U) ring[count++] = APP_PAGE_MUSIC;
@@ -167,6 +178,16 @@ int main(void)
     assert(!app_page_state_open_page(&state, (app_page_t)(APP_PAGE_ONLINE_UPDATE + 1)));
     assert(!app_page_is_system((app_page_t)-1));
     assert(!app_page_is_daily((app_page_t)-1));
+    assert(app_page_state_open_page(&state, APP_PAGE_MARKET));
+    /* Polling, failed downloads and unrelated availability changes cannot
+     * navigate away. Only an explicit disable removes this daily page. */
+    for (unsigned i = 0U; i < 100U; ++i) {
+        app_page_state_set_market_enabled(&state, true);
+        assert(app_page_state_current(&state) == APP_PAGE_MARKET);
+    }
+    app_page_state_set_market_enabled(&state, false);
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+    assert(!app_page_state_open_page(&state, APP_PAGE_MARKET));
     assert(app_page_state_open_page(&state, APP_PAGE_WEATHER));
     app_page_state_set_weather_enabled(&state, false);
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
@@ -185,6 +206,8 @@ int main(void)
     assert(!app_page_state_open_page(&state, APP_PAGE_HOME));
     assert(!app_page_state_open_page(&state, APP_PAGE_WEATHER));
     assert(!app_page_state_open_page(&state, APP_PAGE_CALENDAR));
+    app_page_state_set_market_enabled(&state, true);
+    assert(!app_page_state_open_page(&state, APP_PAGE_MARKET));
     assert(!app_page_state_open_page(&state, APP_PAGE_IMAGE));
     assert(!app_page_state_open_page(&state, APP_PAGE_MUSIC));
     assert(!app_page_state_open_page(&state, APP_PAGE_STATUS));
@@ -209,6 +232,7 @@ int main(void)
     app_page_state_go_home(NULL);
     assert(!app_page_state_open_page(NULL, APP_PAGE_HOME));
     app_page_state_set_weather_enabled(NULL, true);
+    app_page_state_set_market_enabled(NULL, true);
     app_page_state_set_image_available(NULL, true);
     app_page_state_set_recovery_mode(NULL, true);
     app_page_state_boot_short_press(NULL);

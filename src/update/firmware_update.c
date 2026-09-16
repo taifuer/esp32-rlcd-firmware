@@ -26,6 +26,9 @@
 #include "freertos/event_groups.h"
 #include "freertos/task.h"
 #include "gallery_download.h"
+#include "market_config.h"
+#include "market_portal_model.h"
+#include "market_service.h"
 #include "network_credentials.h"
 #include "network_time.h"
 #include "sd_image.h"
@@ -73,6 +76,7 @@
 #define SETTINGS_JSON_ESCAPE_CAPACITY(maximum_length) \
     ((maximum_length) * 6U + 1U)
 #define SETTINGS_STATE_JSON_CAPACITY 6144U
+#define SETTINGS_MARKET_JSON_CAPACITY 2048U
 #define SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "aliyun_realtime"
 #define SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI                              \
     "qwen3-omni-flash-realtime"
@@ -157,6 +161,7 @@ static const char SETTINGS_PAGE[] =
     ".wifi-form{margin-top:.9rem;padding-top:.1rem}.wifi-form[hidden]{display:none}.compact{margin-top:.7rem}"
     ".source-link{color:#255da8;text-decoration:none}.source-link:hover{text-decoration:underline}"
     ".section-toggle{cursor:pointer;font-size:1.15rem;font-weight:650;line-height:1.5}.section-toggle span{float:right;margin-left:.75rem;font-size:.88rem;font-weight:400;color:#676b70}"
+    ".market-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.15rem .65rem;margin:.5rem 0}.market-choices label{margin:0;min-height:44px;font-size:.92rem;font-weight:500}.market-order{list-style:none;padding:0;margin:.5rem 0}.market-order li{display:grid;grid-template-columns:minmax(0,1fr) 44px 44px;gap:.4rem;align-items:center;margin:.3rem 0}.market-order button{margin:0;padding:.35rem;font-size:1.05rem}.market-order span{font-size:.92rem}"
     "details[open]>.section-toggle{margin-bottom:.9rem}.section-note{margin-top:.75rem}footer{text-align:center;margin-top:1.5rem;font-size:.85rem;color:#676b70}"
     "footer a{color:inherit;text-decoration:none}footer a:hover{text-decoration:underline}"
     "@media(max-width:26rem){.wifi-summary{align-items:flex-start;flex-direction:column;gap:.25rem}.wifi-summary strong{text-align:left}}"
@@ -245,6 +250,15 @@ static const char SETTINGS_PAGE[] =
     "<details class=\"advanced\"><summary>清除天气配置</summary>"
     "<p class=\"note\">清除 API Host、API Key、位置和本地天气缓存；其他设置不会改变，设备无需重启。</p>"
     "<button id=\"weatherClear\" type=\"button\" class=\"danger\">确认清除天气配置</button></details></details></section>"
+    "<section><details><summary class=\"section-toggle\">市场看板<span id=\"marketStatus\">正在读取…</span></summary>"
+    "<form id=\"marketForm\"><label for=\"marketEnabled\">市场页面</label><select id=\"marketEnabled\"><option value=\"off\">关闭（默认）</option><option value=\"on\">开启</option></select>"
+    "<p class=\"note section-note\">从预设指数中选择 1—5 项。开启后按 BOOT 切到 MARKET 页面。</p>"
+    "<div class=\"image-meta\"><strong>显示指数</strong><span id=\"marketCount\" aria-live=\"polite\">0 / 5</span></div>"
+    "<div id=\"marketChoices\" class=\"market-choices\" role=\"group\" aria-label=\"预设指数\"></div>"
+    "<p class=\"note\">显示顺序</p><ol id=\"marketOrder\" class=\"market-order\" aria-label=\"指数显示顺序\"></ol>"
+    "<p class=\"note\">设备直连新浪财经，无需 API Key。正常模式下停留在市场页时约每 2 分钟刷新；省电时可长按 KEY 手动刷新。报价时间为北京时间（UTC+8），数据可能延迟，仅供参考。</p>"
+    "<button id=\"marketSave\" type=\"submit\">保存市场看板</button></form>"
+    "<p id=\"marketMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section>"
     "<section><details><summary class=\"section-toggle\">AI 对话 Beta<span id=\"conversationStatus\">正在读取…</span></summary>"
     "<form id=\"conversationForm\" autocomplete=\"off\">"
     "<input type=\"hidden\" name=\"service\" value=\""
@@ -336,14 +350,15 @@ static const char SETTINGS_PAGE[] =
     "<script>document.getElementById('portalYear').textContent=String(new Date().getFullYear());let token='',initialUpdates='stable',settingsBusy=false,wifiConfigured=false,savedWifi='',wifiBusy=false,weatherAvailable=false,weatherConfigured=false,weatherEnabled=false,initialWeatherEnabled=false,weatherBusy=false,weatherRegionRequest=0,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
     "storedImages=[],storedIndex=0,storedSelected='',storedBusy=false,storedRequest=0;"
     "let musicReady=false,musicFull=false,musicBusy=false,musicLoading=false,musicRequest=0,musicTracks=[],musicPlaying=false;"
+    "let marketAvailable=false,marketBusy=false,marketPresets=[],marketIds=[],marketChecks=[],marketMoves=[];"
     "const $=id=>document.getElementById(id);let localAccess=true;"
     "const sections=['General','Network','Media','Maintenance'];let alarmBusy=false,updatesBusy=false;"
     "function selectSection(name){sections.forEach(section=>{$('panel'+section).hidden=section!==name;$('nav'+section).setAttribute('aria-pressed',section===name?'true':'false')});if(name==='Media'&&token&&!musicBusy)loadMusic().catch(error=>show('musicMessage',error.message))}"
     "sections.forEach(section=>{$('nav'+section).onclick=()=>selectSection(section)});"
     "if(typeof location!=='undefined'&&location.hash){const fragment=location.hash.slice(1);if(/^[a-f0-9]{32}$/.test(fragment))token=fragment;history.replaceState(null,'',location.pathname)}"
     "const getOptions=()=>({cache:'no-store',headers:{'X-RLCD-Token':token}});"
-    "const LAN_POSTS=new Set(['/api/settings','/api/time','/api/hotspot','/api/alarm/preview','/api/activity','/api/images/select','/api/images/delete','/api/images/upload','/api/music/play','/api/music/stop','/api/music/delete','/api/music/upload']);"
-    "let lastActivity=0;function userActivity(){const now=Date.now();if(!token||musicBusy||imageBusy||settingsBusy||wifiBusy||weatherBusy||conversationBusy||now-lastActivity<30000)return;lastActivity=now;post('/api/activity','').catch(()=>{})}"
+    "const LAN_POSTS=new Set(['/api/settings','/api/time','/api/hotspot','/api/alarm/preview','/api/activity','/api/market/config','/api/images/select','/api/images/delete','/api/images/upload','/api/music/play','/api/music/stop','/api/music/delete','/api/music/upload']);"
+    "let lastActivity=0;function userActivity(){const now=Date.now();if(!token||musicBusy||imageBusy||settingsBusy||wifiBusy||weatherBusy||conversationBusy||marketBusy||now-lastActivity<30000)return;lastActivity=now;post('/api/activity','').catch(()=>{})}"
     "if(document.addEventListener){document.addEventListener('input',userActivity,{passive:true});document.addEventListener('click',userActivity,{passive:true})}"
     "const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
     "const SOURCE_MAX_BYTES=32*1024*1024,SOURCE_MAX_PIXELS=40000000;"
@@ -359,6 +374,16 @@ static const char SETTINGS_PAGE[] =
     "$('wifiEdit').textContent=wifiConfigured?'更换 Wi-Fi':'配置 Wi-Fi';if($('wifiForm').hidden)$('wifiSsid').value=savedWifi;wifiControls()}"
     "function wifiEditing(value){$('wifiForm').hidden=!value;if(value){$('wifiSsid').value=savedWifi;$('wifiPassword').value='';"
     "$('openWifi').checked=false;$('showWifiPassword').checked=false;$('wifiPassword').type='password';$('wifiSsid').focus()}wifiControls()}"
+    "function marketControls(){const blocked=marketBusy||!marketAvailable;$('marketForm').setAttribute('aria-busy',marketBusy?'true':'false');$('marketEnabled').disabled=blocked;$('marketSave').disabled=blocked||marketIds.length<1;"
+    "$('marketCount').textContent=marketIds.length+' / 5';marketChecks.forEach(({id,input})=>{input.checked=marketIds.includes(id);input.disabled=blocked||(!input.checked&&marketIds.length>=5)});marketMoves.forEach(({button,index,delta})=>{button.disabled=blocked||index+delta<0||index+delta>=marketIds.length})}"
+    "function marketSelection(id,checked){if(marketBusy||!marketAvailable)return;const index=marketIds.indexOf(id);if(checked&&index<0){if(marketIds.length>=5){show('marketMessage','最多显示 5 项，请先取消一项。');marketControls();return}marketIds.push(id)}else if(!checked&&index>=0)marketIds.splice(index,1);show('marketMessage','');renderMarketOrder();marketControls()}"
+    "function marketMove(index,delta){if(marketBusy||!marketAvailable||index<0||index>=marketIds.length||index+delta<0||index+delta>=marketIds.length)return;const target=index+delta;[marketIds[index],marketIds[target]]=[marketIds[target],marketIds[index]];renderMarketOrder();marketControls();const moved=marketMoves.find(item=>item.index===target&&item.delta===delta&&!item.button.disabled)||marketMoves.find(item=>item.index===target&&!item.button.disabled);if(moved)moved.button.focus()}"
+    "function renderMarketOrder(){const list=$('marketOrder');while(list.firstChild)list.removeChild(list.firstChild);marketMoves=[];marketIds.forEach((id,index)=>{const preset=marketPresets.find(item=>item.id===id),row=document.createElement('li'),name=document.createElement('span');name.textContent=(index+1)+'. '+preset.name;row.appendChild(name);"
+    "[-1,1].forEach(delta=>{const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent=delta<0?'↑':'↓';button.setAttribute('aria-label',(delta<0?'上移':'下移')+preset.name);button.onclick=()=>marketMove(index,delta);row.appendChild(button);marketMoves.push({button,index,delta})});list.appendChild(row)})}"
+    "async function loadMarket(){const response=await fetch('/api/market/config',getOptions());if(!response.ok)throw new Error(await response.text()||'无法读取市场看板');const state=await response.json();"
+    "if(!state||typeof state.enabled!=='boolean'||!Array.isArray(state.presets)||state.presets.length!==15||state.presets.some(item=>!item||!Number.isInteger(item.id)||item.id<0||item.id>=15||typeof item.name!=='string')||new Set(state.presets.map(item=>item.id)).size!==15||!Array.isArray(state.ids)||state.ids.length<1||state.ids.length>5||new Set(state.ids).size!==state.ids.length||state.ids.some(id=>!Number.isInteger(id)||!state.presets.some(item=>item.id===id)))throw new Error('设备返回的市场看板配置无效');"
+    "marketPresets=state.presets;marketIds=state.ids.slice();marketAvailable=true;$('marketEnabled').value=state.enabled?'on':'off';$('marketStatus').textContent=state.enabled?'已开启 · '+marketIds.length+' 项':'已关闭';const choices=$('marketChoices');while(choices.firstChild)choices.removeChild(choices.firstChild);marketChecks=[];"
+    "marketPresets.forEach(preset=>{const label=document.createElement('label'),input=document.createElement('input'),name=document.createElement('span');label.className='check';input.type='checkbox';input.onchange=()=>marketSelection(preset.id,input.checked);name.textContent=preset.name;label.appendChild(input);label.appendChild(name);choices.appendChild(label);marketChecks.push({id:preset.id,input})});renderMarketOrder();marketControls();show('marketMessage','')}"
     "function weatherControls(){const blocked=localAccess||weatherBusy||!weatherAvailable,enabled=$('weatherEnabled').value==='on',hasProvince=$('weatherProvince').value!=='';"
     "$('weatherForm').setAttribute('aria-busy',weatherBusy?'true':'false');$('weatherEnabled').disabled=blocked;$('weatherApiHost').disabled=blocked;"
     "$('weatherKey').disabled=blocked;$('weatherProvince').disabled=blocked;$('weatherCity').disabled=blocked||!hasProvince;"
@@ -528,6 +553,7 @@ static const char SETTINGS_PAGE[] =
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
     "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});}"
     "if(section==='all'||section==='conversation')setConversationState(state.conversation);if(section==='all'||section==='weather'){try{await setWeatherState(state.weather)}catch(error){weatherAvailable=false;weatherBusy=false;weatherControls();show('weatherMessage',error.message)}}"
+    "if(section==='all'||section==='market'){try{await loadMarket()}catch(error){marketAvailable=false;marketControls();$('marketStatus').textContent='暂不可用';show('marketMessage',error.message)}}"
     "if(section==='all'||section==='images'){setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}"
     "if(section==='all'||section==='music')await loadMusic(preferred)}"
     "$('volume').oninput=()=>{$('volumeValue').value=$('volume').value};"
@@ -577,6 +603,8 @@ static const char SETTINGS_PAGE[] =
     "$('weatherClear').onclick=async()=>{if(weatherBusy||!weatherAvailable)return;if(!confirm('确认清除天气 API Key、位置和本地缓存？此操作无法撤销。'))return;"
     "weatherBusy=true;weatherControls();show('weatherMessage','正在清除…');try{const message=await post('/api/weather/clear','confirm=CLEAR_WEATHER');await load('weather');show('weatherMessage',message)}"
     "catch(error){show('weatherMessage',error.message)}finally{weatherBusy=false;weatherControls()}};"
+    "$('marketForm').onsubmit=async event=>{event.preventDefault();if(marketBusy||!marketAvailable)return;if(marketIds.length<1||marketIds.length>5){show('marketMessage','请选择 1—5 项指数。');return}const enabled=$('marketEnabled').value==='on',body=new URLSearchParams({enabled:enabled?'on':'off',ids:marketIds.join(',')}).toString();marketBusy=true;marketControls();show('marketMessage','正在保存…');"
+    "try{const message=await post('/api/market/config',body);$('marketStatus').textContent=enabled?'已开启 · '+marketIds.length+' 项':'已关闭';show('marketMessage',message)}catch(error){show('marketMessage',error.message)}finally{marketBusy=false;marketControls()}};"
     "$('conversationForm').onsubmit=async event=>{event.preventDefault();if(conversationBusy||!conversationAvailable)return;"
     "const body=new URLSearchParams(new FormData(event.target)).toString();conversationBusy=true;conversationControls();"
     "show('conversationMessage','正在保存…');try{const message=await post('/api/conversation/config',body);await load('conversation');show('conversationMessage',message)}"
@@ -585,7 +613,7 @@ static const char SETTINGS_PAGE[] =
     "if(!confirm('确认清除已保存的 API Key，关闭 AI 对话并恢复默认模型与 API Host？此操作无法撤销。'))return;conversationBusy=true;conversationControls();"
     "show('conversationMessage','正在清除…');try{const message=await post('/api/conversation/clear','confirm=CLEAR_CONVERSATION');"
     "await load('conversation');show('conversationMessage',message)}catch(error){show('conversationMessage',error.message)}finally{conversationBusy=false;conversationControls()}};"
-    "$('defaults').onclick=async()=>{if(localAccess||settingsBusy||alarmBusy||updatesBusy||!confirm('恢复偏好默认值？常用、闹钟与更新设置的未保存修改也会清除。Wi-Fi、天气和 AI 配置不变。'))return;settingsControls(true);alarmControls(true);updatesControls(true);"
+    "$('defaults').onclick=async()=>{if(localAccess||settingsBusy||alarmBusy||updatesBusy||!confirm('恢复偏好默认值？常用、闹钟与更新设置的未保存修改也会清除。Wi-Fi、天气、市场看板和 AI 配置不变。'))return;settingsControls(true);alarmControls(true);updatesControls(true);"
     "show('maintenanceMessage','正在恢复…');try{const message=await post('/api/settings/defaults','confirm=DEFAULTS');await load('settings');await load('alarm');await load('updates');show('maintenanceMessage',message)}"
     "catch(error){show('maintenanceMessage',error.message)}finally{settingsControls(false);alarmControls(false);updatesControls(false)}};"
     "$('forgetWifi').onclick=async()=>{if(!confirm('移除已保存的 Wi-Fi？设置热点随后会关闭并进入首次配网。'))return;"
@@ -627,7 +655,7 @@ static const char SETTINGS_PAGE[] =
     "progress.value=value;show('updateMessage','正在上传 '+value+'%')}};request.onload=()=>{show('updateMessage',request.responseText||"
     "(request.status===200?'升级成功，设备即将重启':'升级失败'));if(request.status!==200){button.disabled=false;file.disabled=false}};"
     "request.onerror=()=>show('updateMessage','连接中断，请查看设备屏幕');request.send(file.files[0])};"
-    "zones();settingsControls(true);alarmControls(true);updatesControls(true);weatherControls();conversationControls();load().catch(error=>{show('settingsMessage',error.message);setSdState('unknown',0)}).finally(()=>{settingsControls(false);alarmControls(false);updatesControls(false)});</script></main></body></html>";
+    "zones();settingsControls(true);alarmControls(true);updatesControls(true);weatherControls();conversationControls();marketControls();load().catch(error=>{show('settingsMessage',error.message);setSdState('unknown',0)}).finally(()=>{settingsControls(false);alarmControls(false);updatesControls(false)});</script></main></body></html>";
 
 
 static const char UPDATE_SUCCESS_PAGE[] =
@@ -1442,6 +1470,65 @@ static esp_err_t weather_regions_get_handler(httpd_req_t *request)
     return error;
 }
 
+static esp_err_t market_config_get_handler(httpd_req_t *request)
+{
+    if (!authorize_get(request)) return ESP_OK;
+    if (!portal_is_ready() || boot_recovery_is_active()) {
+        return send_page(request, "409 Conflict", "text/plain; charset=utf-8",
+                         "当前设置会话不可用。\n");
+    }
+    market_config_t config = {0};
+    if (market_config_get(&config) != ESP_OK || !market_config_valid(&config)) {
+        return send_page(request, "503 Service Unavailable", "text/plain; charset=utf-8",
+                         "市场看板设置暂不可用，请稍后重试。\n");
+    }
+    char *const json = heap_caps_calloc(1U, SETTINGS_MARKET_JSON_CAPACITY,
+                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (json == NULL) {
+        return send_page(request, "503 Service Unavailable", "text/plain; charset=utf-8",
+                         "设备内存不足，暂时无法读取市场看板设置。\n");
+    }
+    int written = snprintf(json, SETTINGS_MARKET_JSON_CAPACITY,
+                           "{\"enabled\":%s,\"ids\":[", config.enabled ? "true" : "false");
+    bool valid = written > 0 && (size_t)written < SETTINGS_MARKET_JSON_CAPACITY;
+    size_t offset = valid ? (size_t)written : 0U;
+    for (size_t index = 0U; valid && index < config.count; ++index) {
+        written = snprintf(json + offset, SETTINGS_MARKET_JSON_CAPACITY - offset,
+                           "%s%u", index == 0U ? "" : ",", (unsigned)config.ids[index]);
+        valid = written > 0 && (size_t)written < SETTINGS_MARKET_JSON_CAPACITY - offset;
+        if (valid) offset += (size_t)written;
+    }
+    if (valid) {
+        written = snprintf(json + offset, SETTINGS_MARKET_JSON_CAPACITY - offset,
+                           "],\"presets\":[");
+        valid = written > 0 && (size_t)written < SETTINGS_MARKET_JSON_CAPACITY - offset;
+        if (valid) offset += (size_t)written;
+    }
+    for (size_t index = 0U; valid && index < market_preset_count(); ++index) {
+        const market_preset_t *const preset = market_preset_get(index);
+        char name[SETTINGS_JSON_ESCAPE_CAPACITY(64U)] = {0};
+        if (preset == NULL || !settings_portal_json_escape(preset->name, name, sizeof(name))) {
+            valid = false;
+            break;
+        }
+        written = snprintf(json + offset, SETTINGS_MARKET_JSON_CAPACITY - offset,
+                           "%s{\"id\":%u,\"name\":\"%s\"}",
+                           index == 0U ? "" : ",", (unsigned)preset->id, name);
+        valid = written > 0 && (size_t)written < SETTINGS_MARKET_JSON_CAPACITY - offset;
+        if (valid) offset += (size_t)written;
+    }
+    if (valid) {
+        written = snprintf(json + offset, SETTINGS_MARKET_JSON_CAPACITY - offset, "]}");
+        valid = written > 0 && (size_t)written < SETTINGS_MARKET_JSON_CAPACITY - offset;
+    }
+    const esp_err_t result = valid
+        ? send_page(request, "200 OK", "application/json; charset=utf-8", json)
+        : send_page(request, "500 Internal Server Error", "text/plain; charset=utf-8",
+                    "无法读取市场看板设置。\n");
+    heap_caps_free(json);
+    return result;
+}
+
 static const char *conversation_service_form_value(
     conversation_service_t service)
 {
@@ -1903,6 +1990,43 @@ static esp_err_t settings_post_handler(httpd_req_t *request)
     }
     return finish_regular_request(
         request, "200 OK", "设置已保存并立即生效。\n");
+}
+
+static esp_err_t market_config_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) return ESP_OK;
+    if (boot_recovery_is_active()) {
+        return send_page(request, "409 Conflict", "text/plain; charset=utf-8",
+                         "恢复模式不提供市场看板设置。\n");
+    }
+    char body[MARKET_PORTAL_FORM_MAX_LENGTH + 1U] = {0};
+    size_t length = 0U;
+    market_config_t config = {0};
+    const esp_err_t received = receive_form(request, body, sizeof(body), &length);
+    if (received == ESP_ERR_TIMEOUT) return send_deadline_response(request);
+    if (received != ESP_OK || !market_portal_parse_form(body, length, &config)) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                         "请选择 1—5 项不同的预设指数，检查后重试。\n");
+    }
+    if (!begin_regular_mutation()) return send_mutation_unavailable(request);
+    const esp_err_t error = market_config_set(&config);
+    if (error != ESP_OK) {
+        ESP_LOGW(TAG, "market settings save failed: %s", esp_err_to_name(error));
+        return finish_regular_request(request, "500 Internal Server Error",
+                                      "市场看板未能保存，原设置未更改。\n");
+    }
+    const esp_err_t notify_error = market_service_notify_configuration_changed();
+    if (notify_error != ESP_OK) {
+        ESP_LOGW(TAG, "market configuration saved; service notification failed: %s",
+                 esp_err_to_name(notify_error));
+        return finish_regular_request(request, "200 OK",
+                                      "市场看板已保存，当前服务暂不可用。其他设置不受影响。\n");
+    }
+    /* Keep the portal and unrelated drafts open. Page visibility, not saving
+     * settings, admits market requests after maintenance releases the network. */
+    return finish_regular_request(request, "200 OK", config.enabled
+        ? "市场看板已保存。按设备 BOOT 退出网页设置，再切到 MARKET 查看。\n"
+        : "市场看板已关闭，指数选择与顺序已保留。\n");
 }
 
 static esp_err_t alarm_preview_post_handler(httpd_req_t *request)
@@ -3082,6 +3206,16 @@ static esp_err_t start_web_server(void)
         .method = HTTP_POST,
         .handler = settings_post_handler,
     };
+    const httpd_uri_t market_get_uri = {
+        .uri = "/api/market/config",
+        .method = HTTP_GET,
+        .handler = market_config_get_handler,
+    };
+    const httpd_uri_t market_post_uri = {
+        .uri = "/api/market/config",
+        .method = HTTP_POST,
+        .handler = market_config_post_handler,
+    };
     const httpd_uri_t weather_regions_uri = {
         .uri = "/api/weather/regions",
         .method = HTTP_GET,
@@ -3179,6 +3313,12 @@ static esp_err_t start_web_server(void)
     }
     if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server, &settings_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server, &market_get_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server, &market_post_uri);
     }
     if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,

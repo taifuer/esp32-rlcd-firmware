@@ -21,6 +21,24 @@ static inline const char *display_interaction_weather_footer(void)
     return "BOOT: CALENDAR | KEY: SETTINGS | HOLD KEY 2s: REFRESH";
 }
 
+static inline const char *display_interaction_weather_footer_with_market(
+    bool market_enabled)
+{
+    return market_enabled
+        ? "BOOT: MARKET | KEY: SETTINGS | HOLD KEY 2s: REFRESH"
+        : display_interaction_weather_footer();
+}
+
+static inline const char *display_interaction_market_navigation_footer(void)
+{
+    return "BOOT: CALENDAR | KEY: SETTINGS";
+}
+
+static inline const char *display_interaction_market_action_footer(void)
+{
+    return "HOLD KEY 2s: REFRESH";
+}
+
 static inline const char *display_interaction_calendar_footer(
     bool image_available, bool music_available)
 {

@@ -1,19 +1,18 @@
 # ESP32 RLCD Firmware
 
 面向 Waveshare ESP32-S3-RLCD-4.2 的原生 ESP-IDF 固件。它以离线可用的 RTC 时钟为
-核心，提供月历、环境信息、microSD 图片与音乐、离线语音指令、AI 对话、联网天气、网络校时
-和安全的双槽固件更新。
+核心，提供月历、环境信息、microSD 图片与音乐、离线语音指令、AI 对话、联网天气、市场看板、
+网络校时和安全的双槽固件更新。
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.28.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.29.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
-v0.28.0 支持同 Wi-Fi 打开网页设置、歌曲多选上传与独立闹钟音量，简化设备页面和在线更新。
-具体变化见
-[版本说明](dist/v0.28.0/README.md)，歌曲准备与操作见 [microSD 音乐播放](docs/music-player.md)。
+v0.29.0 新增可选市场看板：从 15 个指数中选择 1–5 项，查看点位、涨跌幅与报价时间。
+具体变化见[版本说明](dist/v0.29.0/README.md)，开启方法见[市场看板](docs/market-dashboard.md)。
 
 ## 效果预览
 
@@ -22,6 +21,8 @@ v0.28.0 支持同 Wi-Fi 打开网页设置、歌曲多选上传与独立闹钟�
 | 首屏 | 天气 |
 | :---: | :---: |
 | ![首屏效果图](docs/assets/home-screen.svg) | ![天气页效果图](docs/assets/weather.svg) |
+| 市场看板 | 状态 |
+| ![市场看板效果图](docs/assets/market-screen.svg) | ![状态页效果图](docs/assets/status.svg) |
 | 月历 | microSD 图片 |
 | ![月历页效果图](docs/assets/calendar-screen.svg) | ![microSD 图片页效果图](docs/assets/image-screen.svg) |
 | microSD 音乐 | 对话 |
@@ -35,7 +36,7 @@ v0.28.0 支持同 Wi-Fi 打开网页设置、歌曲多选上传与独立闹钟�
 
 ## 当前功能
 
-以下对应 v0.28.0。
+以下对应 v0.29.0。
 
 - 三段式首屏显示公历、农历、星期、温湿度、三态环境舒适度、电量和网络结果；`NORMAL`
   等大显示 `HH:MM:SS`，`SAVING` 显示 `HH:MM`；
@@ -49,6 +50,9 @@ v0.28.0 支持同 Wi-Fi 打开网页设置、歌曲多选上传与独立闹钟�
   失败原因都在固定天气布局内显示，同地点已有缓存时后台刷新失败仍继续显示缓存，
   顶栏单独显示 RTC 当前日期和星期；按住 `KEY` 2 秒可手动刷新，`SAVING` 不为天气周期
   联网；
+- 可选的[市场看板 Beta](docs/market-dashboard.md)从 15 个指数预设中选择并排序 1–5 项，
+  显示点位、涨跌幅和各自的报价时间；设备直连新浪，无需 API Key 或 SD 卡。
+  正常模式停留本页时约每 2 分钟刷新，省电时可长按 `KEY` 手动获取；失败保留原报价；
 - 离线语音使用板载 ES7210 和 ESP-SR 中文模型：“对话”页显示
   `OFFLINE COMMANDS` 和 `Hold KEY 2s for a command`，按住 `KEY` 2 秒并松开后，
   可用“回到主页”“打开日历”“查看状态”“打开图片”“打开设置”等安全指令导航；
@@ -67,7 +71,7 @@ v0.28.0 支持同 Wi-Fi 打开网页设置、歌曲多选上传与独立闹钟�
   设置门户可多选并依次上传歌曲、查看列表、在设备播放和确认删除，无需反复取卡或重启；
 - “设置”页保留手动提前省电，按住 KEY 2 秒直接打开[网页设置](docs/device-settings.md)，
   无需二级菜单；网页按常用、联网、媒体、维护分区，支持时区、温度单位、播放音量、单个每周闹钟、
-  更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、天气、microSD 图片管理
+  更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、天气、市场看板、microSD 图片管理
   和本地 OTA；
 - 离线闹钟按 RTC 本地时间触发；到点播放提示音并显示大字提醒，音量独立于媒体播放，支持试听、停止、首次延后
   5 分钟和 60 秒自动停止，断网及 `SAVING` 模式不影响已保存规则；
@@ -104,7 +108,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.28.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.29.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -112,11 +116,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.28.0
+cd dist/v0.29.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.28.0/esp32-rlcd-firmware-v0.28.0-factory.bin \
+  --firmware dist/v0.29.0/esp32-rlcd-firmware-v0.29.0-factory.bin \
   --confirm
 ```
 
@@ -142,6 +146,7 @@ cd ../..
 │   ├── display/         # ST7305 界面
 │   ├── gallery/         # 公共演示图清单与 HTTPS 下载
 │   ├── image/           # PBM/BMP 单色图片校验与解码
+│   ├── market/          # 指数预设、行情请求、配置与内存缓存
 │   ├── music/           # 歌曲目录、MP3/WAV 校验与流式解码
 │   ├── network/         # 配网、NVS、SNTP 与联网会话
 │   ├── recovery/        # 启动异常记录、恢复模式与 OTA 健康判定
@@ -185,6 +190,7 @@ cd ../..
 - [AI 对话 Beta](docs/cloud-voice.md)：API Key 获取、多轮交互、离线回退、
   数据与费用边界；
 - [天气 Beta](docs/weather.md)：QWeather 凭据、级联选址、刷新、离线缓存和费用边界；
+- [市场看板 Beta](docs/market-dashboard.md)：指数选择、刷新规则、报价时间和数据来源；
 - [microSD 图片准备](docs/microsd-images.md)：FAT32、固定目录、图片格式、导入与管理边界；
 - [microSD 音乐播放](docs/music-player.md)：歌曲上传、管理与设备播放；
 - [产品界面与交互设计规范](docs/design-guidelines.md)：信息架构、视觉与交互原则；
@@ -197,6 +203,7 @@ cd ../..
 
 - [微雪产品文档](https://docs.waveshare.net/ESP32-S3-RLCD-4.2/)与
   [官方示例仓库](https://github.com/waveshareteam/ESP32-S3-RLCD-4.2)；
+- [fund_valuation](https://github.com/taifuer/fund_valuation)：市场看板的指数预设与新浪行情解析参考；
 - [ESP-IDF v5.5.3 编程指南](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/)、
   [OTA API](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/system/ota.html)
   与 [HTTP Client](https://docs.espressif.com/projects/esp-idf/en/v5.5.3/esp32s3/api-reference/protocols/esp_http_client.html)；

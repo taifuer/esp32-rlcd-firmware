@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">ESP32 RLCD Firmware music volume editor</title>
+  <desc id="description">Music volume changes can be heard immediately. KEY changes the value, hold KEY to save, BOOT cancels. Cancel or thirty seconds of inactivity restores the saved volume.</desc>
+  <rect width="400" height="300" rx="3" fill="#090b0a"/>
+  <g fill="#eef3e8" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif">
+    <text x="200" y="32" font-size="24" font-weight="700">VOLUME</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke="#eef3e8" shape-rendering="crispEdges"/>
+    <text x="200" y="137" font-size="32" font-weight="700">70 %</text>
+    <g font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">
+      <text x="200" y="188">PLAYBACK VOLUME</text>
+      <text x="200" y="212">LIVE PREVIEW</text>
+      <text x="200" y="270">BOOT: CANCEL | KEY: CHANGE VALUE</text>
+      <text x="200" y="294">HOLD KEY 2s: SAVE</text>
+    </g>
+  </g>
+</svg>

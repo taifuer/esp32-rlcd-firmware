@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "monochrome_image.h"
+#include "market_display_model.h"
 #include "quick_settings.h"
 #include "weather_display_model.h"
 
@@ -64,6 +65,7 @@ typedef struct {
     const char *location;
     bool data_available;
     bool refreshing;
+    bool market_enabled;
     const char *status_detail;
     bool current_date_valid;
     uint16_t current_year;
@@ -215,6 +217,7 @@ void display_show_hold_prompt(const char *title,
                               uint8_t seconds_remaining);
 void display_show_dashboard(const display_dashboard_t *dashboard);
 void display_show_weather(const display_weather_t *weather);
+void display_show_market(const display_market_t *market);
 void display_show_calendar(const display_dashboard_t *dashboard,
                            bool image_available, bool music_available);
 void display_show_monochrome_image(

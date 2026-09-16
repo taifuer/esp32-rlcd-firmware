@@ -40,6 +40,7 @@
 #include "gallery_download.h"
 #include "hold_interaction.h"
 #include "image_delete_ui.h"
+#include "market_service.h"
 #include "network_time.h"
 #include "network_screen_policy.h"
 #include "online_firmware_update.h"
@@ -63,6 +64,7 @@ typedef enum {
     APP_DISPLAY_DASHBOARD,
     APP_DISPLAY_NETWORK_SETUP,
     APP_DISPLAY_WEATHER,
+    APP_DISPLAY_MARKET,
     APP_DISPLAY_CALENDAR,
     APP_DISPLAY_MONOCHROME_IMAGE,
     APP_DISPLAY_MUSIC,
@@ -191,6 +193,8 @@ static const char *page_name(app_page_t page)
     switch (page) {
     case APP_PAGE_WEATHER:
         return "weather";
+    case APP_PAGE_MARKET:
+        return "market";
     case APP_PAGE_CALENDAR:
         return "calendar";
     case APP_PAGE_IMAGE:
@@ -1044,6 +1048,46 @@ static void make_display_weather(
     }
 }
 
+static void make_display_market(const market_service_status_t *status,
+                                const display_dashboard_t *dashboard,
+                                bool saving, display_market_t *view)
+{
+    memset(view, 0, sizeof(*view));
+    view->current_time_valid = dashboard->time_valid;
+    view->current_year = dashboard->year;
+    view->current_month = dashboard->month;
+    view->current_day = dashboard->day;
+    view->current_hour = dashboard->hour;
+    view->current_minute = dashboard->minute;
+    view->saving = saving;
+    view->refreshing = status->state == MARKET_SERVICE_STATE_REFRESHING;
+    view->count = status->config.count;
+    if (view->count > DISPLAY_MARKET_ROW_LIMIT) view->count = DISPLAY_MARKET_ROW_LIMIT;
+    size_t valid = 0U;
+    size_t fresh = 0U;
+    bool stale = false;
+    for (size_t i = 0U; i < view->count; ++i) {
+        const market_row_t *row = &status->rows[i];
+        const market_preset_t *preset = market_preset_by_id(status->config.ids[i]);
+        view->rows[i] = (display_market_row_t){
+            .name = preset != NULL ? preset->name : "--",
+            .valid = row->valid,
+            .stale = row->stale,
+            .price = row->price,
+            .percent = row->percent,
+            .quote_time = row->quote_time,
+        };
+        if (row->valid) ++valid;
+        if (row->valid && !row->stale) ++fresh;
+        stale = stale || row->stale;
+    }
+    view->status_detail = fresh > 0U && fresh < view->count ? "PARTIAL DATA"
+        : status->state == MARKET_SERVICE_STATE_FAILED
+        ? (valid > 0U ? "CACHED / RETRY FAILED" : "UPDATE FAILED")
+        : valid == 0U ? "WAITING FOR DATA"
+        : stale || valid < view->count ? "PARTIAL DATA" : "READY";
+}
+
 void app_main(void)
 {
     const esp_app_desc_t *app = esp_app_get_description();
@@ -1361,6 +1405,11 @@ void app_main(void)
         ESP_LOGW(TAG, "weather service unavailable: %s",
                  esp_err_to_name(weather_error));
     }
+    const esp_err_t market_error = recovery_mode ? ESP_ERR_NOT_SUPPORTED
+        : storage_error == ESP_OK ? market_service_init() : storage_error;
+    if (!recovery_mode && market_error != ESP_OK) {
+        ESP_LOGW(TAG, "market service unavailable: %s", esp_err_to_name(market_error));
+    }
     const esp_err_t firmware_update_error = firmware_update_init();
     if (firmware_update_error != ESP_OK) {
         ESP_LOGW(TAG, "firmware update service unavailable: %s",
@@ -1441,6 +1490,15 @@ void app_main(void)
         }
     }
     weather_service_status_t weather_status = {0};
+    /* Keep new page snapshots off the already busy main-task stack. The
+     * worker owns its independent cache and copies it under its mutex. */
+    static market_service_status_t market_status;
+    static market_service_status_t latest_market_status;
+    static display_market_t market_view;
+    if (market_error == ESP_OK) {
+        (void)market_service_get_status(&market_status);
+    }
+    app_page_state_set_market_enabled(&page_state, market_status.config.enabled);
     if (weather_error == ESP_OK) {
         (void)weather_service_get_status(
             &weather_status, (int64_t)time(NULL),
@@ -1594,9 +1652,22 @@ void app_main(void)
         bool dashboard_data_changed = false;
         bool calendar_data_changed = false;
         bool weather_data_changed = false;
+        bool market_data_changed = false;
         bool system_status_data_changed = false;
         bool online_update_data_changed = false;
         bool image_delete_ui_transitioned = false;
+        if (market_error == ESP_OK &&
+            market_service_get_status(&latest_market_status) == ESP_OK &&
+            latest_market_status.revision != market_status.revision) {
+            const bool market_enable_changed = market_status.config.enabled !=
+                latest_market_status.config.enabled;
+            market_status = latest_market_status;
+            app_page_state_set_market_enabled(&page_state, market_status.config.enabled);
+            market_data_changed = true;
+            /* The weather footer names the next enabled daily page. */
+            weather_data_changed = market_enable_changed;
+            render_requested = true;
+        }
         weather_service_status_t latest_weather_status = weather_status;
         if (weather_error == ESP_OK &&
             weather_service_get_status(
@@ -2755,6 +2826,19 @@ void app_main(void)
                              esp_err_to_name(refresh_error));
                 }
                 render_requested = true;
+            } else if (key_action == APP_PAGE_ACTION_REFRESH_MARKET &&
+                       market_error == ESP_OK &&
+                       manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+                       !firmware_update_ui_active && !gallery_download_ui_active &&
+                       !online_update_busy && !online_update_confirmation_active &&
+                       !app_image_delete_ui_is_active(&image_delete_ui) &&
+                       !voice_session_state_is_active(&voice_session)) {
+                const esp_err_t refresh_error = market_service_request_refresh();
+                if (refresh_error != ESP_OK && refresh_error != ESP_ERR_INVALID_STATE) {
+                    ESP_LOGW(TAG, "market refresh could not start: %s",
+                             esp_err_to_name(refresh_error));
+                }
+                render_requested = true;
             } else if (key_action == APP_PAGE_ACTION_START_VOICE &&
                        manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                        !firmware_update_ui_active &&
@@ -3024,6 +3108,9 @@ void app_main(void)
                 weather_status.config_enabled &&
                 weather_status.state !=
                     WEATHER_SERVICE_STATE_REFRESHING,
+            .market_refresh_available = market_error == ESP_OK &&
+                market_status.config.enabled &&
+                market_status.state != MARKET_SERVICE_STATE_REFRESHING,
             .image_delete_available =
                 latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
                 latest_sd_image_status.image_count > 0U &&
@@ -3293,6 +3380,10 @@ void app_main(void)
                          (dashboard.year != datetime.year ||
                           dashboard.month != datetime.month ||
                           dashboard.day != datetime.day));
+                    const bool market_clock_changed = weather_date_changed ||
+                        (datetime.clock_integrity &&
+                         (dashboard.hour != datetime.hour ||
+                          dashboard.minute != datetime.minute));
                     const bool rtc_display_changed =
                         dashboard.time_valid != datetime.clock_integrity ||
                         (datetime.clock_integrity &&
@@ -3339,6 +3430,7 @@ void app_main(void)
                     if (weather_date_changed) {
                         weather_data_changed = true;
                     }
+                    if (market_clock_changed) market_data_changed = true;
                 } else {
                     rtc_read_wait_ms = power_policy.rtc_read_interval_ms;
                     if (settings.alarm_enabled &&
@@ -3357,6 +3449,7 @@ void app_main(void)
                         dashboard_data_changed = true;
                         calendar_data_changed = true;
                         weather_data_changed = true;
+                        market_data_changed = true;
                         system_status_data_changed = true;
                     }
                 }
@@ -3645,6 +3738,17 @@ void app_main(void)
         }
 
         const app_page_t active_page = app_page_state_current(&page_state);
+        if (market_error == ESP_OK) {
+            const bool market_visible = active_page == APP_PAGE_MARKET &&
+                !recovery_mode && !firmware_update_ui_active &&
+                !gallery_download_ui_active && !online_update_busy &&
+                !online_update_confirmation_active && !alarm_modal_active &&
+                !quick_settings.active && manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+                power_setting_ui == POWER_SETTING_UI_NONE &&
+                !voice_session_state_is_active(&voice_session);
+            (void)market_service_set_activity(market_visible,
+                network_error == ESP_OK && power_policy.automatic_network);
+        }
         if (display_ready && alarm_modal_active) {
             if (render_requested ||
                 previous_display_mode != APP_DISPLAY_ALARM) {
@@ -4191,6 +4295,7 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_ALARM ||
                     previous_display_mode == APP_DISPLAY_ONLINE_UPDATE ||
                     previous_display_mode == APP_DISPLAY_WEATHER ||
+                    previous_display_mode == APP_DISPLAY_MARKET ||
                     previous_display_mode == APP_DISPLAY_MONOCHROME_IMAGE ||
                     previous_display_mode == APP_DISPLAY_MUSIC ||
                     previous_display_mode == APP_DISPLAY_HOLD_PROMPT ||
@@ -4211,6 +4316,8 @@ void app_main(void)
             app_display_mode_t display_mode = APP_DISPLAY_DASHBOARD;
             if (active_page == APP_PAGE_WEATHER) {
                 display_mode = APP_DISPLAY_WEATHER;
+            } else if (active_page == APP_PAGE_MARKET) {
+                display_mode = APP_DISPLAY_MARKET;
             } else if (active_page == APP_PAGE_CALENDAR) {
                 display_mode = APP_DISPLAY_CALENDAR;
             } else if (active_page == APP_PAGE_IMAGE) {
@@ -4236,7 +4343,16 @@ void app_main(void)
                         settings.temperature_unit ==
                             APP_TEMPERATURE_UNIT_FAHRENHEIT,
                         &display_weather);
+                    display_weather.market_enabled = market_status.config.enabled;
                     display_show_weather(&display_weather);
+                }
+            } else if (display_mode == APP_DISPLAY_MARKET) {
+                if (display_mode != previous_display_mode ||
+                    render_requested || market_data_changed) {
+                    make_display_market(&market_status, &dashboard,
+                        power_runtime.effective_state == APP_POWER_STATE_SAVING,
+                        &market_view);
+                    display_show_market(&market_view);
                 }
             } else if (display_mode == APP_DISPLAY_CALENDAR) {
                 if (display_mode != previous_display_mode ||

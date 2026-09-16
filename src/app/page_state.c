@@ -5,10 +5,13 @@
 static app_page_t next_daily_page(const app_page_state_t *state)
 {
     if (state->current == APP_PAGE_HOME) {
-        return state->weather_enabled ? APP_PAGE_WEATHER
-                                      : APP_PAGE_CALENDAR;
+        if (state->weather_enabled) return APP_PAGE_WEATHER;
+        return state->market_enabled ? APP_PAGE_MARKET : APP_PAGE_CALENDAR;
     }
     if (state->current == APP_PAGE_WEATHER) {
+        return state->market_enabled ? APP_PAGE_MARKET : APP_PAGE_CALENDAR;
+    }
+    if (state->current == APP_PAGE_MARKET) {
         return APP_PAGE_CALENDAR;
     }
     if (state->current == APP_PAGE_CALENDAR && state->image_available) {
@@ -56,6 +59,7 @@ bool app_page_state_open_page(app_page_state_t *state, app_page_t page)
         (state->recovery_mode && page != APP_PAGE_SETTINGS &&
          page != APP_PAGE_ONLINE_UPDATE) ||
         (page == APP_PAGE_WEATHER && !state->weather_enabled) ||
+        (page == APP_PAGE_MARKET && !state->market_enabled) ||
         (page == APP_PAGE_IMAGE && !state->image_available) ||
         (page == APP_PAGE_MUSIC && !state->music_available)) {
         return false;
@@ -73,6 +77,15 @@ void app_page_state_set_weather_enabled(app_page_state_t *state,
     }
     state->weather_enabled = enabled;
     if (!enabled && state->current == APP_PAGE_WEATHER) {
+        app_page_state_go_home(state);
+    }
+}
+
+void app_page_state_set_market_enabled(app_page_state_t *state, bool enabled)
+{
+    if (state == NULL) return;
+    state->market_enabled = enabled;
+    if (!enabled && state->current == APP_PAGE_MARKET) {
         app_page_state_go_home(state);
     }
 }
@@ -115,6 +128,7 @@ app_page_t app_page_state_current(const app_page_state_t *state)
 bool app_page_is_daily(app_page_t page)
 {
     return page == APP_PAGE_HOME || page == APP_PAGE_WEATHER ||
+           page == APP_PAGE_MARKET ||
            page == APP_PAGE_CALENDAR || page == APP_PAGE_IMAGE ||
            page == APP_PAGE_MUSIC || page == APP_PAGE_VOICE;
 }
@@ -128,6 +142,7 @@ bool app_page_is_system(app_page_t page)
 app_page_action_t app_page_key_hold_action(app_page_t page)
 {
     if (page == APP_PAGE_MUSIC) return APP_PAGE_ACTION_NEXT_TRACK;
+    if (page == APP_PAGE_MARKET) return APP_PAGE_ACTION_REFRESH_MARKET;
     if (page == APP_PAGE_WEATHER) {
         return APP_PAGE_ACTION_REFRESH_WEATHER;
     }
@@ -152,6 +167,8 @@ app_page_action_t app_page_key_hold_action(app_page_t page)
 uint32_t app_page_key_hold_threshold_ms(app_page_t page)
 {
     switch (app_page_key_hold_action(page)) {
+    case APP_PAGE_ACTION_REFRESH_MARKET:
+        return APP_PAGE_MARKET_REFRESH_HOLD_MS;
     case APP_PAGE_ACTION_NEXT_TRACK:
         return APP_PAGE_MUSIC_HOLD_MS;
     case APP_PAGE_ACTION_REFRESH_WEATHER:

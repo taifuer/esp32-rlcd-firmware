@@ -490,6 +490,40 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_page_state"
 "${RLCD_TEST_TMP}/test_quick_settings"
 "${RLCD_TEST_TMP}/test_settings_layout"
+
+cc -std=c17 -fsanitize=undefined -fno-sanitize-recover=all \
+  -ffunction-sections -fdata-sections -Wl,--gc-sections \
+  -I"${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc" \
+  -Isrc/display/include -Isrc/display \
+  src/display/market_display_model.c tests/test_market_layout.c \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_font.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
+  -o "${RLCD_TEST_TMP}/test_market_layout"
+"${RLCD_TEST_TMP}/test_market_layout"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/update/include -Isrc/market/include \
+  src/update/market_portal_model.c src/market/market_model.c \
+  tests/test_market_portal_model.c -lm \
+  -o "${RLCD_TEST_TMP}/test_market_portal_model"
+"${RLCD_TEST_TMP}/test_market_portal_model"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/market/include src/market/market_model.c \
+  tests/test_market_model.c -lm -o "${RLCD_TEST_TMP}/test_market_model"
+"${RLCD_TEST_TMP}/test_market_model"
+
+for market_test in service config client; do
+  cc -std=c17 -Wall -Wextra -Werror -pedantic \
+    -fsanitize=undefined -fno-sanitize-recover=all \
+    -Itests/market_stubs -Isrc/market/include -Isrc/market \
+    src/market/market_model.c "tests/test_market_${market_test}.c" -lm \
+    -o "${RLCD_TEST_TMP}/test_market_${market_test}"
+  "${RLCD_TEST_TMP}/test_market_${market_test}"
+done
 "${RLCD_TEST_TMP}/test_hold_interaction"
 "${RLCD_TEST_TMP}/test_image_delete_ui"
 "${RLCD_TEST_TMP}/test_image_delete_interaction"

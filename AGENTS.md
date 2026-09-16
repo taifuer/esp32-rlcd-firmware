@@ -19,5 +19,5 @@
 - Git 作者使用 `taifu <taifu@taifua.com>`。Agent 协助的提交正文必须包含：
 
   ```text
-  Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
+  Co-Authored-By: Codex (GPT‑6 Astra) <noreply@openai.com>
   ```

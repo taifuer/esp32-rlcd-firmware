@@ -36,3 +36,17 @@ assert.ok(/online_update_status\.state ==\s+ONLINE_UPDATE_STATE_AWAITING_CONFIRM
   'asynchronous confirmation requires button release before installing');
 assert.match(display, /status->target_changed\s*\? "Target changed; confirm again"/);
 console.log('Device navigation: daily Chat rendering, direct portal entry and minimal settings passed.');
+
+const marketAction = main.split('key_action == APP_PAGE_ACTION_REFRESH_MARKET &&')[1]
+  .split('key_action == APP_PAGE_ACTION_START_VOICE')[0];
+assert.match(marketAction, /market_service_request_refresh\(\)/);
+assert.doesNotMatch(marketAction, /app_page_state_(?:go_home|open_page)|display_show_status|esp_restart/,
+  'market refresh never navigates or opens a blocking status screen');
+assert.match(main, /market_visible = active_page == APP_PAGE_MARKET/);
+assert.match(main, /market_service_set_activity\(market_visible,[\s\S]{0,100}power_policy.automatic_network/);
+assert.match(main, /display_mode == APP_DISPLAY_MARKET[\s\S]{0,550}display_show_market/);
+assert.match(main, /static market_service_status_t market_status;/,
+  'market snapshots do not grow the main task stack');
+assert.match(main, /market_error = recovery_mode \? ESP_ERR_NOT_SUPPORTED/,
+  'recovery boot does not start market networking');
+console.log('Market navigation: fixed page, nonblocking refresh, power/visibility gates and recovery isolation passed.');

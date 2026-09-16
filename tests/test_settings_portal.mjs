@@ -38,8 +38,13 @@ for (const [id, expected] of Object.entries({
 assert.match(html, /<footer>© .*target="_blank" rel="noopener noreferrer">ESP32 固件/);
 assert.match(html, /<details><summary class="section-toggle">天气/);
 assert.match(html, /<details><summary class="section-toggle">AI 对话 Beta/);
+assert.match(html, /<details><summary class="section-toggle">市场看板/);
+assert.match(html, /报价时间为北京时间（UTC\+8）/);
 assert.equal((html.match(/<details(?:\s[^>]*)?>/g) || []).length, (html.match(/<\/details>/g) || []).length);
 assert.doesNotMatch(javascript, /localStorage|sessionStorage|navigator\.clipboard|execCommand/);
+const serverDefinition = source.split('static esp_err_t start_web_server(void)')[1].split('static void stop_web_server')[0];
+const routeCount = [...serverDefinition.matchAll(/\.uri\s*=/g)].length;
+assert.ok(routeCount <= Number(serverDefinition.match(/max_uri_handlers\s*=\s*(\d+)/)[1]), 'all portal routes fit the server handler limit');
 
 class Element {
   value = ''; checked = false; disabled = false; hidden = false;
@@ -74,6 +79,9 @@ let state = {
   conversation: {available: true, service: 'aliyun_realtime', configured: false, enabled: false,
     model: 'qwen3-omni-flash-realtime', api_host: 'dashscope.aliyuncs.com', shared_endpoint: true},
 };
+let market = {enabled: false, ids: [0, 3, 7, 9, 11],
+  presets: ['上证指数', '深证成指', '创业板指', '沪深300', '中证500', '上证50', '科创50', '恒生指数',
+    '恒生科技', '纳斯达克综合', '纳斯达克100', '标普500', '道琼斯', '日经225', '台湾加权'].map((name, id) => ({id, name}))};
 let failPost = false, lastBody = '', pendingPost;
 let unauthorized = false;
 const getRequests = [];
@@ -103,11 +111,17 @@ const context = vm.createContext({
         return {ok: true, text: async () => sessionToken};
       }
       if (pendingPost) await pendingPost;
+      if (path === '/api/market/config' && !failPost) {
+        const fields = new URLSearchParams(options.body);
+        market.enabled = fields.get('enabled') === 'on';
+        market.ids = fields.get('ids').split(',').map(Number);
+      }
       return {ok: !failPost, text: async () => failPost ? '保存失败' : '已保存'};
     }
     getRequests.push({path, options});
     if (unauthorized) return {ok: false, status: 401, text: async () => '需要授权'};
     if (path === '/api/state') return {ok: true, json: async () => structuredClone(state)};
+    if (path === '/api/market/config') return {ok: true, json: async () => structuredClone(market)};
     if (path === '/api/images') return {ok: true, json: async () => ({images: [], selected: ''})};
     if (path === '/api/music') return {ok: true, json: async () => structuredClone(music)};
     if (path.startsWith('/api/weather/regions')) return {ok: true, json: async () => ({items: [{id: 1, name: '测试'}]})};
@@ -130,6 +144,27 @@ const context = vm.createContext({
 vm.runInContext(javascript, context);
 await new Promise(resolve => setImmediate(resolve));
 assert.equal(elements.volume.value, 50);
+assert.equal(elements.marketChoices.children.length, 15);
+assert.equal(elements.marketCount.textContent, '5 / 5');
+assert.equal(elements.marketEnabled.value, 'off');
+assert.equal(elements.marketOrder.children.length, 5);
+const marketInput = id => elements.marketChoices.children[id].children[0];
+const selectedMarket = () => JSON.parse(vm.runInContext('JSON.stringify(marketIds)', context));
+assert.equal(marketInput(1).disabled, true, 'unselected indices disabled at five');
+marketInput(1).checked = true;
+marketInput(1).onchange();
+assert.deepEqual(selectedMarket(), [0, 3, 7, 9, 11], 'sixth selection rejected even if handler invoked');
+assert.equal(marketInput(1).checked, false);
+marketInput(7).checked = false;
+marketInput(7).onchange();
+assert.equal(marketInput(1).disabled, false);
+marketInput(14).checked = true;
+marketInput(14).onchange();
+assert.deepEqual(selectedMarket(), [0, 3, 9, 11, 14]);
+elements.marketOrder.children[1].children[1].onclick();
+assert.deepEqual(selectedMarket(), [3, 0, 9, 11, 14], 'move-up changes display order');
+assert.equal(elements.marketOrder.children[0].children[1].disabled, true);
+assert.equal(elements.marketOrder.children[4].children[2].disabled, true);
 assert.equal(elements.alarmVolume.value, 68);
 elements.alarmVolume.value = 25;
 await elements.alarmPreview.onclick();
@@ -145,6 +180,7 @@ elements.wifiForm.hidden = false;
 elements.wifiSsid.value = 'Unsaved network';
 state.volume = 70;
 await vm.runInContext("load('settings')", context);
+assert.deepEqual(selectedMarket(), [3, 0, 9, 11, 14], 'general refresh preserves market draft');
 assert.equal(elements.volume.value, 70);
 assert.equal(elements.alarmVolume.value, 25, 'general refresh preserves alarm draft');
 assert.equal(elements.conversationKey.value, 'unsaved-test-key');
@@ -162,7 +198,66 @@ for (const name of ['Network', 'Media', 'Maintenance', 'General']) {
   assert.equal(elements.alarmVolume.value, 25);
   assert.equal(elements.updates.value, 'beta');
   assert.equal(elements.conversationKey.value, 'unsaved-test-key');
+  assert.deepEqual(selectedMarket(), [3, 0, 9, 11, 14], 'section navigation preserves index order');
 }
+elements.marketEnabled.value = 'on';
+const marketGets = getRequests.filter(request => request.path === '/api/market/config').length;
+await elements.marketForm.onsubmit({preventDefault() {}});
+assert.equal(lastPath, '/api/market/config');
+assert.equal(lastBody, 'enabled=on&ids=3%2C0%2C9%2C11%2C14');
+assert.deepEqual(market.ids, [3, 0, 9, 11, 14]);
+assert.equal(elements.marketStatus.textContent, '已开启 · 5 项');
+assert.equal(getRequests.filter(request => request.path === '/api/market/config').length, marketGets, 'save does not reload other forms');
+assert.equal(elements.conversationKey.value, 'unsaved-test-key');
+assert.equal(elements.weatherKey.value, 'weather-test-key');
+assert.equal(elements.wifiSsid.value, 'Unsaved network');
+assert.equal(elements.volume.value, 90);
+elements.marketOrder.children[0].children[2].onclick();
+failPost = true;
+await elements.marketForm.onsubmit({preventDefault() {}});
+assert.deepEqual(selectedMarket(), [0, 3, 9, 11, 14], 'failed save retains order draft');
+assert.deepEqual(market.ids, [3, 0, 9, 11, 14], 'failed save preserves stored order');
+assert.equal(elements.marketMessage.textContent, '保存失败');
+assert.equal(elements.marketSave.disabled, false);
+failPost = false;
+await vm.runInContext("load('market')", context);
+assert.deepEqual(selectedMarket(), market.ids, 'explicit market reload reads saved order');
+assert.equal(elements.volume.value, 90);
+assert.equal(elements.weatherKey.value, 'weather-test-key');
+for (const id of selectedMarket()) {
+  marketInput(id).checked = false;
+  marketInput(id).onchange();
+}
+assert.equal(elements.marketSave.disabled, true, 'empty selection is not saved');
+lastPath = 'empty-selection';
+await elements.marketForm.onsubmit({preventDefault() {}});
+assert.equal(lastPath, 'empty-selection');
+assert.match(elements.marketMessage.textContent, /1—5/);
+await vm.runInContext("load('market')", context);
+let finishMarketPost;
+pendingPost = new Promise(resolve => { finishMarketPost = resolve; });
+const marketSubmission = elements.marketForm.onsubmit({preventDefault() {}});
+assert.equal(elements.marketSave.disabled, true);
+assert.equal(elements.marketEnabled.disabled, true);
+assert.equal(marketInput(3).disabled, true);
+assert.equal(elements.volume.disabled, false, 'market save does not lock unrelated settings');
+assert.equal(elements.weatherKey.disabled, false, 'market save does not lock weather draft');
+const busyOrder = selectedMarket();
+elements.marketOrder.children[0].children[2].onclick();
+assert.deepEqual(selectedMarket(), busyOrder, 'busy market form cannot reorder');
+finishMarketPost();
+await marketSubmission;
+pendingPost = null;
+assert.equal(elements.marketSave.disabled, false);
+const savedPresets = market.presets;
+market.presets = market.presets.slice(1);
+await vm.runInContext("load('market')", context);
+assert.equal(elements.marketSave.disabled, true, 'invalid catalogue rejected');
+assert.equal(elements.volume.value, 90, 'invalid market response leaves other drafts');
+market.presets = savedPresets;
+await vm.runInContext("load('market')", context);
+assert.equal(elements.marketSave.disabled, false);
+assert.equal(elements.marketMessage.textContent, '');
 await vm.runInContext("load('images')", context);
 assert.equal(elements.volume.value, 90);
 assert.equal(elements.conversationKey.value, 'unsaved-test-key');
@@ -292,6 +387,9 @@ assert.equal(elements.wifiLabel.textContent, '当前连接');
 for (const id of ['wifiEdit','forgetWifi','weatherSave','conversationSave','defaults','file','upload','starterImages']) {
   assert.equal(elements[id].disabled, true, id + ' requires hotspot');
 }
+assert.equal(elements.marketSave.disabled, false, 'preset-only market configuration available on authenticated LAN');
+await elements.marketForm.onsubmit({preventDefault() {}});
+assert.equal(lastPath, '/api/market/config');
 const beforeBlockedPost = lastPath;
 await vm.runInContext('userActivity()', context);
 assert.equal(lastPath, '/api/activity');
@@ -317,5 +415,8 @@ const getCount = getRequests.length;
 vm.runInContext(javascript, qrContext);
 await new Promise(resolve => setImmediate(resolve));
 assert.equal(getRequests[getCount].options.headers['X-RLCD-Token'], sessionToken, 'QR fragment authorizes the first request');
-assert.doesNotMatch(source.split('static const char RECOVERY_SETTINGS_PAGE[] =')[1].split('static const char SETTINGS_PAGE[] =')[0], /api\/music|musicTracks/);
-console.log('Settings portal: drafts, sequential uploads, failure retention, LAN pairing/QR, credential guards and recovery isolation passed.');
+assert.doesNotMatch(source.split('static const char RECOVERY_SETTINGS_PAGE[] =')[1].split('static const char SETTINGS_PAGE[] =')[0], /api\/music|musicTracks|marketForm|api\/market/);
+for (const route of ['market_get_uri', 'market_post_uri']) {
+  assert.ok(source.includes('if (error == ESP_OK && !recovery_mode) {\n        error = httpd_register_uri_handler(s_http_server, &' + route + ');'), 'market handlers excluded from recovery');
+}
+console.log('Settings portal: drafts, market selection/order/LAN, sequential uploads, failure retention, pairing/QR, credential guards and recovery isolation passed.');

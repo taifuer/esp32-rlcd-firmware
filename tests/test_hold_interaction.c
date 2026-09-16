@@ -11,6 +11,7 @@ static app_hold_prompt_context_t available_context(void)
         .buttons_ready = true,
         .manual_sync_idle = true,
         .weather_refresh_available = true,
+        .market_refresh_available = true,
         .image_delete_available = true,
     };
 }
@@ -21,6 +22,8 @@ static void assert_common_gate_blocks(
     assert(!app_hold_prompt_allowed(
         context, APP_PAGE_ACTION_START_VOICE, false));
     assert(!app_hold_prompt_allowed(
+        context, APP_PAGE_ACTION_REFRESH_MARKET, false));
+    assert(!app_hold_prompt_allowed(
         context, APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING, false));
 }
 
@@ -29,6 +32,7 @@ static void test_all_actions_and_other_button_gate(void)
     const app_hold_prompt_context_t context = available_context();
     const app_page_action_t actions[] = {
         APP_PAGE_ACTION_REFRESH_WEATHER,
+        APP_PAGE_ACTION_REFRESH_MARKET,
         APP_PAGE_ACTION_DELETE_IMAGE,
         APP_PAGE_ACTION_SYNC_TIME,
         APP_PAGE_ACTION_START_VOICE,
@@ -87,6 +91,13 @@ static void test_action_specific_gates(void)
         &context, APP_PAGE_ACTION_SYNC_TIME, false));
 
     context = available_context();
+    context.market_refresh_available = false;
+    assert(!app_hold_prompt_allowed(
+        &context, APP_PAGE_ACTION_REFRESH_MARKET, false));
+    assert(app_hold_prompt_allowed(
+        &context, APP_PAGE_ACTION_REFRESH_WEATHER, false));
+
+    context = available_context();
     context.image_delete_available = false;
     assert(!app_hold_prompt_allowed(
         &context, APP_PAGE_ACTION_DELETE_IMAGE, false));
@@ -95,6 +106,8 @@ static void test_action_specific_gates(void)
 
     context = available_context();
     context.manual_sync_idle = false;
+    assert(!app_hold_prompt_allowed(
+        &context, APP_PAGE_ACTION_REFRESH_MARKET, false));
     assert(!app_hold_prompt_allowed(
         &context, APP_PAGE_ACTION_DELETE_IMAGE, false));
     assert(!app_hold_prompt_allowed(
@@ -116,6 +129,8 @@ static void test_action_specific_gates(void)
     context = available_context();
     context.online_update_confirmation_active = true;
     assert(!app_hold_prompt_allowed(
+        &context, APP_PAGE_ACTION_REFRESH_MARKET, false));
+    assert(!app_hold_prompt_allowed(
         &context, APP_PAGE_ACTION_DELETE_IMAGE, false));
     assert(!app_hold_prompt_allowed(
         &context, APP_PAGE_ACTION_START_VOICE, false));
@@ -129,6 +144,8 @@ static void test_action_specific_gates(void)
 
 static void test_action_titles(void)
 {
+    assert(strcmp(app_hold_prompt_title(APP_PAGE_ACTION_REFRESH_MARKET,
+                      APP_HOLD_UPDATE_CHECK, false), "REFRESH MARKET") == 0);
     assert(strcmp(app_hold_prompt_title(
                       APP_PAGE_ACTION_REFRESH_WEATHER,
                       APP_HOLD_UPDATE_CHECK, false),

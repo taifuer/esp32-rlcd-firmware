@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "firmware_update.c"
         "firmware_update_policy.c"
+        "market_portal_model.c"
         "online_firmware_update.c"
         "online_update_manifest.c"
         "online_update_policy.c"
@@ -21,6 +22,7 @@ idf_component_register(
         cjson
         conversation
         mbedtls
+        market
         network
         recovery
         rtc

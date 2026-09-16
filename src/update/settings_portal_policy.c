@@ -104,6 +104,7 @@ bool settings_portal_lan_post_allowed(const char *uri)
 {
     static const char *const allowed[] = {
         "/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/activity",
+        "/api/market/config",
         "/api/images/select", "/api/images/delete", "/api/images/upload",
         "/api/music/play", "/api/music/stop", "/api/music/delete", "/api/music/upload",
     };

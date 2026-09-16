@@ -34,9 +34,9 @@ int main(void)
     assert(!settings_portal_pair_code_matches("ABC12345", "code=abc12345", 13U));
     assert(!settings_portal_pair_code_matches("ABC12345", "code=ABC12345&x=1", 17U));
     assert(!settings_portal_pair_code_matches(NULL, "code=ABC12345", 13U));
-    const char *allowed[] = {"/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/music/upload?name=a.mp3"};
+    const char *allowed[] = {"/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/music/upload?name=a.mp3", "/api/market/config"};
     for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); ++i) assert(settings_portal_lan_post_allowed(allowed[i]));
-    const char *denied[] = {"/api/wifi/change", "/api/conversation/config", "/api/weather/config", "/api/images/starter", "/update", "/api/settings/", "/api/music/upload/../update", "/api/settings%00", NULL};
+    const char *denied[] = {"/api/wifi/change", "/api/conversation/config", "/api/weather/config", "/api/images/starter", "/update", "/api/settings/", "/api/music/upload/../update", "/api/settings%00", "/api/market/config/", "/api/market/config%00", NULL};
     for (size_t i = 0; i < sizeof(denied) / sizeof(denied[0]); ++i) assert(!settings_portal_lan_post_allowed(denied[i]));
     uint8_t volume = 42U;
     assert(settings_portal_parse_volume_form("volume=0", 8U, &volume) && volume == 0U);

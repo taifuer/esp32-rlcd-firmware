@@ -1,5 +1,26 @@
 # 开发与发布流程
 
+## v0.29.0 正式构建记录
+
+2026-09-16，用户确认 dev.1 显示效果后授权发布。正式版沿用同一功能源码，以
+`RLCD_PROJECT_VERSION=0.29.0` 使用现有 ESP-IDF v5.5.3 构建；全部主机测试、真实字体
+布局、仓库与许可检查通过。源码摘要与已确认候选一致，没有通过 USB 写入设备。
+
+正式 OTA 与 dev.1 同为 2,212,656 字节，逐字节比较仅 75 字节不同：版本 6 字节、
+构建时间 4 字节、ELF 摘要 32 字节、镜像校验 1 字节和应用 SHA-256 32 字节。
+分区和语音模型不变；新增市场配置使用独立 NVS 记录，不迁移或清除已有凭据与偏好。
+
+- OTA：2.21 MB，SHA-256
+  `2a04e33a9ecffe5c77d9d23f25c2eb5b477a07c1e472be7ba939380c5d45f1f3`。
+- Factory：8.56 MB（8,560,811 字节），SHA-256
+  `4ad809c74e4debfd3104d3f17333580d5dd8bc34577b2314dcac9647fa6cc8ca`。
+- 模型：2.20 MB（2,203,819 字节），SHA-256
+  `29e156e606a46114b19a3e2f56406bc7045894743ae1e623d0b9e4c5ed1486bf`。
+
+固件、校验文件和本版预览见 [`dist/v0.29.0/`](../dist/v0.29.0/)。固定发布脚本打包 31 个
+附件，包含市场看板示意；主机与候选测试记录见[市场看板](market-dashboard.md)。用户反馈
+只记录为整体显示认可，网络异常、长时间运行和功耗等专项实测继续保留在[开发计划](roadmap.md)。
+
 ## v0.28.0 正式构建记录
 
 2026-09-14 用户确认发布。沿用 dev.3 功能源码，以 `RLCD_PROJECT_VERSION=0.28.0`
@@ -248,20 +269,20 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 
 ### 构建版本与更新通道
 
-仓库默认构建版本为 `0.28.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
+仓库默认构建版本为 `0.29.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
 候选构建修改 `CMakeLists.txt`：
 
 ```bash
-RLCD_PROJECT_VERSION=0.29.0-dev.1 ./scripts/build.sh
-RLCD_PROJECT_VERSION=0.28.0 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.30.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.29.0 ./scripts/build.sh
 ```
 
 版本必须是固件可比较的 SemVer，且不带文件名使用的前导 `v`：
 
 - 设备默认读取 `https://mcu.taifua.com/esp32-rlcd/firmware/stable.json`；只有设备偏好中
   显式启用开发者测试通道后才读取 `testing.json`；
-- SemVer 不自动选择通道。稳定清单只允许 `0.26.0` 这类正式目标，测试清单用于
-  `0.27.0-dev.1`、`0.27.0-rc.1` 等候选，也可在转正式期间指向正式目标。
+- SemVer 不自动选择通道。稳定清单只允许 `0.29.0` 这类正式目标，测试清单用于
+  `0.30.0-dev.1`、`0.30.0-rc.1` 等候选，也可在转正式期间指向正式目标。
 
 预发布验证先上传版本化 `-ota.bin`，核对大小和 SHA-256，再更新 `testing.json`。正式
 发布必须从同一份已实机验收的源码构建正式版本，重新核对产物差异、大小与 SHA-256 后
@@ -341,7 +362,7 @@ user.email = taifu@taifua.com
 维护者提交必须在提交正文包含：
 
 ```text
-Co-Authored-By: Codex (GPT-5.6 Sol) <noreply@openai.com>
+Co-Authored-By: Codex (GPT‑6 Astra) <noreply@openai.com>
 ```
 
 提交前使用 `git diff --cached --check` 和 `git status --short` 检查内容。
