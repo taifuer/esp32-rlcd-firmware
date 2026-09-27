@@ -164,9 +164,8 @@ static void test_formatting(void)
     assert(text[0] == '\0');
     assert(!display_market_format_percent(NULL, sizeof(text), true, 1.0));
     assert(!display_market_format_quote_time(text, 0U, NULL));
-    assert(strcmp(display_interaction_weather_footer_with_market(false),
-                  display_interaction_weather_footer()) == 0);
-    assert(strstr(display_interaction_weather_footer_with_market(true), "BOOT: MARKET") != NULL);
+    assert(display_interaction_format_weather_footer(text, sizeof(text), "MARKET"));
+    assert(strstr(text, "BOOT: MARKET") != NULL);
 }
 
 static void test_layout_variants(u8g2_t *screen)
@@ -177,6 +176,16 @@ static void test_layout_variants(u8g2_t *screen)
         "道琼斯", "日经225", "台湾加权",
     };
     display_market_t market = example_market();
+    const char *destinations[] = {"CALENDAR", "IMAGE", "MUSIC", "CHAT", "HOME"};
+    for (size_t i = 0U; i < sizeof(destinations) / sizeof(destinations[0]); ++i) {
+        market.next_daily_page = destinations[i];
+        market_display_line_t lines[MARKET_DISPLAY_LINE_LIMIT];
+        const size_t count = market_display_lines(&market, lines);
+        char expected[64];
+        snprintf(expected, sizeof(expected), "BOOT: %s | KEY: SETTINGS", destinations[i]);
+        assert(strcmp(lines[count - 2U].text, expected) == 0);
+        render_market(screen, &market);
+    }
     for (size_t n = 0U; n < sizeof(NAMES) / sizeof(NAMES[0]); ++n) {
         u8g2_SetFont(screen, u8g2_font_wqy16_t_gb2312);
         assert(u8g2_GetUTF8Width(screen, NAMES[n]) <= 118U);

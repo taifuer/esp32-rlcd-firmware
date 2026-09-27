@@ -9,7 +9,7 @@ static void test_defaults_and_validation(void)
 {
     app_settings_t settings;
     app_settings_defaults(&settings);
-    assert(APP_SETTINGS_SCHEMA_VERSION == 8U);
+    assert(APP_SETTINGS_SCHEMA_VERSION == 10U);
     assert(settings.schema_version == APP_SETTINGS_SCHEMA_VERSION);
     assert(!settings.manual_saving_requested);
     assert(settings.utc_offset_minutes == 480);
@@ -21,6 +21,8 @@ static void test_defaults_and_validation(void)
     assert(settings.alarm_hour == 7U);
     assert(settings.alarm_minute == 30U);
     assert(settings.alarm_weekdays == APP_SETTINGS_ALARM_WEEKDAYS_MASK);
+    assert(settings.daily_pages_mask == APP_DAILY_PAGES_ALL_MASK);
+    assert(settings.music_mode == APP_MUSIC_MODE_SEQUENTIAL);
     assert(app_settings_validate(&settings));
 
     settings.manual_saving_requested = true;
@@ -60,6 +62,22 @@ static void test_defaults_and_validation(void)
     settings.alarm_weekdays = 0x80U;
     assert(!app_settings_validate(&settings));
     assert(!app_settings_validate(NULL));
+    app_settings_defaults(&settings);
+    settings.daily_pages_mask = 0U;
+    assert(app_settings_validate(&settings));
+    settings.daily_pages_mask = 64U;
+    assert(!app_settings_validate(&settings));
+    settings.daily_pages_mask = UINT8_MAX;
+    assert(!app_settings_validate(&settings));
+    app_settings_defaults(&settings);
+    settings.music_mode = APP_MUSIC_MODE_REPEAT_ONE;
+    assert(app_settings_validate(&settings));
+    settings.music_mode = APP_MUSIC_MODE_REPEAT_ALL;
+    assert(app_settings_validate(&settings));
+    settings.music_mode = (app_music_mode_t)-1;
+    assert(!app_settings_validate(&settings));
+    settings.music_mode = (app_music_mode_t)3;
+    assert(!app_settings_validate(&settings));
     app_settings_defaults(NULL);
 }
 
@@ -71,12 +89,16 @@ static void test_scoped_forms(void)
     base.update_channel = APP_UPDATE_CHANNEL_BETA;
     base.alarm_enabled = true;
     base.alarm_volume = 19U;
+    base.daily_pages_mask = APP_DAILY_PAGE_CALENDAR | APP_DAILY_PAGE_CHAT;
+    base.music_mode = APP_MUSIC_MODE_REPEAT_ALL;
     const char *general = "section=general&timezone=330&unit=f&volume=42";
     assert(app_settings_parse_form(general, strlen(general), &base, &parsed));
     assert(parsed.utc_offset_minutes == 330 && parsed.audio_playback_volume == 42U);
     assert(parsed.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT);
     assert(parsed.alarm_enabled && parsed.alarm_volume == 19U);
     assert(parsed.update_channel == APP_UPDATE_CHANNEL_BETA && parsed.manual_saving_requested);
+    assert(parsed.daily_pages_mask == base.daily_pages_mask);
+    assert(parsed.music_mode == base.music_mode);
     const char *alarm = "alarm=off&alarm_hour=23&alarm_minute=59&alarm_days=65&alarm_volume=0&section=alarm";
     assert(app_settings_parse_form(alarm, strlen(alarm), &base, &parsed));
     assert(!parsed.alarm_enabled && parsed.alarm_hour == 23U && parsed.alarm_minute == 59U);
@@ -84,10 +106,14 @@ static void test_scoped_forms(void)
     assert(parsed.audio_playback_volume == base.audio_playback_volume);
     assert(parsed.utc_offset_minutes == base.utc_offset_minutes);
     assert(parsed.update_channel == base.update_channel && parsed.manual_saving_requested);
+    assert(parsed.daily_pages_mask == base.daily_pages_mask);
+    assert(parsed.music_mode == base.music_mode);
     const char *updates = "section=updates&updates=stable";
     assert(app_settings_parse_form(updates, strlen(updates), &base, &parsed));
     assert(parsed.update_channel == APP_UPDATE_CHANNEL_STABLE);
     assert(parsed.alarm_enabled && parsed.alarm_volume == 19U && parsed.manual_saving_requested);
+    assert(parsed.daily_pages_mask == base.daily_pages_mask);
+    assert(parsed.music_mode == base.music_mode);
     const char *invalid[] = {
         "section=unknown&volume=50", "section=&volume=50",
         "section=general&timezone=480&unit=c", /* required field missing */
@@ -103,6 +129,104 @@ static void test_scoped_forms(void)
     for (size_t i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
         parsed = base;
         assert(!app_settings_parse_form(invalid[i], strlen(invalid[i]), &base, &parsed));
+        assert(memcmp(&parsed, &base, sizeof(base)) == 0);
+    }
+}
+
+static void test_daily_page_forms(void)
+{
+    app_settings_t base, parsed;
+    app_settings_defaults(&base);
+    base.manual_saving_requested = true;
+    base.update_channel = APP_UPDATE_CHANNEL_BETA;
+    base.alarm_enabled = true;
+    base.alarm_volume = 23U;
+    base.daily_pages_mask = APP_DAILY_PAGE_CALENDAR;
+    base.music_mode = APP_MUSIC_MODE_REPEAT_ONE;
+    for (unsigned mask = 0U; mask <= APP_DAILY_PAGES_ALL_MASK; ++mask) {
+        char form[64];
+        snprintf(form, sizeof(form), "section=pages&daily_pages_mask=%u", mask);
+        assert(app_settings_parse_form(form, strlen(form), &base, &parsed));
+        assert(parsed.daily_pages_mask == mask);
+        parsed.daily_pages_mask = base.daily_pages_mask;
+        assert(memcmp(&parsed, &base, sizeof(base)) == 0);
+    }
+    const char *reordered = "daily_pages_mask=%36%33&section=pages";
+    assert(app_settings_parse_form(reordered, strlen(reordered), &base, &parsed));
+    assert(parsed.daily_pages_mask == APP_DAILY_PAGES_ALL_MASK);
+    const char *legacy = "timezone=480&unit=c&volume=50&updates=stable&alarm=off&alarm_hour=7&alarm_minute=30&alarm_days=62";
+    assert(app_settings_parse_form(legacy, strlen(legacy), &base, &parsed));
+    assert(parsed.daily_pages_mask == base.daily_pages_mask);
+    assert(parsed.music_mode == base.music_mode);
+    const char *invalid[] = {
+        "section=pages", "daily_pages_mask=63", "section=pages&daily_pages_mask=",
+        "section=pages&daily_pages_mask=64", "section=pages&daily_pages_mask=255",
+        "section=pages&daily_pages_mask=-1", "section=pages&daily_pages_mask=-0",
+        "section=pages&daily_pages_mask=%2B1", "section=pages&daily_pages_mask=+1",
+        "section=pages&daily_pages_mask=1+", "section=pages&daily_pages_mask=0x3f",
+        "section=pages&daily_pages_mask=1.0", "section=pages&daily_pages_mask=1x",
+        "section=pages&daily_pages_mask=2147483648",
+        "section=pages&daily_pages_mask=63&daily_pages_mask=0",
+        "section=pages&daily_pages_mask=0&%64aily_pages_mask=63",
+        "section=pages&daily_pages_mask=63&section=pages",
+        "section=pages&daily_pages_mask=63&section=general",
+        "section=pages&daily_pages_mask=63&volume=1",
+        "section=pages&daily_pages_mask=63&updates=beta",
+        "section=pages&daily_pages_mask=63&alarm=on",
+        "section=general&timezone=480&unit=c&volume=50&daily_pages_mask=0",
+        "section=updates&updates=stable&daily_pages_mask=0",
+        "section=alarm&alarm=off&alarm_hour=7&alarm_minute=30&alarm_days=62&alarm_volume=30&daily_pages_mask=0",
+        "timezone=480&unit=c&volume=50&updates=stable&alarm=off&alarm_hour=7&alarm_minute=30&alarm_days=62&daily_pages_mask=0",
+    };
+    for (size_t i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        parsed = base;
+        assert(!app_settings_parse_form(invalid[i], strlen(invalid[i]), &base, &parsed));
+        assert(memcmp(&parsed, &base, sizeof(base)) == 0);
+    }
+}
+
+static void test_music_forms(void)
+{
+    app_settings_t base, parsed;
+    app_settings_defaults(&base);
+    base.manual_saving_requested = true;
+    base.daily_pages_mask = 0U;
+    base.alarm_volume = 23U;
+    base.update_channel = APP_UPDATE_CHANNEL_BETA;
+    base.music_mode = APP_MUSIC_MODE_REPEAT_ALL;
+    const char *values[] = {"sequential", "repeat_one", "repeat_all"};
+    for (unsigned mode = 0U; mode < 3U; ++mode) {
+        char form[64];
+        snprintf(form, sizeof(form), "section=music&music_mode=%s", values[mode]);
+        assert(app_settings_parse_form(form, strlen(form), &base, &parsed));
+        assert(parsed.music_mode == (app_music_mode_t)mode);
+        parsed.music_mode = base.music_mode;
+        assert(memcmp(&parsed, &base, sizeof(base)) == 0);
+    }
+    const char *reordered = "music_mode=repeat%5fone&section=music";
+    assert(app_settings_parse_form(reordered, strlen(reordered), &base, &parsed));
+    assert(parsed.music_mode == APP_MUSIC_MODE_REPEAT_ONE);
+    const char *invalid[] = {
+        "section=music", "music_mode=sequential", "section=music&music_mode=",
+        "section=music&music_mode=0", "section=music&music_mode=shuffle",
+        "section=music&music_mode=REPEAT_ONE", "section=music&music_mode=repeat_one+",
+        "section=music&music_mode=repeat_one&music_mode=repeat_all",
+        "section=music&music_mode=repeat_one&%6Dusic_mode=sequential",
+        "section=music&music_mode=repeat_all&section=music",
+        "section=music&music_mode=repeat_all&section=pages",
+        "section=music&music_mode=repeat_all&daily_pages_mask=0",
+        "section=music&music_mode=repeat_all&volume=1",
+        "section=music&music_mode=repeat_all&updates=stable",
+        "section=music&music_mode=repeat_all&alarm_volume=1",
+        "section=pages&daily_pages_mask=63&music_mode=repeat_one",
+        "section=general&timezone=480&unit=c&volume=50&music_mode=repeat_one",
+        "section=updates&updates=stable&music_mode=repeat_one",
+        "section=alarm&alarm=off&alarm_hour=7&alarm_minute=30&alarm_days=62&alarm_volume=30&music_mode=repeat_one",
+        "timezone=480&unit=c&volume=50&updates=stable&alarm=off&alarm_hour=7&alarm_minute=30&alarm_days=62&music_mode=repeat_one",
+    };
+    for (size_t index = 0U; index < sizeof(invalid) / sizeof(invalid[0]); ++index) {
+        parsed = base;
+        assert(!app_settings_parse_form(invalid[index], strlen(invalid[index]), &base, &parsed));
         assert(memcmp(&parsed, &base, sizeof(base)) == 0);
     }
 }
@@ -166,6 +290,8 @@ static void test_scoped_edits(void)
     settings.alarm_hour = 23U;
     settings.alarm_minute = 42U;
     settings.alarm_weekdays = APP_SETTINGS_ALARM_WEEKENDS_MASK;
+    settings.daily_pages_mask = 0U;
+    settings.music_mode = APP_MUSIC_MODE_REPEAT_ONE;
     assert(app_settings_set_field(&settings, APP_SETTING_VOLUME, 0U));
     assert(settings.audio_playback_volume == 0U);
     assert(app_settings_set_field(&settings, APP_SETTING_ALARM_ENABLED, 1U));
@@ -175,6 +301,8 @@ static void test_scoped_edits(void)
     assert(settings.manual_saving_requested);
     assert(settings.update_channel == APP_UPDATE_CHANNEL_BETA);
     assert(settings.utc_offset_minutes == -300);
+    assert(settings.daily_pages_mask == 0U);
+    assert(settings.music_mode == APP_MUSIC_MODE_REPEAT_ONE);
     const app_settings_t before = settings;
     assert(!app_settings_set_field(&settings, APP_SETTING_VOLUME, 101U));
     assert(!app_settings_set_field(&settings, APP_SETTING_ALARM_ENABLED, 2U));
@@ -526,6 +654,8 @@ int main(void)
 {
     test_defaults_and_validation();
     test_scoped_forms();
+    test_daily_page_forms();
+    test_music_forms();
     test_scoped_edits();
     test_legacy_power_mapping();
     test_timezone_format();

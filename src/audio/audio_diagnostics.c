@@ -34,6 +34,7 @@
 #include "esp_mn_speech_commands.h"
 #include "esp_partition.h"
 #include "esp_pm.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -157,6 +158,7 @@ typedef struct {
     bool music_storage_change;
     uint32_t music_generation;
     audio_music_status_t music_status;
+    audio_music_policy_t music_policy;
     audio_diagnostics_status_t status;
     audio_voice_status_t voice_status;
     audio_conversation_status_t conversation_status;
@@ -2917,6 +2919,8 @@ static void run_audio_session(void)
 
 static void music_stop_locked(void)
 {
+    const bool had_timer = s_audio.music_policy.sleep_deadline_ms != 0U;
+    audio_music_policy_cancel_timer(&s_audio.music_policy);
     if (s_audio.music_requested || s_audio.music_running ||
         s_audio.music_status.state == AUDIO_MUSIC_PLAYING ||
         s_audio.music_status.state == AUDIO_MUSIC_PAUSED) {
@@ -2925,6 +2929,24 @@ static void music_stop_locked(void)
         s_audio.music_status.state = AUDIO_MUSIC_STOPPED;
         s_audio.music_status.elapsed_seconds = 0;
         ++s_audio.music_status.revision;
+    } else if (had_timer) {
+        ++s_audio.music_status.revision;
+    }
+}
+
+static uint64_t music_monotonic_ms(void)
+{
+    const int64_t now_us = esp_timer_get_time();
+    return now_us > 0 ? (uint64_t)now_us / 1000U : 0U;
+}
+
+/* Called by the sole audio worker, including its paused ready loop. It never
+ * closes the codec from another task and does not depend on UI/HTTP polling. */
+static void music_expire_timer_locked(void)
+{
+    if (audio_music_policy_timer_expired(&s_audio.music_policy,
+                                          music_monotonic_ms())) {
+        music_stop_locked();
     }
 }
 
@@ -2933,9 +2955,40 @@ void audio_music_get_status(audio_music_status_t *status)
     if (status == NULL) return;
     lock_context();
     *status = s_audio.music_status;
+    status->playback_mode = s_audio.music_policy.mode;
+    status->sleep_remaining_seconds = audio_music_policy_remaining_seconds(
+        &s_audio.music_policy, music_monotonic_ms());
     status->volume = s_playback_volume;
     status->busy = s_audio.music_requested || s_audio.music_running;
     unlock_context();
+}
+
+esp_err_t audio_music_set_playback_mode(audio_music_playback_mode_t mode)
+{
+    if (!audio_music_policy_mode_valid(mode)) return ESP_ERR_INVALID_ARG;
+    lock_context();
+    if (s_audio.music_policy.mode != mode) {
+        (void)audio_music_policy_set_mode(&s_audio.music_policy, mode);
+        ++s_audio.music_status.revision;
+    }
+    unlock_context();
+    return ESP_OK;
+}
+
+esp_err_t audio_music_set_sleep_timer(uint16_t minutes)
+{
+    if (!audio_music_policy_timer_minutes_valid(minutes))
+        return ESP_ERR_INVALID_ARG;
+    lock_context();
+    music_expire_timer_locked();
+    const bool active = !s_audio.music_storage_change &&
+        (s_audio.music_status.state == AUDIO_MUSIC_PLAYING ||
+         s_audio.music_status.state == AUDIO_MUSIC_PAUSED);
+    const bool updated = audio_music_policy_set_timer(
+        &s_audio.music_policy, minutes, active, music_monotonic_ms());
+    if (updated) ++s_audio.music_status.revision;
+    unlock_context();
+    return updated ? ESP_OK : ESP_ERR_INVALID_STATE;
 }
 
 static bool music_can_start_locked(void)
@@ -2955,6 +3008,7 @@ esp_err_t audio_music_toggle(void)
     if (library.count == 0U) return ESP_ERR_NOT_FOUND;
     lock_context();
     if (!music_can_start_locked()) { unlock_context(); return ESP_ERR_INVALID_STATE; }
+    music_expire_timer_locked();
     if (s_audio.music_status.selected_index >= library.count) s_audio.music_status.selected_index = 0;
     if (s_audio.music_status.state == AUDIO_MUSIC_PLAYING) {
         s_audio.music_status.state = AUDIO_MUSIC_PAUSED;
@@ -2980,13 +3034,18 @@ esp_err_t audio_music_next(void)
     if (library.count == 0U) return ESP_ERR_NOT_FOUND;
     lock_context();
     if (!music_can_start_locked()) { unlock_context(); return ESP_ERR_INVALID_STATE; }
+    music_expire_timer_locked();
     const bool playing = s_audio.music_status.state == AUDIO_MUSIC_PLAYING;
+    const bool paused = s_audio.music_status.state == AUDIO_MUSIC_PAUSED;
     ++s_audio.music_generation;
-    s_audio.music_requested = playing;
+    s_audio.music_requested = playing || paused;
     s_audio.music_status.selected_index = (s_audio.music_status.selected_index + 1U) % library.count;
     s_audio.music_status.elapsed_seconds = 0;
     s_audio.music_status.error = ESP_OK;
-    s_audio.music_status.state = playing ? AUDIO_MUSIC_PLAYING : AUDIO_MUSIC_STOPPED;
+    /* A paused next track stays paused at its beginning. The worker's ready
+     * loop still owns countdown expiry, without opening a speaker or SD file. */
+    s_audio.music_status.state = playing ? AUDIO_MUSIC_PLAYING :
+        paused ? AUDIO_MUSIC_PAUSED : AUDIO_MUSIC_STOPPED;
     ++s_audio.music_status.revision;
     unlock_context();
     xTaskNotifyGive(s_audio.worker_task);
@@ -3039,6 +3098,11 @@ esp_err_t audio_music_select(const char *filename, bool play)
     if ((play && !music_can_start_locked()) || (!play && s_audio.music_running)) {
         unlock_context(); return ESP_ERR_INVALID_STATE;
     }
+    music_expire_timer_locked();
+    if (!play || (s_audio.music_status.state != AUDIO_MUSIC_PLAYING &&
+                  s_audio.music_status.state != AUDIO_MUSIC_PAUSED)) {
+        audio_music_policy_cancel_timer(&s_audio.music_policy);
+    }
     ++s_audio.music_generation;
     s_audio.music_requested = play;
     s_audio.music_status.selected_index = (uint8_t)index;
@@ -3065,6 +3129,8 @@ static bool music_output_ready(void *context)
     music_output_t *output = context;
     while (true) {
         lock_context();
+        if (output->generation == s_audio.music_generation)
+            music_expire_timer_locked();
         const bool current = output->generation == s_audio.music_generation;
         const bool paused = s_audio.music_status.state == AUDIO_MUSIC_PAUSED;
         unlock_context();
@@ -3088,6 +3154,12 @@ static esp_err_t music_output_write(void *context, uint32_t rate, const int16_t 
 {
     music_output_t *output = context;
     lock_context();
+    if (output->generation == s_audio.music_generation)
+        music_expire_timer_locked();
+    if (output->generation != s_audio.music_generation) {
+        unlock_context();
+        return ESP_ERR_INVALID_STATE;
+    }
     const uint8_t volume = s_playback_volume;
     unlock_context();
     if (!output->opened) {
@@ -3127,6 +3199,8 @@ static void run_music(uint32_t generation, size_t index)
          * precedence; never add this tail delay to alarm/OTA handoffs. */
         for (unsigned tick = 0; tick < 8U; ++tick) {
             lock_context();
+            if (output.generation == s_audio.music_generation)
+                music_expire_timer_locked();
             const bool current = output.generation == s_audio.music_generation;
             unlock_context();
             if (!current) break;
@@ -3142,10 +3216,21 @@ static void run_music(uint32_t generation, size_t index)
     music_library_get_status(&library);
     lock_context();
     s_audio.music_running = false;
+    if (output.generation == s_audio.music_generation)
+        music_expire_timer_locked();
+    size_t next_index = index;
+    const audio_music_finish_t finish = audio_music_policy_finish(
+        &s_audio.music_policy, output.generation == s_audio.music_generation,
+        error == ESP_OK,
+        s_audio.music_status.state == AUDIO_MUSIC_PLAYING ||
+            s_audio.music_status.state == AUDIO_MUSIC_PAUSED,
+        index, library.count, music_monotonic_ms(), &next_index);
     if (output.generation == s_audio.music_generation) {
         s_audio.music_status.error = error;
-        if (error == ESP_OK && s_audio.music_status.state == AUDIO_MUSIC_PLAYING && index + 1U < library.count) {
-            ++s_audio.music_status.selected_index;
+        if (finish == AUDIO_MUSIC_FINISH_NEXT) {
+            /* Preserve a pause made during the final DMA drain. The next
+             * ready callback waits at the new track's beginning silently. */
+            s_audio.music_status.selected_index = (uint8_t)next_index;
             s_audio.music_status.elapsed_seconds = 0;
             ++s_audio.music_generation;
             s_audio.music_requested = true;
@@ -3167,6 +3252,7 @@ static void audio_worker_task(void *argument)
             uint32_t music_generation = 0;
             size_t music_index = 0;
             lock_context();
+            music_expire_timer_locked();
             /* If an alert arrives with a session request, let the session
              * observe its cancellation first so codec/I2S ownership is
              * released before alert playback starts. */

@@ -36,6 +36,7 @@ typedef struct {
     /* Short user-facing ASCII status, not an upstream error or URL. */
     const char *status_detail;
     bool saving;
+    const char *next_daily_page;
 } display_market_t;
 
 bool display_market_format_price(char *buffer, size_t capacity,

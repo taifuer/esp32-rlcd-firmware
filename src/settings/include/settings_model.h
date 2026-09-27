@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define APP_SETTINGS_SCHEMA_VERSION 8U
+#define APP_SETTINGS_SCHEMA_VERSION 10U
 #define APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES 480
 #define APP_SETTINGS_MIN_UTC_OFFSET_MINUTES (-720)
 #define APP_SETTINGS_MAX_UTC_OFFSET_MINUTES 840
@@ -28,6 +28,14 @@ extern "C" {
 #define APP_SETTINGS_ALARM_WEEKDAYS_MASK 0x3eU
 #define APP_SETTINGS_ALARM_WEEKENDS_MASK 0x41U
 #define APP_SETTINGS_ALARM_ALL_DAYS_MASK 0x7fU
+/* Optional daily pages only. HOME and maintenance pages are always available. */
+#define APP_DAILY_PAGE_WEATHER (1U << 0U)
+#define APP_DAILY_PAGE_MARKET (1U << 1U)
+#define APP_DAILY_PAGE_CALENDAR (1U << 2U)
+#define APP_DAILY_PAGE_IMAGE (1U << 3U)
+#define APP_DAILY_PAGE_MUSIC (1U << 4U)
+#define APP_DAILY_PAGE_CHAT (1U << 5U)
+#define APP_DAILY_PAGES_ALL_MASK 0x3fU
 
 typedef enum {
     APP_TEMPERATURE_UNIT_CELSIUS = 0,
@@ -38,6 +46,12 @@ typedef enum {
     APP_UPDATE_CHANNEL_STABLE = 0,
     APP_UPDATE_CHANNEL_BETA = 1,
 } app_update_channel_t;
+
+typedef enum {
+    APP_MUSIC_MODE_SEQUENTIAL = 0,
+    APP_MUSIC_MODE_REPEAT_ONE = 1,
+    APP_MUSIC_MODE_REPEAT_ALL = 2,
+} app_music_mode_t;
 
 /* Device edits change one field in the latest record, never a stale copy. */
 typedef enum {
@@ -57,6 +71,8 @@ typedef struct {
     uint8_t alarm_hour;
     uint8_t alarm_minute;
     uint8_t alarm_weekdays;
+    uint8_t daily_pages_mask;
+    app_music_mode_t music_mode;
 } app_settings_t;
 
 void app_settings_defaults(app_settings_t *settings);
@@ -72,7 +88,7 @@ bool app_manual_saving_from_legacy_power(uint16_t schema_version,
                                          bool *manual_requested);
 bool app_settings_format_posix_tz(int16_t utc_offset_minutes,
                                   char *buffer, size_t capacity);
-/* Apply a scoped (section=general|alarm|updates) or legacy complete form.
+/* Apply a scoped (section=general|alarm|updates|pages|music) or legacy complete form.
  * Unrelated fields, including the device-side manual saving request,
  * are preserved from the latest validated base record. */
 bool app_settings_parse_form(const char *body, size_t length,

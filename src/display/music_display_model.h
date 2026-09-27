@@ -2,9 +2,39 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #define MUSIC_TITLE_LINE_CAPACITY 132U
+
+static inline uint32_t music_display_sleep_minutes(uint32_t seconds)
+{
+    return seconds / 60U + (seconds % 60U != 0U ? 1U : 0U);
+}
+
+static inline bool music_display_format_status(char *buffer, size_t capacity,
+                                               const char *state, const char *mode)
+{
+    if (buffer == NULL || capacity == 0U) return false;
+    const int written = snprintf(buffer, capacity, "%s | %s",
+        state != NULL ? state : "STOPPED", mode != NULL ? mode : "SEQUENTIAL");
+    return written > 0 && (size_t)written < capacity;
+}
+
+static inline bool music_display_format_detail(char *buffer, size_t capacity,
+                                               unsigned volume, uint32_t seconds,
+                                               bool failed)
+{
+    if (buffer == NULL || capacity == 0U || volume > 100U) return false;
+    const int written = failed
+        ? snprintf(buffer, capacity, "CHECK FILE / CARD | KEY: RETRY")
+        : seconds != 0U
+        ? snprintf(buffer, capacity, "VOLUME %u%% | STOP IN %lum", volume,
+                   (unsigned long)music_display_sleep_minutes(seconds))
+        : snprintf(buffer, capacity, "VOLUME %u%%", volume);
+    return written > 0 && (size_t)written < capacity;
+}
 
 /* Input has already been sanitized against the display font. Keep the start
  * of a title, never split a UTF-8 code point or scroll to its final words. */

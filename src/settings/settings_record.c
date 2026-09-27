@@ -3,7 +3,9 @@
 #include <limits.h>
 
 #define SETTINGS_RECORD_MAGIC UINT32_C(0x47464352)
-#define SETTINGS_RECORD_FORMAT_VERSION 7U
+#define SETTINGS_RECORD_FORMAT_VERSION 9U
+#define SETTINGS_RECORD_SCHEMA9_FORMAT_VERSION 8U
+#define SETTINGS_RECORD_SCHEMA8_FORMAT_VERSION 7U
 #define SETTINGS_RECORD_SCHEMA7_FORMAT_VERSION 6U
 #define SETTINGS_RECORD_SCHEMA6_FORMAT_VERSION 5U
 #define SETTINGS_RECORD_SCHEMA5_FORMAT_VERSION 4U
@@ -33,10 +35,13 @@ enum {
     /* Schema v4 used this byte for the now-obsolete image rotation mode. */
     LEGACY_IMAGE_ROTATION_OFFSET = 24,
     /* v0.26.0-dev.1 used this byte for CLOCK/WEATHER/IMAGE. Decode valid
-     * legacy values but ignore them; keep schema/slots stable for upgrades. */
+     * legacy values but ignore this retired preference. */
     LEGACY_DEFAULT_DISPLAY_OFFSET = 25,
     ALARM_VOLUME_OFFSET = 26,
-    CHECKSUM_OFFSET = 28,
+    DAILY_PAGES_OFFSET = 27,
+    MUSIC_MODE_OFFSET = 28,
+    CHECKSUM_OFFSET = 32,
+    LEGACY_CHECKSUM_OFFSET = 28,
     SCHEMA3_CHECKSUM_OFFSET = 24,
     SCHEMA2_CHECKSUM_OFFSET = 20,
 };
@@ -122,6 +127,8 @@ bool settings_record_encode(uint32_t generation,
     encoded[LEGACY_IMAGE_ROTATION_OFFSET] = 0U;
     encoded[LEGACY_DEFAULT_DISPLAY_OFFSET] = 0U;
     encoded[ALARM_VOLUME_OFFSET] = settings->alarm_volume;
+    encoded[DAILY_PAGES_OFFSET] = settings->daily_pages_mask;
+    encoded[MUSIC_MODE_OFFSET] = (uint8_t)settings->music_mode;
     put_u32(encoded, CHECKSUM_OFFSET,
             record_checksum(encoded, CHECKSUM_OFFSET));
     return true;
@@ -130,17 +137,23 @@ bool settings_record_encode(uint32_t generation,
 static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
                                   settings_record_t *record, uint16_t schema)
 {
+    const size_t expected_size = schema >= 10U
+        ? SETTINGS_RECORD_ENCODED_SIZE : SETTINGS_RECORD_SCHEMA9_ENCODED_SIZE;
+    const size_t checksum_offset = schema >= 10U
+        ? CHECKSUM_OFFSET : LEGACY_CHECKSUM_OFFSET;
     if (encoded == NULL || record == NULL ||
-        encoded_size != SETTINGS_RECORD_ENCODED_SIZE ||
+        encoded_size != expected_size ||
         get_u32(encoded, MAGIC_OFFSET) != SETTINGS_RECORD_MAGIC ||
         get_u16(encoded, FORMAT_OFFSET) !=
             (schema == 6U ? SETTINGS_RECORD_SCHEMA6_FORMAT_VERSION
              : schema == 7U ? SETTINGS_RECORD_SCHEMA7_FORMAT_VERSION
+             : schema == 8U ? SETTINGS_RECORD_SCHEMA8_FORMAT_VERSION
+             : schema == 9U ? SETTINGS_RECORD_SCHEMA9_FORMAT_VERSION
                             : SETTINGS_RECORD_FORMAT_VERSION) ||
         get_u16(encoded, SCHEMA_OFFSET) != schema ||
-        get_u16(encoded, SIZE_OFFSET) != SETTINGS_RECORD_ENCODED_SIZE ||
-        get_u32(encoded, CHECKSUM_OFFSET) !=
-            record_checksum(encoded, CHECKSUM_OFFSET)) {
+        get_u16(encoded, SIZE_OFFSET) != expected_size ||
+        get_u32(encoded, checksum_offset) !=
+            record_checksum(encoded, checksum_offset)) {
         return false;
     }
 
@@ -171,6 +184,11 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
         .alarm_hour = encoded[ALARM_HOUR_OFFSET],
         .alarm_minute = encoded[ALARM_MINUTE_OFFSET],
         .alarm_weekdays = encoded[ALARM_WEEKDAYS_OFFSET],
+        .daily_pages_mask = schema >= 9U ? encoded[DAILY_PAGES_OFFSET]
+                                        : APP_DAILY_PAGES_ALL_MASK,
+        .music_mode = schema >= 10U
+            ? (app_music_mode_t)encoded[MUSIC_MODE_OFFSET]
+            : APP_MUSIC_MODE_SEQUENTIAL,
     };
     if (!app_settings_validate(&settings)) {
         return false;
@@ -188,6 +206,20 @@ bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
 {
     return decode_recent_record(encoded, encoded_size, record,
                                 APP_SETTINGS_SCHEMA_VERSION);
+}
+
+bool settings_record_decode_schema8(const uint8_t *encoded,
+                                    size_t encoded_size,
+                                    settings_record_t *record)
+{
+    return decode_recent_record(encoded, encoded_size, record, 8U);
+}
+
+bool settings_record_decode_schema9(const uint8_t *encoded,
+                                    size_t encoded_size,
+                                    settings_record_t *record)
+{
+    return decode_recent_record(encoded, encoded_size, record, 9U);
 }
 
 bool settings_record_decode_schema7(const uint8_t *encoded,
@@ -216,8 +248,8 @@ bool settings_record_decode_schema5(const uint8_t *encoded,
         get_u16(encoded, SIZE_OFFSET) !=
             SETTINGS_RECORD_SCHEMA5_ENCODED_SIZE ||
         get_u16(encoded, SCHEMA_OFFSET) != SETTINGS_RECORD_SCHEMA5_VERSION ||
-        get_u32(encoded, CHECKSUM_OFFSET) !=
-            record_checksum(encoded, CHECKSUM_OFFSET)) {
+        get_u32(encoded, LEGACY_CHECKSUM_OFFSET) !=
+            record_checksum(encoded, LEGACY_CHECKSUM_OFFSET)) {
         return false;
     }
 
@@ -272,8 +304,8 @@ bool settings_record_decode_schema4(const uint8_t *encoded,
         get_u16(encoded, SIZE_OFFSET) !=
             SETTINGS_RECORD_SCHEMA4_ENCODED_SIZE ||
         get_u16(encoded, SCHEMA_OFFSET) != SETTINGS_RECORD_SCHEMA4_VERSION ||
-        get_u32(encoded, CHECKSUM_OFFSET) !=
-            record_checksum(encoded, CHECKSUM_OFFSET)) {
+        get_u32(encoded, LEGACY_CHECKSUM_OFFSET) !=
+            record_checksum(encoded, LEGACY_CHECKSUM_OFFSET)) {
         return false;
     }
 

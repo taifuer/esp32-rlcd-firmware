@@ -44,12 +44,11 @@
 #define UPDATE_EVENT_MUTATION_ENDED BIT5
 #define UPDATE_EVENT_GALLERY_INSTALL BIT6
 #define UPDATE_EVENT_WIFI_CHANGED BIT7
-#define UPDATE_EVENT_WEATHER_REFRESH BIT8
 #define UPDATE_EVENT_HOTSPOT BIT9
 #define UPDATE_EVENT_SESSION                                                    \
     (UPDATE_EVENT_COMPLETE | UPDATE_EVENT_FAILED | UPDATE_EVENT_CANCEL |       \
      UPDATE_EVENT_REPROVISION | UPDATE_EVENT_GALLERY_INSTALL |                 \
-     UPDATE_EVENT_WIFI_CHANGED | UPDATE_EVENT_WEATHER_REFRESH | UPDATE_EVENT_HOTSPOT)
+     UPDATE_EVENT_WIFI_CHANGED | UPDATE_EVENT_HOTSPOT)
 #define UPDATE_EVENT_ALL                                                       \
     (UPDATE_EVENT_SESSION | UPDATE_EVENT_MUTATION_ENDED)
 
@@ -105,28 +104,30 @@ static const char RECOVERY_SETTINGS_PAGE[] =
     "footer{text-align:center;margin-top:1.5rem;font-size:.85rem;color:#676b70}footer a{color:inherit;text-decoration:none}footer a:hover{text-decoration:underline}"
     "</style></head><body><main><header><h1>固件恢复</h1>"
     "<p>恢复模式仅启动联网和升级所需功能。修复完成后，关闭电源再正常开机。</p></header>"
+    "<p id=\"loadMessage\" class=\"message\" role=\"status\"></p><button id=\"retryLoad\" type=\"button\" class=\"secondary\" hidden>重试读取</button>"
     "<section><h2>Wi-Fi</h2><div class=\"summary\"><span id=\"wifiLabel\">已保存网络</span><strong id=\"wifiName\">正在读取…</strong></div>"
     "<button id=\"wifiEdit\" type=\"button\" class=\"secondary\">更换 Wi-Fi</button>"
     "<form id=\"wifiForm\" class=\"form\" autocomplete=\"off\" hidden><label for=\"wifiSsid\">Wi-Fi 名称</label><input id=\"wifiSsid\" maxlength=\"32\" required>"
     "<label for=\"wifiPassword\">Wi-Fi 密码</label><input id=\"wifiPassword\" type=\"password\" maxlength=\"63\" autocomplete=\"new-password\">"
     "<label class=\"check\"><input id=\"showWifiPassword\" type=\"checkbox\">显示密码</label><label class=\"check\"><input id=\"openWifi\" type=\"checkbox\">这是开放网络</label>"
-    "<p class=\"note\">仅支持 2.4 GHz。新网络验证成功后才会替换原配置。</p><div class=\"row\"><button type=\"submit\">连接并保存</button><button id=\"wifiCancel\" type=\"button\" class=\"secondary\">取消</button></div></form>"
+    "<p class=\"note\">仅支持 2.4 GHz。新网络验证成功后才会替换原配置。</p><div class=\"row\"><button id=\"wifiSave\" type=\"submit\">连接并保存</button><button id=\"wifiCancel\" type=\"button\" class=\"secondary\">取消</button></div></form>"
     "<p id=\"wifiMessage\" class=\"message\" role=\"status\"></p><button id=\"forgetWifi\" type=\"button\" class=\"danger\">移除已保存的 Wi-Fi</button></section>"
     "<section><h2>本地固件升级</h2><p>请选择本项目发布的 <strong>OTA 固件</strong>。写入期间请保持供电。</p>"
     "<input id=\"file\" type=\"file\" accept=\".bin,application/octet-stream\"><button id=\"upload\" type=\"button\">开始升级</button>"
     "<progress id=\"progress\" max=\"100\" value=\"0\"></progress><p id=\"updateMessage\" class=\"message\">等待选择固件</p></section>"
     "<footer>© <span id=\"portalYear\">2026</span> <a href=\"https://mcu.taifua.com/\" target=\"_blank\" rel=\"noopener noreferrer\">ESP32 固件</a></footer>"
-    "<script>document.getElementById('portalYear').textContent=String(new Date().getFullYear());let token='',wifiConfigured=false,wifiBusy=false;const $=id=>document.getElementById(id);const show=(id,text)=>{$(id).textContent=text};"
-    "function controls(){const open=$('openWifi').checked;$('wifiEdit').disabled=wifiBusy;$('wifiSsid').disabled=wifiBusy;$('wifiPassword').disabled=wifiBusy||open;$('showWifiPassword').disabled=wifiBusy||open;$('openWifi').disabled=wifiBusy;$('forgetWifi').disabled=wifiBusy||!wifiConfigured}"
+    "<script>document.getElementById('portalYear').textContent=String(new Date().getFullYear());let token='',wifiConfigured=false,wifiBusy=false,stateReady=false,loading=false,otaStarted=false;const $=id=>document.getElementById(id);const show=(id,text)=>{$(id).textContent=text};"
+    "function controls(){const open=$('openWifi').checked,blocked=!stateReady||wifiBusy||otaStarted;$('wifiEdit').disabled=blocked;$('wifiSsid').disabled=blocked;$('wifiPassword').disabled=blocked||open;$('showWifiPassword').disabled=blocked||open;$('openWifi').disabled=blocked;$('forgetWifi').disabled=blocked||!wifiConfigured;$('wifiSave').disabled=blocked;$('wifiCancel').disabled=blocked;$('upload').disabled=!stateReady||otaStarted||wifiBusy;$('file').disabled=$('upload').disabled;$('retryLoad').disabled=loading||otaStarted}"
     "function edit(value){$('wifiForm').hidden=!value;if(value){$('wifiPassword').value='';$('wifiSsid').focus()}}"
-    "async function post(path,body){const response=await fetch(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Token':token},body});const text=await response.text();if(!response.ok)throw new Error(text||'操作失败');return text}"
-    "async function load(){const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw new Error('无法读取恢复状态');const state=await response.json();token=state.token;wifiConfigured=state.wifi_configured===true;$('wifiLabel').textContent=wifiConfigured?'已保存网络':'网络状态';$('wifiName').textContent=wifiConfigured?state.wifi_ssid:(state.wifi_readable?'尚未配置':'无法读取，可更换网络或升级');$('wifiSsid').value=wifiConfigured?state.wifi_ssid:'';controls()}"
+    "async function requestData(path,options={},format='json'){const writing=options.method==='POST',controller=new AbortController(),timer=setTimeout(()=>controller.abort(),writing?45000:15000);try{const response=await fetch(path,{...options,signal:controller.signal});if(!response.ok)throw new Error(await response.text()||'设备暂时无法处理');return await response[format]()}catch(error){if(error.name==='AbortError'||error.name==='TypeError')throw new Error(writing?'连接中断或请求超时，操作结果尚未确认。请重新连接门户后核对。':'无法读取恢复状态，请确认门户仍在开启后重试。');throw error}finally{clearTimeout(timer)}}"
+    "async function post(path,body){if(!stateReady)throw new Error('请先读取恢复状态');return requestData(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Token':token},body},'text')}"
+    "async function load(){if(loading||otaStarted)return;loading=true;controls();try{const state=await requestData('/api/state',{cache:'no-store'});if(!state||typeof state.token!=='string'||!state.token)throw new Error('设备返回的恢复状态无效');token=state.token;stateReady=true;wifiConfigured=state.wifi_configured===true;$('wifiLabel').textContent=wifiConfigured?'已保存网络':'网络状态';$('wifiName').textContent=wifiConfigured?state.wifi_ssid:(state.wifi_readable?'尚未配置':'无法读取，可更换网络或升级');if($('wifiForm').hidden)$('wifiSsid').value=wifiConfigured?state.wifi_ssid:'';show('loadMessage','');$('retryLoad').hidden=true}catch(error){show('loadMessage',error.message);$('retryLoad').hidden=false}finally{loading=false;controls()}}"
     "$('wifiEdit').onclick=()=>edit(true);$('wifiCancel').onclick=()=>{edit(false);show('wifiMessage','')};$('showWifiPassword').onchange=()=>{$('wifiPassword').type=$('showWifiPassword').checked?'text':'password'};"
     "$('openWifi').onchange=()=>{if($('openWifi').checked){$('wifiPassword').value='';$('showWifiPassword').checked=false;$('wifiPassword').type='password'}controls()};"
-    "$('wifiForm').onsubmit=async event=>{event.preventDefault();if(wifiBusy)return;const ssid=$('wifiSsid').value,password=$('wifiPassword').value,open=$('openWifi').checked;if(!ssid||new TextEncoder().encode(ssid).length>32){show('wifiMessage','Wi-Fi 名称应为 1—32 字节。');return}if(!open&&!/^[\\x20-\\x7e]{8,63}$/.test(password)){show('wifiMessage','请输入 8—63 位英文字符、数字或符号。');return}wifiBusy=true;controls();show('wifiMessage','正在验证新网络…');try{show('wifiMessage',await post('/api/wifi/change','ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(open?'':password)))}catch(error){show('wifiMessage',error.name==='TypeError'?'设置热点已关闭，请查看设备屏幕。':error.message);wifiBusy=false;controls()}};"
+    "$('wifiForm').onsubmit=async event=>{event.preventDefault();if(wifiBusy||!stateReady||otaStarted)return;const ssid=$('wifiSsid').value,password=$('wifiPassword').value,open=$('openWifi').checked;if(!ssid||new TextEncoder().encode(ssid).length>32){show('wifiMessage','Wi-Fi 名称应为 1—32 字节。');return}if(!open&&!/^[\\x20-\\x7e]{8,63}$/.test(password)){show('wifiMessage','请输入 8—63 位英文字符、数字或符号。');return}wifiBusy=true;controls();show('wifiMessage','正在验证新网络…');try{show('wifiMessage',await post('/api/wifi/change','ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(open?'':password)))}catch(error){show('wifiMessage',error.message);wifiBusy=false;controls()}};"
     "$('forgetWifi').onclick=async()=>{if(!wifiConfigured||!confirm('移除已保存的 Wi-Fi？'))return;wifiBusy=true;controls();show('wifiMessage','正在移除…');try{show('wifiMessage',await post('/api/wifi/clear','confirm=FORGET'))}catch(error){show('wifiMessage',error.name==='TypeError'?'设置热点已关闭，请重新配网。':error.message);wifiBusy=false;controls()}};"
-    "$('upload').onclick=()=>{const file=$('file'),button=$('upload'),progress=$('progress');if(!file.files.length){show('updateMessage','请先选择 OTA 固件');return}if(!confirm('开始写入固件？'))return;button.disabled=true;file.disabled=true;const request=new XMLHttpRequest();request.open('POST','/update');request.setRequestHeader('Content-Type','application/octet-stream');request.setRequestHeader('X-RLCD-Token',token);request.upload.onprogress=event=>{if(event.lengthComputable){const value=Math.round(event.loaded*100/event.total);progress.value=value;show('updateMessage','正在上传 '+value+'%')}};request.onload=()=>{show('updateMessage',request.responseText||(request.status===200?'升级成功，设备即将重启':'升级失败'));if(request.status!==200){button.disabled=false;file.disabled=false}};request.onerror=()=>show('updateMessage','连接中断，请查看设备屏幕');request.send(file.files[0])};"
-    "load().catch(error=>show('wifiMessage',error.message));</script></main></body></html>";
+    "$('upload').onclick=()=>{if(!stateReady||otaStarted||wifiBusy)return;const file=$('file'),progress=$('progress');if(!file.files.length){show('updateMessage','请先选择 OTA 固件');return}if(!confirm('开始写入固件？'))return;otaStarted=true;controls();const request=new XMLHttpRequest();request.open('POST','/update');request.timeout=630000;request.setRequestHeader('Content-Type','application/octet-stream');request.setRequestHeader('X-RLCD-Token',token);request.upload.onprogress=event=>{if(event.lengthComputable){const value=Math.round(event.loaded*100/event.total);progress.value=value;show('updateMessage',value===100?'上传完成，正在校验，请保持供电…':'正在上传 '+value+'%')}};request.onload=()=>show('updateMessage',request.status===200?(request.responseText||'升级成功，设备即将重启'):(request.responseText||'升级未完成。')+' 请查看设备屏幕，重新开启设置后核对版本，再决定是否重试。');request.onerror=request.ontimeout=request.onabort=()=>show('updateMessage','连接中断或请求超时，升级结果尚未确认。请保持供电并查看设备屏幕，重新开启设置后核对版本，再决定是否重试。');request.send(file.files[0])};"
+    "$('retryLoad').onclick=load;controls();load();</script></main></body></html>";
 
 static const char SETTINGS_PAGE[] =
     "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">"
@@ -168,6 +169,7 @@ static const char SETTINGS_PAGE[] =
     "[hidden]{display:none!important}.settings-nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.35rem;padding:.3rem;border:1px solid #e2e4e7;border-radius:.7rem;background:#fff;margin:.5rem 0 1rem}.settings-nav button{margin:0;padding:.6rem .2rem;border:0;background:transparent;color:#555;font-weight:500}.settings-nav button[aria-pressed=true]{background:#edf0f3;color:#171717;font-weight:650}button:focus-visible,summary:focus-visible{outline:2px solid #356a9a;outline-offset:3px}"
     "</style></head><body><main><header><h1>设备设置</h1>"
     "<p>保存后立即生效，无需重启。</p></header>"
+    "<div id=\"loadNotice\" hidden><p id=\"loadMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p><button id=\"retryLoads\" type=\"button\" class=\"secondary\">重试读取</button></div>"
     "<section id=\"pairPanel\" hidden><h2>访问授权</h2><p>输入屏幕上的 8 位 ACCESS CODE，或扫描屏幕二维码。</p>"
     "<form id=\"pairForm\"><label for=\"pairCode\">访问码</label><input id=\"pairCode\" maxlength=\"8\" minlength=\"8\" required autocomplete=\"off\" autocapitalize=\"characters\">"
     "<button id=\"pairButton\" type=\"submit\">连接设备</button></form><p id=\"pairMessage\" role=\"status\"></p></section>"
@@ -185,6 +187,18 @@ static const char SETTINGS_PAGE[] =
     "<output id=\"volumeValue\">--</output></div>"
     "<p class=\"note\">用于音乐和对话；0% 静音，不影响独立闹钟音量。</p>"
     "<button type=\"submit\">保存常用设置</button></form><p id=\"settingsMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
+    "<section><details><summary class=\"section-toggle\">显示页面</summary><form id=\"pagesForm\"><input type=\"hidden\" name=\"section\" value=\"pages\">"
+    "<p class=\"note\">选择短按 BOOT 时经过的页面；时钟始终保留，页面顺序不变。</p>"
+    "<div class=\"market-choices\" role=\"group\" aria-label=\"显示页面\">"
+    "<label class=\"check\"><input id=\"pageWeather\" type=\"checkbox\">天气</label>"
+    "<label class=\"check\"><input id=\"pageMarket\" type=\"checkbox\">市场看板</label>"
+    "<label class=\"check\"><input id=\"pageCalendar\" type=\"checkbox\">日历</label>"
+    "<label class=\"check\"><input id=\"pageImage\" type=\"checkbox\">图片</label>"
+    "<label class=\"check\"><input id=\"pageMusic\" type=\"checkbox\">音乐</label>"
+    "<label class=\"check\"><input id=\"pageChat\" type=\"checkbox\">对话</label></div>"
+    "<p class=\"note\">隐藏只跳过页面，不停用功能，也不删除配置或文件。天气与市场仍需启用，图片与音乐仍需有可用内容。</p>"
+    "<input id=\"dailyPagesMask\" name=\"daily_pages_mask\" type=\"hidden\" value=\"63\">"
+    "<button id=\"pagesSave\" type=\"submit\">保存显示页面</button></form><p id=\"pagesMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section>"
     "<section><h2>日期与时间</h2><p>使用手机或电脑的时间校准 RTC。</p>"
     "<button id=\"setTime\" type=\"button\" class=\"secondary\">校准设备时间</button>"
     "<p id=\"timeMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
@@ -245,7 +259,8 @@ static const char SETTINGS_PAGE[] =
     "<p class=\"note\">设备使用你的凭据直连 QWeather，不经过项目服务器；请求可能计入你的账户用量。"
     "数据服务：<a class=\"source-link\" href=\"https://www.qweather.com/\" target=\"_blank\" rel=\"noopener noreferrer\">和风天气 QWeather</a>。</p>"
     "<p class=\"note\">当前固件未启用 Flash/NVS 加密；建议使用本设备专用、最小权限且可随时撤销的 Key。</p>"
-    "<button id=\"weatherSave\" type=\"submit\">保存并获取天气</button></form>"
+    "<p class=\"note\">保存后可继续修改其他设置；按设备 BOOT 退出网页设置后获取一次天气，不切换当前页面。</p>"
+    "<button id=\"weatherSave\" type=\"submit\">保存天气设置</button></form>"
     "<p id=\"weatherMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
     "<details class=\"advanced\"><summary>清除天气配置</summary>"
     "<p class=\"note\">清除 API Host、API Key、位置和本地天气缓存；其他设置不会改变，设备无需重启。</p>"
@@ -296,6 +311,13 @@ static const char SETTINGS_PAGE[] =
     "<button id=\"musicStop\" type=\"button\" class=\"secondary\" disabled>停止播放</button></div>"
     "<div class=\"button-row\"><button id=\"musicRefresh\" type=\"button\" class=\"secondary\">刷新列表</button>"
     "<button id=\"musicDelete\" type=\"button\" class=\"danger\" disabled>删除歌曲</button></div>"
+    "<details class=\"advanced\"><summary>播放设置</summary><form id=\"musicSettingsForm\"><input type=\"hidden\" name=\"section\" value=\"music\">"
+    "<label for=\"musicMode\">播放方式</label><select id=\"musicMode\" name=\"music_mode\"><option value=\"sequential\">顺序播放，末首结束停止</option><option value=\"repeat_one\">单曲循环</option><option value=\"repeat_all\">列表循环</option></select>"
+    "<button id=\"musicSettingsSave\" type=\"submit\">保存播放方式</button></form><p id=\"musicSettingsMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
+    "<label for=\"musicSleep\">定时停止</label><select id=\"musicSleep\"><option value=\"15\">15 分钟</option><option value=\"30\">30 分钟</option><option value=\"60\">60 分钟</option><option value=\"90\">90 分钟</option></select>"
+    "<div class=\"button-row\"><button id=\"musicSleepStart\" type=\"button\" class=\"secondary\">开始计时</button><button id=\"musicSleepCancel\" type=\"button\" class=\"secondary\">取消计时</button></div>"
+    "<p id=\"musicSleepState\" class=\"note\" role=\"status\">未开启定时</p><p class=\"note\">播放或暂停时可开始计时，暂停也计时；停止播放、维护中断或关机后取消，不会自动恢复。</p>"
+    "<p id=\"musicSleepMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details>"
     "<hr class=\"divider\"><label for=\"musicFile\">从手机或电脑选择歌曲</label>"
     "<input id=\"musicFile\" type=\"file\" accept=\".mp3,.wav,audio/mpeg,audio/wav\" multiple disabled>"
     "<p class=\"note\">可多选，依次上传；每首不超过 32 MB。失败会停止队列，已上传的歌曲保留。</p>"
@@ -304,7 +326,7 @@ static const char SETTINGS_PAGE[] =
     "<progress id=\"musicProgress\" max=\"100\" value=\"0\" hidden></progress>"
     "<p id=\"musicMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
     "<p class=\"note\">上传或删除会停止音乐；完成后立即生效，无需重启。同名文件不会覆盖。大文件可通过读卡器复制；不支持热插拔。</p>"
-    "<p class=\"note\">音乐页短按 KEY 播放或暂停，按住 2 秒下一首；按住 BOOT 2 秒调整音量，短按切到 Chat 并继续播放。</p>"
+    "<p class=\"note\">音乐页短按 KEY 播放或暂停，按住 2 秒下一首；按住 BOOT 2 秒调整音量，短按切到下一显示页并继续播放。</p>"
     "</details></section>"
     "<section><details><summary class=\"section-toggle\">microSD 图片</summary><p id=\"sdState\" class=\"sd-state\" data-state=\"loading\" aria-live=\"polite\">正在检测 microSD…</p>"
     "<div id=\"storedManager\" class=\"stored-manager\" hidden><div class=\"canvas-shell\">"
@@ -344,27 +366,37 @@ static const char SETTINGS_PAGE[] =
     "<progress id=\"progress\" max=\"100\" value=\"0\"></progress>"
     "<p id=\"updateMessage\" class=\"message\">等待选择固件</p>"
     "<small>写入期间请保持设备供电。校验成功后设备会自动重启。</small></details></section>"
-    "<section><details><summary class=\"section-toggle\">恢复默认设置</summary><p>恢复时区、单位、音量、闹钟与更新偏好；Wi-Fi、天气和 AI 凭据、SD 卡文件保留。</p><button id=\"defaults\" type=\"button\" class=\"danger\">恢复偏好默认值</button><p id=\"maintenanceMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section></div>"
+    "<section><details><summary class=\"section-toggle\">恢复默认设置</summary><p>恢复时区、单位、音量、显示页面、音乐播放方式、闹钟与更新偏好；Wi-Fi、天气、市场看板和 AI 配置、SD 卡文件保留，不修改本次音乐定时。</p><button id=\"defaults\" type=\"button\" class=\"danger\">恢复偏好默认值</button><p id=\"maintenanceMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section></div>"
     "<p class=\"note\">闲置 5 分钟后关闭；一次最多使用 30 分钟，上传中不会因闲置而中断。</p>"
     "<footer>© <span id=\"portalYear\">2026</span> <a href=\"https://mcu.taifua.com/\" target=\"_blank\" rel=\"noopener noreferrer\">ESP32 固件</a></footer>"
     "<script>document.getElementById('portalYear').textContent=String(new Date().getFullYear());let token='',initialUpdates='stable',settingsBusy=false,wifiConfigured=false,savedWifi='',wifiBusy=false,weatherAvailable=false,weatherConfigured=false,weatherEnabled=false,initialWeatherEnabled=false,weatherBusy=false,weatherRegionRequest=0,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
     "storedImages=[],storedIndex=0,storedSelected='',storedBusy=false,storedRequest=0;"
-    "let musicReady=false,musicFull=false,musicBusy=false,musicLoading=false,musicRequest=0,musicTracks=[],musicPlaying=false;"
+    "let musicReady=false,musicFull=false,musicBusy=false,musicLoading=false,musicRequest=0,musicTracks=[],musicPlaying=false,musicSettingsBusy=false,musicSleepBusy=false,musicSleepRemaining=0;"
     "let marketAvailable=false,marketBusy=false,marketPresets=[],marketIds=[],marketChecks=[],marketMoves=[];"
     "const $=id=>document.getElementById(id);let localAccess=true;"
-    "const sections=['General','Network','Media','Maintenance'];let alarmBusy=false,updatesBusy=false;"
-    "function selectSection(name){sections.forEach(section=>{$('panel'+section).hidden=section!==name;$('nav'+section).setAttribute('aria-pressed',section===name?'true':'false')});if(name==='Media'&&token&&!musicBusy)loadMusic().catch(error=>show('musicMessage',error.message))}"
+    "const sections=['General','Network','Media','Maintenance'];let alarmBusy=false,updatesBusy=false,pagesBusy=false,pagesAvailable=false;"
+    "const dailyPageIds=['pageWeather','pageMarket','pageCalendar','pageImage','pageMusic','pageChat'];"
+    "let stateReady=false,initialStateLoaded=false,retryBusy=false,otaStarted=false;const loadedSections=new Set(),failedLoads=new Map();const musicModes=['sequential','repeat_one','repeat_all'];"
+    "const sectionNames={all:'设备设置',settings:'常用设置',pages:'显示页面',alarm:'闹钟',updates:'更新设置',weather:'天气',weatherCities:'城市列表',market:'市场看板',conversation:'AI 对话',images:'图片',music:'歌曲列表',musicSettings:'播放设置',session:'连接状态'};"
+    "function loadNotice(){const names=Array.from(failedLoads.keys(),name=>sectionNames[name]||name);$('loadNotice').hidden=!names.length;$('loadMessage').textContent=names.length?'需要重新读取或核对：'+names.join('、')+'。确认门户仍在开启后重试；只重新读取以上内容，其他未保存修改保留。':'';$('retryLoads').disabled=retryBusy||otaStarted}"
+    "function loadFailed(section,error){failedLoads.set(section,error.message);loadNotice()}function loadSucceeded(section){failedLoads.delete(section);loadedSections.add(section);loadNotice()}"
+    "function uncertainError(message){const error=new Error(message);error.uncertain=true;return error}function checkUncertain(section,error){if(error.uncertain)loadFailed(section,error)}"
+    "async function requestData(path,options={},format='json'){const writing=options.method==='POST',controller=new AbortController(),timer=setTimeout(()=>controller.abort(),writing?45000:15000);try{const response=await fetch(path,{...options,signal:controller.signal});"
+    "if(!response.ok){if(response.status===401){token='';stateReady=false;$('pairPanel').hidden=false;syncControls();throw new Error('请使用屏幕访问码或二维码重新授权。')}throw new Error(await response.text()||'设备暂时无法处理，请稍后重试。')}return await response[format]()}"
+    "catch(error){if(error.name==='AbortError')throw writing?uncertainError('请求超时，操作结果尚未确认；请重新读取状态后核对，不要重复提交。'):new Error('读取超时，请确认连接后重试。');if(error.name==='TypeError')throw writing?uncertainError('连接中断，操作结果尚未确认；请重新连接门户后核对。'):new Error('无法连接设备，请确认设置门户仍在开启后重试。');throw error}finally{clearTimeout(timer)}}"
+    "const getJson=path=>requestData(path,getOptions());"
+    "function selectSection(name){sections.forEach(section=>{$('panel'+section).hidden=section!==name;$('nav'+section).setAttribute('aria-pressed',section===name?'true':'false')});if(name==='Media'&&stateReady&&!musicBusy)loadMusic().catch(error=>show('musicMessage',error.message))}"
     "sections.forEach(section=>{$('nav'+section).onclick=()=>selectSection(section)});"
     "if(typeof location!=='undefined'&&location.hash){const fragment=location.hash.slice(1);if(/^[a-f0-9]{32}$/.test(fragment))token=fragment;history.replaceState(null,'',location.pathname)}"
     "const getOptions=()=>({cache:'no-store',headers:{'X-RLCD-Token':token}});"
-    "const LAN_POSTS=new Set(['/api/settings','/api/time','/api/hotspot','/api/alarm/preview','/api/activity','/api/market/config','/api/images/select','/api/images/delete','/api/images/upload','/api/music/play','/api/music/stop','/api/music/delete','/api/music/upload']);"
-    "let lastActivity=0;function userActivity(){const now=Date.now();if(!token||musicBusy||imageBusy||settingsBusy||wifiBusy||weatherBusy||conversationBusy||marketBusy||now-lastActivity<30000)return;lastActivity=now;post('/api/activity','').catch(()=>{})}"
+    "const LAN_POSTS=new Set(['/api/settings','/api/time','/api/hotspot','/api/alarm/preview','/api/activity','/api/market/config','/api/images/select','/api/images/delete','/api/images/upload','/api/music/play','/api/music/stop','/api/music/delete','/api/music/upload','/api/music/sleep']);"
+    "let lastActivity=0;function userActivity(){const now=Date.now();if(!stateReady||!token||musicBusy||musicSettingsBusy||musicSleepBusy||imageBusy||settingsBusy||pagesBusy||wifiBusy||weatherBusy||conversationBusy||marketBusy||now-lastActivity<30000)return;lastActivity=now;post('/api/activity','').catch(()=>{})}"
     "if(document.addEventListener){document.addEventListener('input',userActivity,{passive:true});document.addEventListener('click',userActivity,{passive:true})}"
     "const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
     "const SOURCE_MAX_BYTES=32*1024*1024,SOURCE_MAX_PIXELS=40000000;"
     "const show=(id,text)=>{$(id).textContent=text};const alarmDays=()=>document.querySelectorAll('.alarm-day');"
     "const unix=()=>String(Math.floor(Date.now()/1000));"
-    "function wifiControls(){const open=$('openWifi').checked;if(localAccess){['wifiEdit','wifiSsid','wifiPassword','showWifiPassword','openWifi','wifiSave','wifiCancel','forgetWifi'].forEach(id=>$(id).disabled=true);return}$('wifiForm').setAttribute('aria-busy',wifiBusy?'true':'false');"
+    "function wifiControls(){const open=$('openWifi').checked;if(localAccess||!stateReady){['wifiEdit','wifiSsid','wifiPassword','showWifiPassword','openWifi','wifiSave','wifiCancel','forgetWifi'].forEach(id=>$(id).disabled=true);return}$('wifiForm').setAttribute('aria-busy',wifiBusy?'true':'false');"
     "$('wifiEdit').disabled=wifiBusy;$('wifiSsid').disabled=wifiBusy;$('wifiPassword').disabled=wifiBusy||open;"
     "$('showWifiPassword').disabled=wifiBusy||open;$('openWifi').disabled=wifiBusy;$('wifiSave').disabled=wifiBusy;"
     "$('wifiCancel').disabled=wifiBusy;$('forgetWifi').disabled=wifiBusy||!wifiConfigured}"
@@ -374,26 +406,25 @@ static const char SETTINGS_PAGE[] =
     "$('wifiEdit').textContent=wifiConfigured?'更换 Wi-Fi':'配置 Wi-Fi';if($('wifiForm').hidden)$('wifiSsid').value=savedWifi;wifiControls()}"
     "function wifiEditing(value){$('wifiForm').hidden=!value;if(value){$('wifiSsid').value=savedWifi;$('wifiPassword').value='';"
     "$('openWifi').checked=false;$('showWifiPassword').checked=false;$('wifiPassword').type='password';$('wifiSsid').focus()}wifiControls()}"
-    "function marketControls(){const blocked=marketBusy||!marketAvailable;$('marketForm').setAttribute('aria-busy',marketBusy?'true':'false');$('marketEnabled').disabled=blocked;$('marketSave').disabled=blocked||marketIds.length<1;"
+    "function marketControls(){const blocked=!stateReady||marketBusy||!marketAvailable;$('marketForm').setAttribute('aria-busy',marketBusy?'true':'false');$('marketEnabled').disabled=blocked;$('marketSave').disabled=blocked||marketIds.length<1;"
     "$('marketCount').textContent=marketIds.length+' / 5';marketChecks.forEach(({id,input})=>{input.checked=marketIds.includes(id);input.disabled=blocked||(!input.checked&&marketIds.length>=5)});marketMoves.forEach(({button,index,delta})=>{button.disabled=blocked||index+delta<0||index+delta>=marketIds.length})}"
     "function marketSelection(id,checked){if(marketBusy||!marketAvailable)return;const index=marketIds.indexOf(id);if(checked&&index<0){if(marketIds.length>=5){show('marketMessage','最多显示 5 项，请先取消一项。');marketControls();return}marketIds.push(id)}else if(!checked&&index>=0)marketIds.splice(index,1);show('marketMessage','');renderMarketOrder();marketControls()}"
     "function marketMove(index,delta){if(marketBusy||!marketAvailable||index<0||index>=marketIds.length||index+delta<0||index+delta>=marketIds.length)return;const target=index+delta;[marketIds[index],marketIds[target]]=[marketIds[target],marketIds[index]];renderMarketOrder();marketControls();const moved=marketMoves.find(item=>item.index===target&&item.delta===delta&&!item.button.disabled)||marketMoves.find(item=>item.index===target&&!item.button.disabled);if(moved)moved.button.focus()}"
     "function renderMarketOrder(){const list=$('marketOrder');while(list.firstChild)list.removeChild(list.firstChild);marketMoves=[];marketIds.forEach((id,index)=>{const preset=marketPresets.find(item=>item.id===id),row=document.createElement('li'),name=document.createElement('span');name.textContent=(index+1)+'. '+preset.name;row.appendChild(name);"
     "[-1,1].forEach(delta=>{const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent=delta<0?'↑':'↓';button.setAttribute('aria-label',(delta<0?'上移':'下移')+preset.name);button.onclick=()=>marketMove(index,delta);row.appendChild(button);marketMoves.push({button,index,delta})});list.appendChild(row)})}"
-    "async function loadMarket(){const response=await fetch('/api/market/config',getOptions());if(!response.ok)throw new Error(await response.text()||'无法读取市场看板');const state=await response.json();"
+    "async function loadMarket(){const state=await getJson('/api/market/config');"
     "if(!state||typeof state.enabled!=='boolean'||!Array.isArray(state.presets)||state.presets.length!==15||state.presets.some(item=>!item||!Number.isInteger(item.id)||item.id<0||item.id>=15||typeof item.name!=='string')||new Set(state.presets.map(item=>item.id)).size!==15||!Array.isArray(state.ids)||state.ids.length<1||state.ids.length>5||new Set(state.ids).size!==state.ids.length||state.ids.some(id=>!Number.isInteger(id)||!state.presets.some(item=>item.id===id)))throw new Error('设备返回的市场看板配置无效');"
     "marketPresets=state.presets;marketIds=state.ids.slice();marketAvailable=true;$('marketEnabled').value=state.enabled?'on':'off';$('marketStatus').textContent=state.enabled?'已开启 · '+marketIds.length+' 项':'已关闭';const choices=$('marketChoices');while(choices.firstChild)choices.removeChild(choices.firstChild);marketChecks=[];"
     "marketPresets.forEach(preset=>{const label=document.createElement('label'),input=document.createElement('input'),name=document.createElement('span');label.className='check';input.type='checkbox';input.onchange=()=>marketSelection(preset.id,input.checked);name.textContent=preset.name;label.appendChild(input);label.appendChild(name);choices.appendChild(label);marketChecks.push({id:preset.id,input})});renderMarketOrder();marketControls();show('marketMessage','')}"
-    "function weatherControls(){const blocked=localAccess||weatherBusy||!weatherAvailable,enabled=$('weatherEnabled').value==='on',hasProvince=$('weatherProvince').value!=='';"
+    "function weatherControls(){const blocked=!stateReady||localAccess||weatherBusy||!weatherAvailable,enabled=$('weatherEnabled').value==='on',hasProvince=$('weatherProvince').value!=='';"
     "$('weatherForm').setAttribute('aria-busy',weatherBusy?'true':'false');$('weatherEnabled').disabled=blocked;$('weatherApiHost').disabled=blocked;"
     "$('weatherKey').disabled=blocked;$('weatherProvince').disabled=blocked;$('weatherCity').disabled=blocked||!hasProvince;"
-    "$('weatherSave').disabled=blocked;$('weatherSave').textContent=enabled?'保存并获取天气':'保存天气设置';$('weatherClear').disabled=blocked;"
+    "$('weatherSave').disabled=blocked;$('weatherClear').disabled=blocked;"
     "$('weatherApiHost').required=enabled;$('weatherProvince').required=enabled;$('weatherCity').required=enabled}"
     "function weatherOptions(select,items,placeholder){while(select.firstChild)select.removeChild(select.firstChild);const empty=document.createElement('option');"
     "empty.value='';empty.textContent=placeholder;select.appendChild(empty);items.forEach(item=>{const option=document.createElement('option');"
     "option.value=String(item.id);option.textContent=item.name;select.appendChild(option)})}"
-    "async function weatherRegions(province){const suffix=province?'?province='+encodeURIComponent(province):'',response=await fetch('/api/weather/regions'+suffix,getOptions());"
-    "if(!response.ok)throw new Error(await response.text()||'无法读取省市列表');const payload=await response.json();if(!payload||!Array.isArray(payload.items)||"
+    "async function weatherRegions(province){const suffix=province?'?province='+encodeURIComponent(province):'',payload=await getJson('/api/weather/regions'+suffix);if(!payload||!Array.isArray(payload.items)||"
     "payload.items.some(item=>!item||!Number.isInteger(item.id)||item.id<=0||typeof item.name!=='string'))throw new Error('设备返回的省市列表无效');return payload.items}"
     "async function setWeatherState(state){const weather=state&&typeof state==='object'?state:null;weatherAvailable=weather!==null&&weather.available===true&&"
     "typeof weather.enabled==='boolean'&&typeof weather.configured==='boolean'&&typeof weather.key_saved==='boolean'&&typeof weather.api_host==='string'&&"
@@ -407,7 +438,7 @@ static const char SETTINGS_PAGE[] =
     "const cities=selectedProvince?await weatherRegions(selectedProvince):[];if(requestId!==weatherRegionRequest)return;weatherOptions($('weatherCity'),cities,selectedProvince?'请选择城市':'请先选择省份');"
     "$('weatherCity').value=weatherAvailable&&weather.city_id>0?String(weather.city_id):'';if($('weatherCity').selectedIndex<0)$('weatherCity').value='';"
     "show('weatherMessage',weatherAvailable?'':'天气设置暂不可用；其他设备设置仍可正常使用。');weatherControls()}"
-    "function conversationControls(){const blocked=localAccess||conversationBusy||!conversationAvailable;$('conversationForm').setAttribute('aria-busy',conversationBusy?'true':'false');"
+    "function conversationControls(){const blocked=!stateReady||localAccess||conversationBusy||!conversationAvailable;$('conversationForm').setAttribute('aria-busy',conversationBusy?'true':'false');"
     "$('conversationEnabled').disabled=blocked;$('conversationModel').disabled=blocked;$('conversationApiHost').disabled=blocked;$('conversationKey').disabled=blocked;"
     "$('conversationSave').disabled=blocked;$('conversationClear').disabled=blocked}"
     "function setConversationState(state){const cloud=state&&typeof state==='object'?state:null;conversationAvailable=cloud!==null&&cloud.available===true&&cloud.service==='" SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "'&&typeof cloud.configured==='boolean'&&typeof cloud.enabled==='boolean'&&typeof cloud.model==='string'&&typeof cloud.api_host==='string'&&typeof cloud.shared_endpoint==='boolean';"
@@ -415,19 +446,19 @@ static const char SETTINGS_PAGE[] =
     "$('conversationEnabled').value=conversationEnabled?'on':'off';"
     "const modelSelect=$('conversationModel');modelSelect.value=conversationAvailable?cloud.model:'';if(modelSelect.selectedIndex<0)modelSelect.value='" SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI "';$('conversationApiHost').value=conversationAvailable&&!(cloud.shared_endpoint&&cloud.api_host==='" CONVERSATION_DEFAULT_API_HOST "')?cloud.api_host:'';$('conversationKey').value='';"
     "show('conversationMessage',conversationAvailable?'':'AI 对话设置暂不可用；其他设备设置仍可正常使用。');conversationControls()}"
-    "function storedControls(){const available=storedImages.length>0&&!imageBusy&&!storedBusy;"
+    "function storedControls(){const available=stateReady&&storedImages.length>0&&!imageBusy&&!storedBusy;"
     "$('storedPrevious').disabled=!available||storedImages.length<2;$('storedNext').disabled=!available||storedImages.length<2;"
     "$('storedSelect').disabled=!available||storedImages[storedIndex]===storedSelected;$('storedDelete').disabled=!available}"
-    "function imageControls(){const blocked=!sdReady||imageBusy;$('imageFile').disabled=blocked;$('starterImages').disabled=blocked||localAccess;"
+    "function imageControls(){const blocked=!stateReady||!sdReady||imageBusy;$('imageFile').disabled=blocked;$('starterImages').disabled=blocked||localAccess;"
     "$('imageUpload').disabled=blocked||!imagePbm;$('threshold').disabled=imageBusy||!imageGray;$('dither').disabled=imageBusy||!imageGray;storedControls()}"
     "function imageBusyState(value){imageBusy=value;imageControls()}"
-    "function musicControls(){const blocked=musicBusy||!musicReady,empty=musicTracks.length===0;"
+    "function musicControls(){const blocked=!stateReady||musicBusy||!musicReady,empty=musicTracks.length===0;"
     "$('musicTracks').disabled=blocked||empty;$('musicPlay').disabled=blocked||empty;$('musicDelete').disabled=blocked||empty;"
-    "$('musicStop').disabled=musicBusy||!musicPlaying;$('musicRefresh').disabled=musicBusy;"
-    "$('musicFile').disabled=blocked||musicFull;$('musicUpload').disabled=blocked||musicFull||!$('musicFile').files.length}"
+    "$('musicStop').disabled=!stateReady||musicBusy||!musicPlaying;$('musicRefresh').disabled=!stateReady||musicBusy;"
+    "$('musicFile').disabled=blocked||musicFull;$('musicUpload').disabled=blocked||musicFull||!$('musicFile').files.length;"
+    "$('musicSleep').disabled=!stateReady||musicBusy||musicSleepBusy||!musicPlaying;$('musicSleepStart').disabled=$('musicSleep').disabled;$('musicSleepCancel').disabled=!stateReady||musicBusy||musicSleepBusy||musicSleepRemaining===0}"
     "async function loadMusic(preferred){const current=++musicRequest;musicLoading=true;try{"
-    "const response=await fetch('/api/music',getOptions());if(!response.ok)throw new Error(await response.text()||'无法读取歌曲列表');"
-    "const data=await response.json();if(current!==musicRequest)return;"
+    "const data=await getJson('/api/music');if(current!==musicRequest)return;"
     "if(!Array.isArray(data.tracks)||data.tracks.length>32||data.tracks.some(track=>typeof track.name!=='string'||!Number.isFinite(track.bytes)))throw new Error('歌曲列表无效');"
     "const previous=preferred||$('musicTracks').value;musicTracks=data.tracks;musicReady=data.ready===true;musicFull=musicTracks.length>=32||data.truncated===true;"
     "const select=$('musicTracks');while(select.firstChild)select.removeChild(select.firstChild);"
@@ -437,8 +468,10 @@ static const char SETTINGS_PAGE[] =
     "data.truncated?'只列出部分歌曲；上传前请关机用读卡器整理目录至 32 首以内，再开机。':musicFull?'歌曲列表已满，请先删除不需要的歌曲。':musicTracks.length?'现有 '+musicTracks.length+' 首歌曲。':'尚无歌曲，可以直接上传。');"
     "musicPlaying=data.state==='playing'||data.state==='paused';const active=musicTracks[data.selected_index],seconds=Math.max(0,Number(data.elapsed)||0);"
     "show('musicPlayback',(data.state==='playing'?'正在播放':data.state==='paused'?'已暂停':data.state==='error'?'无法播放，请检查文件格式':'已停止')+"
-    "(active?' · '+active.name:'')+(musicPlaying?' · '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'):''));"
-    "}catch(error){if(current===musicRequest){musicReady=false;show('musicMessage',error.message)}}"
+    "(active?' · '+active.name:'')+(musicPlaying?' · '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'):'')+"
+    "(musicModes.includes(data.playback_mode)?' · '+({sequential:'顺序播放',repeat_one:'单曲循环',repeat_all:'列表循环'}[data.playback_mode]):''));"
+    "musicSleepRemaining=Number.isInteger(data.sleep_remaining_seconds)&&data.sleep_remaining_seconds>0?data.sleep_remaining_seconds:0;show('musicSleepState',musicSleepRemaining?'约 '+Math.ceil(musicSleepRemaining/60)+' 分钟后停止':'未开启定时');loadSucceeded('music');"
+    "}catch(error){if(current===musicRequest){musicReady=false;show('musicMessage',error.message);loadFailed('music',error)}}"
     "finally{if(current===musicRequest){musicLoading=false;musicControls()}}}"
     "async function musicCommand(action){if(musicBusy)return;const name=$('musicTracks').value;"
     "if(action!=='stop'&&!musicTracks.some(track=>track.name===name))return;"
@@ -446,11 +479,13 @@ static const char SETTINGS_PAGE[] =
     "musicBusy=true;++musicRequest;musicLoading=false;musicControls();show('musicMessage',action==='delete'?'正在删除…':'正在处理…');"
     "try{const body=action==='stop'?'confirm=STOP':'name='+encodeURIComponent(name)+(action==='delete'?'&confirm=DELETE':'');"
     "const message=await post('/api/music/'+action,body);await loadMusic(name);show('musicMessage',message)}"
-    "catch(error){show('musicMessage',error.message)}finally{musicBusy=false;musicControls()}}"
+    "catch(error){checkUncertain('music',error);show('musicMessage',error.message)}finally{musicBusy=false;musicControls()}}"
     "$('musicPlay').onclick=()=>musicCommand('play');$('musicStop').onclick=()=>musicCommand('stop');$('musicDelete').onclick=()=>musicCommand('delete');"
+    "async function musicSleep(minutes){if(musicSleepBusy||!stateReady||musicBusy||(!musicPlaying&&minutes!==0))return;musicSleepBusy=true;musicControls();show('musicSleepMessage','正在设置…');try{const message=await post('/api/music/sleep','minutes='+minutes);await loadMusic();show('musicSleepMessage',message)}catch(error){checkUncertain('music',error);show('musicSleepMessage',error.message)}finally{musicSleepBusy=false;musicControls()}}"
+    "$('musicSleepStart').onclick=()=>musicSleep(Number($('musicSleep').value));$('musicSleepCancel').onclick=()=>musicSleep(0);"
     "$('musicRefresh').onclick=()=>{if(!musicBusy)return loadMusic()};$('musicFile').onchange=()=>musicControls();"
-    "$('musicSection').ontoggle=()=>{if($('musicSection').open&&!musicBusy&&!musicLoading)loadMusic()};"
-    "setInterval(()=>{if(!$('panelMedia').hidden&&$('musicSection').open&&!document.hidden&&!musicBusy&&!musicLoading)loadMusic().catch(()=>{})},3000);"
+    "$('musicSection').ontoggle=()=>{if(stateReady&&$('musicSection').open&&!musicBusy&&!musicLoading)loadMusic()};"
+    "setInterval(()=>{if(stateReady&&!$('panelMedia').hidden&&$('musicSection').open&&!document.hidden&&!musicBusy&&!musicLoading)loadMusic().catch(()=>{})},3000);"
     "function uploadSong(file,position,total){return new Promise((resolve,reject)=>{const request=new XMLHttpRequest(),label=position+'/'+total+' · '+file.name+' · ';"
     "show('musicMessage',label+'正在上传…');$('musicProgress').value=0;request.open('POST','/api/music/upload?name='+encodeURIComponent(file.name));request.timeout=630000;"
     "request.setRequestHeader('Content-Type','application/octet-stream');request.setRequestHeader('X-RLCD-Token',token);"
@@ -492,12 +527,10 @@ static const char SETTINGS_PAGE[] =
     "$('storedManager').hidden=false;$('storedPosition').textContent=(storedIndex+1)+' / '+storedImages.length;"
     "$('storedFilename').textContent=name;const canvas=$('storedCanvas'),context=canvas.getContext('2d');context.fillStyle='#000';"
     "context.fillRect(0,0,canvas.width,canvas.height);storedBusy=true;storedControls();show('storedMessage','正在载入预览…');try{"
-    "const response=await fetch('/api/images/preview?name='+encodeURIComponent(name),getOptions());if(!response.ok)throw new Error(await response.text()||'无法读取图片预览');"
-    "const data=new Uint8Array(await response.arrayBuffer());if(requestId!==storedRequest)return;drawStoredPbm(data);"
+    "const data=new Uint8Array(await requestData('/api/images/preview?name='+encodeURIComponent(name),getOptions(),'arrayBuffer'));if(requestId!==storedRequest)return;drawStoredPbm(data);"
     "show('storedMessage',name===storedSelected?'当前正在显示这张图片。':'')}catch(error){if(requestId===storedRequest)show('storedMessage',error.message)}"
     "finally{if(requestId===storedRequest){storedBusy=false;storedControls()}}}"
-    "async function loadStoredImages(preferred){const previous=preferred||storedImages[storedIndex]||'';const response=await fetch('/api/images',getOptions());"
-    "if(!response.ok)throw new Error(await response.text()||'无法读取图片列表');const state=await response.json();"
+    "async function loadStoredImages(preferred){const previous=preferred||storedImages[storedIndex]||'',state=await getJson('/api/images');"
     "if(!Array.isArray(state.images)||state.images.some(name=>typeof name!=='string'))throw new Error('设备返回的图片列表无效');"
     "storedImages=state.images;storedSelected=typeof state.selected==='string'?state.selected:'';const position=storedImages.indexOf(previous);"
     "storedIndex=position>=0?position:Math.max(0,storedImages.indexOf(storedSelected));await renderStored()}"
@@ -535,47 +568,53 @@ static const char SETTINGS_PAGE[] =
     "const sign=minutes>=0?'+':'-';const absolute=Math.abs(minutes),hours=String(Math.floor(absolute/60)).padStart(2,'0'),"
     "remainder=String(absolute%60).padStart(2,'0');option.value=minutes;option.textContent='UTC'+sign+hours+':'+remainder+"
     "(minutes===480?' · 中国标准时间':'');select.appendChild(option)}}"
-    "async function post(path,body){if(localAccess&&!LAN_POSTS.has(path))throw new Error('此操作请切换到设备热点。');const headers={'Content-Type':'application/x-www-form-urlencoded',"
-    "'X-RLCD-Token':token};const response=await fetch(path,{method:'POST',"
-    "headers,body});const text=await response.text();if(!response.ok)throw new Error(text||'操作失败');return text;}"
+    "async function post(path,body){if(!stateReady)throw new Error('请先重新连接并读取设备设置。');if(localAccess&&!LAN_POSTS.has(path))throw new Error('此操作请切换到设备热点。');return requestData(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Token':token},body},'text')}"
     "function formControls(id,busy){$(id).setAttribute('aria-busy',busy?'true':'false');$(id).querySelectorAll('input,select,button').forEach(input=>{input.disabled=busy})}"
-    "function defaultControls(){$('defaults').disabled=localAccess||settingsBusy||alarmBusy||updatesBusy}"
-    "function settingsControls(busy){settingsBusy=busy;formControls('settings',busy);defaultControls()}"
-    "function alarmControls(busy){alarmBusy=busy;formControls('alarmForm',busy);defaultControls()}"
-    "function updatesControls(busy){updatesBusy=busy;formControls('updatesForm',busy);defaultControls()}"
-    "async function load(section='all',preferred){const response=await fetch('/api/state',getOptions());if(!response.ok){if(response.status===401){$('pairPanel').hidden=false;token='';throw new Error('请先使用屏幕访问码或二维码授权。')}throw new Error('无法读取设备设置，请确认门户仍在开启。')}"
-    "const state=await response.json();token=state.token;localAccess=state.local_network===true;$('pairPanel').hidden=true;$('lanPanel').hidden=!localAccess;"
-    "['defaults','file','upload'].forEach(id=>$(id).disabled=localAccess);setWifiState(state.wifi_configured,state.wifi_ssid);if(section==='all'||section==='settings'){$('timezone').value=state.timezone;"
-    "$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume;}"
-    "if(section==='all'||section==='updates'){$('updates').value=state.updates;initialUpdates=state.updates;}"
-    "if(section==='all'||section==='alarm'){"
-    "$('alarmVolume').value=state.alarm_volume;$('alarmVolumeValue').value=state.alarm_volume;"
-    "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');"
-    "alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0});}"
-    "if(section==='all'||section==='conversation')setConversationState(state.conversation);if(section==='all'||section==='weather'){try{await setWeatherState(state.weather)}catch(error){weatherAvailable=false;weatherBusy=false;weatherControls();show('weatherMessage',error.message)}}"
-    "if(section==='all'||section==='market'){try{await loadMarket()}catch(error){marketAvailable=false;marketControls();$('marketStatus').textContent='暂不可用';show('marketMessage',error.message)}}"
-    "if(section==='all'||section==='images'){setSdState(state.sd_state,state.image_count);try{await loadStoredImages(preferred)}catch(error){storedImages=[];$('storedManager').hidden=true;show('storedMessage',error.message)}}"
-    "if(section==='all'||section==='music')await loadMusic(preferred)}"
+    "function defaultControls(){$('defaults').disabled=!stateReady||localAccess||settingsBusy||alarmBusy||updatesBusy||pagesBusy||musicSettingsBusy}"
+    "function settingsControls(busy){settingsBusy=busy;formControls('settings',busy||!stateReady||!loadedSections.has('settings'));defaultControls()}"
+    "function alarmControls(busy){alarmBusy=busy;formControls('alarmForm',busy||!stateReady||!loadedSections.has('alarm'));defaultControls()}"
+    "function updatesControls(busy){updatesBusy=busy;formControls('updatesForm',busy||!stateReady||!loadedSections.has('updates'));defaultControls()}"
+    "function pagesControls(busy){pagesBusy=busy;formControls('pagesForm',busy||!stateReady||!pagesAvailable);defaultControls()}"
+    "function musicSettingsControls(busy){musicSettingsBusy=busy;formControls('musicSettingsForm',busy||!stateReady||!loadedSections.has('musicSettings'));defaultControls()}"
+    "function syncControls(){settingsControls(settingsBusy);alarmControls(alarmBusy);updatesControls(updatesBusy);pagesControls(pagesBusy);musicSettingsControls(musicSettingsBusy);wifiControls();weatherControls();conversationControls();marketControls();imageControls();musicControls();$('setTime').disabled=!stateReady;['file','upload'].forEach(id=>$(id).disabled=!stateReady||localAccess||otaStarted)}"
+    "async function load(section='all',preferred){let state;try{state=await getJson('/api/state');if(!state||typeof state.token!=='string'||!state.token)throw new Error('设备返回的连接状态无效');}catch(error){loadFailed(section,error);syncControls();throw error}"
+    "token=state.token;stateReady=true;initialStateLoaded=true;localAccess=state.local_network===true;$('pairPanel').hidden=true;$('lanPanel').hidden=!localAccess;setWifiState(state.wifi_configured,state.wifi_ssid);"
+    "async function part(name,action,message){if(section!=='all'&&section!==name)return;try{await action();if(message)show(message,'');loadSucceeded(name)}catch(error){loadedSections.delete(name);loadFailed(name,error);if(message)show(message,error.message);if(name==='weather'){weatherAvailable=false;weatherControls()}if(name==='market'){marketAvailable=false;$('marketStatus').textContent='暂不可用'}if(name==='pages')pagesAvailable=false;}finally{syncControls()}}"
+    "await part('settings',()=>{if(!Number.isInteger(state.timezone)||!['c','f'].includes(state.unit)||!Number.isInteger(state.volume)||state.volume<0||state.volume>100)throw new Error('常用设置暂不可用');$('timezone').value=state.timezone;$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume},'settingsMessage');"
+    "await part('updates',()=>{if(!['stable','beta'].includes(state.updates))throw new Error('更新设置暂不可用');$('updates').value=state.updates;initialUpdates=state.updates},'updatesMessage');"
+    "await part('pages',()=>{pagesAvailable=Number.isInteger(state.daily_pages_mask)&&state.daily_pages_mask>=0&&state.daily_pages_mask<=63;if(!pagesAvailable)throw new Error('显示页面设置暂不可用，其他设置仍可使用。');dailyPageIds.forEach((id,index)=>{$(id).checked=(state.daily_pages_mask&(1<<index))!==0});show('pagesMessage','')},'pagesMessage');"
+    "await part('alarm',()=>{if(!Number.isInteger(state.alarm_volume)||state.alarm_volume<0||state.alarm_volume>100||!['on','off'].includes(state.alarm)||!Number.isInteger(state.alarm_hour)||state.alarm_hour<0||state.alarm_hour>23||!Number.isInteger(state.alarm_minute)||state.alarm_minute<0||state.alarm_minute>59||!Number.isInteger(state.alarm_days)||state.alarm_days<1||state.alarm_days>127)throw new Error('闹钟设置暂不可用');$('alarmVolume').value=state.alarm_volume;$('alarmVolumeValue').value=state.alarm_volume;"
+    "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0})},'alarmMessage');"
+    "await part('musicSettings',()=>{if(!musicModes.includes(state.music_mode))throw new Error('播放设置暂不可用');$('musicMode').value=state.music_mode},'musicSettingsMessage');"
+    "await part('conversation',()=>{setConversationState(state.conversation);if(!conversationAvailable)throw new Error('AI 对话设置暂不可用')},'conversationMessage');"
+    "await part('weather',async()=>{await setWeatherState(state.weather);if(!weatherAvailable)throw new Error('天气设置暂不可用')},'weatherMessage');"
+    "await part('market',loadMarket,'marketMessage');"
+    "await part('images',async()=>{setSdState(state.sd_state,state.image_count);await loadStoredImages(preferred)},'storedMessage');"
+    "if(section==='all'||section==='music')await loadMusic(preferred);failedLoads.delete(section==='all'?'all':'session');loadNotice();syncControls()}"
+    "$('retryLoads').onclick=async()=>{if(retryBusy||otaStarted)return;retryBusy=true;loadNotice();try{for(const section of Array.from(failedLoads.keys())){try{if(section==='weatherCities')await loadWeatherCities();else await load(section==='all'&&initialStateLoaded?'session':section);if(section==='all'&&stateReady)failedLoads.delete('all')}catch(error){show('loadMessage',error.message)}}}finally{retryBusy=false;loadNotice()}};"
     "$('volume').oninput=()=>{$('volumeValue').value=$('volume').value};"
     "$('pairForm').onsubmit=async event=>{event.preventDefault();const code=$('pairCode').value.trim().toUpperCase();if(!/^[A-Z0-9]{8}$/.test(code)){show('pairMessage','请输入 8 位大写字母和数字。');return}"
-    "$('pairButton').disabled=true;try{const response=await fetch('/api/pair',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Pair':'1'},body:'code='+code});"
-    "const value=await response.text();if(!response.ok)throw new Error(value||'授权失败');if(!/^[a-f0-9]{32}$/.test(value))throw new Error('授权响应无效');token=value;$('pairCode').value='';await load();show('settingsMessage','')}catch(error){show('pairMessage',error.message)}finally{$('pairButton').disabled=false}};"
+    "$('pairButton').disabled=true;try{const value=await requestData('/api/pair',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Pair':'1'},body:'code='+code},'text');"
+    "if(!/^[a-f0-9]{32}$/.test(value))throw new Error('授权响应无效');token=value;$('pairCode').value='';await load(initialStateLoaded?'session':'all');show('pairMessage','')}catch(error){show('pairMessage',error.message)}finally{$('pairButton').disabled=false}};"
     "$('useHotspot').onclick=async()=>{if(!confirm('切换到设备热点？当前页面将断开，请扫描设备上新的二维码连接。'))return;$('useHotspot').disabled=true;"
     "try{show('hotspotMessage',await post('/api/hotspot','confirm=HOTSPOT'))}catch(error){show('hotspotMessage',error.message)}finally{$('useHotspot').disabled=false}};"
     "$('alarmVolume').oninput=()=>{$('alarmVolumeValue').value=$('alarmVolume').value};"
     "$('alarmPreview').onclick=async()=>{const button=$('alarmPreview');if(button.disabled)return;button.disabled=true;"
     "try{show('alarmPreviewMessage',await post('/api/alarm/preview','volume='+encodeURIComponent($('alarmVolume').value)))}"
     "catch(error){show('alarmPreviewMessage',error.message)}finally{button.disabled=alarmBusy}};"
-    "$('settings').onsubmit=async event=>{event.preventDefault();if(settingsBusy)return;show('settingsMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();"
-    "settingsControls(true);const message=await post('/api/settings',body);await load('settings');show('settingsMessage',message)}catch(error){show('settingsMessage',error.message)}finally{settingsControls(false)}};"
-    "$('alarmForm').onsubmit=async event=>{event.preventDefault();if(alarmBusy)return;const match=/^(\\d{2}):(\\d{2})$/.exec($('alarmTime').value);"
+    "$('settings').onsubmit=async event=>{event.preventDefault();if(settingsBusy||!stateReady||!loadedSections.has('settings'))return;show('settingsMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();"
+    "settingsControls(true);const message=await post('/api/settings',body);await load('settings');show('settingsMessage',message)}catch(error){checkUncertain('settings',error);show('settingsMessage',error.message)}finally{settingsControls(false)}};"
+    "$('pagesForm').onsubmit=async event=>{event.preventDefault();if(pagesBusy||!pagesAvailable)return;const mask=dailyPageIds.reduce((value,id,index)=>$(id).checked?value|(1<<index):value,0);"
+    "$('dailyPagesMask').value=String(mask);show('pagesMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();pagesControls(true);const message=await post('/api/settings',body);await load('pages');show('pagesMessage',message)}catch(error){checkUncertain('pages',error);show('pagesMessage',error.message)}finally{pagesControls(false)}};"
+    "$('alarmForm').onsubmit=async event=>{event.preventDefault();if(alarmBusy||!stateReady||!loadedSections.has('alarm'))return;const match=/^(\\d{2}):(\\d{2})$/.exec($('alarmTime').value);"
     "const days=Array.from(alarmDays()).reduce((mask,input)=>input.checked?mask|Number(input.dataset.bit):mask,0);"
     "if(!match||Number(match[1])>23||Number(match[2])>59){show('alarmMessage','请选择有效的响铃时间。');return}"
     "if(days===0||(days&~127)!==0){show('alarmMessage','请至少选择一个重复日期。');return}"
     "$('alarmHour').value=String(Number(match[1]));$('alarmMinute').value=String(Number(match[2]));$('alarmDays').value=String(days);"
-    "show('alarmMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();alarmControls(true);const message=await post('/api/settings',body);await load('alarm');show('alarmMessage',message)}catch(error){show('alarmMessage',error.message)}finally{alarmControls(false)}};"
-    "$('updatesForm').onsubmit=async event=>{event.preventDefault();if(updatesBusy)return;if(initialUpdates!=='beta'&&$('updates').value==='beta'&&!confirm('开启 Beta 更新？测试固件可能不稳定，请确认你能够使用本地 OTA 或 USB 恢复设备。'))return;"
-    "show('updatesMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();updatesControls(true);const message=await post('/api/settings',body);await load('updates');show('updatesMessage',message)}catch(error){show('updatesMessage',error.message)}finally{updatesControls(false)}};"
+    "show('alarmMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();alarmControls(true);const message=await post('/api/settings',body);await load('alarm');show('alarmMessage',message)}catch(error){checkUncertain('alarm',error);show('alarmMessage',error.message)}finally{alarmControls(false)}};"
+    "$('updatesForm').onsubmit=async event=>{event.preventDefault();if(updatesBusy||!stateReady||!loadedSections.has('updates'))return;if(initialUpdates!=='beta'&&$('updates').value==='beta'&&!confirm('开启 Beta 更新？测试固件可能不稳定，请确认你能够使用本地 OTA 或 USB 恢复设备。'))return;"
+    "show('updatesMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();updatesControls(true);const message=await post('/api/settings',body);await load('updates');show('updatesMessage',message)}catch(error){checkUncertain('updates',error);show('updatesMessage',error.message)}finally{updatesControls(false)}};"
+    "$('musicSettingsForm').onsubmit=async event=>{event.preventDefault();if(musicSettingsBusy||!stateReady||!loadedSections.has('musicSettings'))return;show('musicSettingsMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();musicSettingsControls(true);const message=await post('/api/settings',body);await load('musicSettings');show('musicSettingsMessage',message)}catch(error){checkUncertain('musicSettings',error);show('musicSettingsMessage',error.message)}finally{musicSettingsControls(false)}};"
     "$('setTime').onclick=async()=>{show('timeMessage','正在校准…');try{show('timeMessage',await post('/api/time','unix='+unix()))}"
     "catch(error){show('timeMessage',error.message)}};"
     "$('wifiEdit').onclick=()=>wifiEditing(true);$('wifiCancel').onclick=()=>{wifiEditing(false);show('wifiMessage','')};"
@@ -586,47 +625,46 @@ static const char SETTINGS_PAGE[] =
     "if(!open&&!/^[\\x20-\\x7e]{8,63}$/.test(password)){show('wifiMessage','请输入 8—63 位英文字符、数字或符号，开放网络请勾选对应选项。');return}"
     "wifiBusy=true;wifiControls();show('wifiMessage','正在验证新网络，设置热点可能短暂重新连接…');try{const body='ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(open?'':password);"
     "show('wifiMessage',await post('/api/wifi/change',body))}catch(error){show('wifiMessage',error.name==='TypeError'?'设置热点刚刚断开。请查看设备是否已连接新网络；若热点仍在，可刷新页面确认原配置仍保留。':error.message);wifiBusy=false;wifiControls()}};"
-    "$('weatherEnabled').onchange=()=>weatherControls();$('weatherProvince').onchange=async()=>{if(weatherBusy||!weatherAvailable)return;"
+    "$('weatherEnabled').onchange=()=>weatherControls();async function loadWeatherCities(){if(weatherBusy||!weatherAvailable)return;"
     "const province=$('weatherProvince').value;weatherBusy=true;weatherControls();weatherOptions($('weatherCity'),[],province?'正在读取城市…':'请先选择省份');"
     "const requestId=++weatherRegionRequest;try{const cities=province?await weatherRegions(province):[];if(requestId!==weatherRegionRequest)return;"
-    "weatherOptions($('weatherCity'),cities,province?'请选择城市':'请先选择省份');show('weatherMessage','')}catch(error){if(requestId===weatherRegionRequest){"
-    "weatherOptions($('weatherCity'),[],'无法读取城市');show('weatherMessage',error.message)}}finally{if(requestId===weatherRegionRequest){weatherBusy=false;weatherControls()}}};"
+    "weatherOptions($('weatherCity'),cities,province?'请选择城市':'请先选择省份');show('weatherMessage','');loadSucceeded('weatherCities')}catch(error){if(requestId===weatherRegionRequest){"
+    "weatherOptions($('weatherCity'),[],'无法读取城市');show('weatherMessage',error.message);loadFailed('weatherCities',error)}}finally{if(requestId===weatherRegionRequest){weatherBusy=false;weatherControls()}}}$('weatherProvince').onchange=loadWeatherCities;"
     "$('weatherForm').onsubmit=async event=>{event.preventDefault();if(weatherBusy||!weatherAvailable)return;const enabled=$('weatherEnabled').value==='on',"
     "province=$('weatherProvince').value,city=$('weatherCity').value;"
     "if(enabled&&(!$('weatherApiHost').value||!province||!city)){show('weatherMessage','请填写 API Host，并依次选择省份和城市。');return}"
     "if(enabled&&!initialWeatherEnabled&&!confirm('开启天气后，设备会使用你的凭据直连 QWeather，相关请求可能计入你的账户用量。是否继续？'))return;"
     "const fields=new FormData(event.target);fields.set('district','');if(!enabled&&(!province||!city)){fields.set('province','0');fields.set('city','0')}"
-    "const body=new URLSearchParams(fields).toString();weatherBusy=true;weatherControls();show('weatherMessage',enabled?'正在保存，随后将关闭热点并获取天气…':'正在保存…');"
-    "let closing=false;try{const message=await post('/api/weather/config',body);$('weatherKey').value='';if(enabled){closing=true;show('weatherMessage',message);return}"
-    "await load('weather');show('weatherMessage',message)}catch(error){if(enabled&&error.name==='TypeError'){closing=true;show('weatherMessage','设置热点已关闭，请查看设备屏幕上的天气获取结果。')}"
-    "else show('weatherMessage',error.message)}finally{$('weatherKey').value='';if(!closing){weatherBusy=false;weatherControls()}}};"
+    "const body=new URLSearchParams(fields).toString();weatherBusy=true;weatherControls();show('weatherMessage','正在保存…');"
+    "try{const message=await post('/api/weather/config',body);$('weatherKey').value='';await load('weather');show('weatherMessage',message)}"
+    "catch(error){checkUncertain('weather',error);show('weatherMessage',error.message)}finally{$('weatherKey').value='';weatherBusy=false;weatherControls()}};"
     "$('weatherClear').onclick=async()=>{if(weatherBusy||!weatherAvailable)return;if(!confirm('确认清除天气 API Key、位置和本地缓存？此操作无法撤销。'))return;"
     "weatherBusy=true;weatherControls();show('weatherMessage','正在清除…');try{const message=await post('/api/weather/clear','confirm=CLEAR_WEATHER');await load('weather');show('weatherMessage',message)}"
-    "catch(error){show('weatherMessage',error.message)}finally{weatherBusy=false;weatherControls()}};"
+    "catch(error){checkUncertain('weather',error);show('weatherMessage',error.message)}finally{weatherBusy=false;weatherControls()}};"
     "$('marketForm').onsubmit=async event=>{event.preventDefault();if(marketBusy||!marketAvailable)return;if(marketIds.length<1||marketIds.length>5){show('marketMessage','请选择 1—5 项指数。');return}const enabled=$('marketEnabled').value==='on',body=new URLSearchParams({enabled:enabled?'on':'off',ids:marketIds.join(',')}).toString();marketBusy=true;marketControls();show('marketMessage','正在保存…');"
-    "try{const message=await post('/api/market/config',body);$('marketStatus').textContent=enabled?'已开启 · '+marketIds.length+' 项':'已关闭';show('marketMessage',message)}catch(error){show('marketMessage',error.message)}finally{marketBusy=false;marketControls()}};"
+    "try{const message=await post('/api/market/config',body);$('marketStatus').textContent=enabled?'已开启 · '+marketIds.length+' 项':'已关闭';loadSucceeded('market');show('marketMessage',message)}catch(error){checkUncertain('market',error);show('marketMessage',error.message)}finally{marketBusy=false;marketControls()}};"
     "$('conversationForm').onsubmit=async event=>{event.preventDefault();if(conversationBusy||!conversationAvailable)return;"
     "const body=new URLSearchParams(new FormData(event.target)).toString();conversationBusy=true;conversationControls();"
     "show('conversationMessage','正在保存…');try{const message=await post('/api/conversation/config',body);await load('conversation');show('conversationMessage',message)}"
-    "catch(error){show('conversationMessage',error.message)}finally{$('conversationKey').value='';conversationBusy=false;conversationControls()}};"
+    "catch(error){checkUncertain('conversation',error);show('conversationMessage',error.message)}finally{$('conversationKey').value='';conversationBusy=false;conversationControls()}};"
     "$('conversationClear').onclick=async()=>{if(conversationBusy||!conversationAvailable)return;"
     "if(!confirm('确认清除已保存的 API Key，关闭 AI 对话并恢复默认模型与 API Host？此操作无法撤销。'))return;conversationBusy=true;conversationControls();"
     "show('conversationMessage','正在清除…');try{const message=await post('/api/conversation/clear','confirm=CLEAR_CONVERSATION');"
-    "await load('conversation');show('conversationMessage',message)}catch(error){show('conversationMessage',error.message)}finally{conversationBusy=false;conversationControls()}};"
-    "$('defaults').onclick=async()=>{if(localAccess||settingsBusy||alarmBusy||updatesBusy||!confirm('恢复偏好默认值？常用、闹钟与更新设置的未保存修改也会清除。Wi-Fi、天气、市场看板和 AI 配置不变。'))return;settingsControls(true);alarmControls(true);updatesControls(true);"
-    "show('maintenanceMessage','正在恢复…');try{const message=await post('/api/settings/defaults','confirm=DEFAULTS');await load('settings');await load('alarm');await load('updates');show('maintenanceMessage',message)}"
-    "catch(error){show('maintenanceMessage',error.message)}finally{settingsControls(false);alarmControls(false);updatesControls(false)}};"
+    "await load('conversation');show('conversationMessage',message)}catch(error){checkUncertain('conversation',error);show('conversationMessage',error.message)}finally{conversationBusy=false;conversationControls()}};"
+    "$('defaults').onclick=async()=>{if(!stateReady||localAccess||settingsBusy||alarmBusy||updatesBusy||pagesBusy||musicSettingsBusy||!confirm('恢复偏好默认值？常用、显示页面、音乐播放方式、闹钟与更新设置的未保存修改也会清除。Wi-Fi、天气、市场看板和 AI 配置不变，本次音乐定时不变。'))return;settingsControls(true);alarmControls(true);updatesControls(true);pagesControls(true);musicSettingsControls(true);"
+    "show('maintenanceMessage','正在恢复…');try{const message=await post('/api/settings/defaults','confirm=DEFAULTS');await load('settings');await load('pages');await load('alarm');await load('updates');await load('musicSettings');show('maintenanceMessage',message)}"
+    "catch(error){if(error.uncertain)['settings','pages','alarm','updates','musicSettings'].forEach(section=>loadFailed(section,error));show('maintenanceMessage',error.message)}finally{settingsControls(false);alarmControls(false);updatesControls(false);pagesControls(false);musicSettingsControls(false)}};"
     "$('forgetWifi').onclick=async()=>{if(!confirm('移除已保存的 Wi-Fi？设置热点随后会关闭并进入首次配网。'))return;"
     "wifiBusy=true;wifiControls();show('wifiMessage','正在移除…');try{show('wifiMessage',await post('/api/wifi/clear','confirm=FORGET'))}"
     "catch(error){wifiBusy=false;wifiControls();show('wifiMessage',error.message)}};"
     "$('storedPrevious').onclick=()=>browseStored(-1);$('storedNext').onclick=()=>browseStored(1);"
     "$('storedSelect').onclick=async()=>{const name=storedImages[storedIndex];if(!name||imageBusy||storedBusy)return;imageBusyState(true);"
     "show('storedMessage','正在设置…');try{const message=await post('/api/images/select','name='+encodeURIComponent(name));"
-    "storedSelected=name;show('storedMessage',message);storedControls()}catch(error){show('storedMessage',error.message)}finally{imageBusyState(false)}};"
+    "storedSelected=name;show('storedMessage',message);storedControls()}catch(error){checkUncertain('images',error);show('storedMessage',error.message)}finally{imageBusyState(false)}};"
     "$('storedDelete').onclick=async()=>{const name=storedImages[storedIndex];if(!name||imageBusy||storedBusy)return;"
     "if(!confirm('删除“'+name+'”？此操作无法撤销。'))return;const next=storedImages.length>1?storedImages[(storedIndex+1)%storedImages.length]:'';"
     "imageBusyState(true);show('storedMessage','正在删除…');try{const message=await post('/api/images/delete','name='+encodeURIComponent(name)+'&confirm=DELETE');"
-    "await load('images',next);show('storedMessage',message)}catch(error){show('storedMessage',error.message)}finally{imageBusyState(false)}};"
+    "await load('images',next);show('storedMessage',message)}catch(error){checkUncertain('images',error);show('storedMessage',error.message)}finally{imageBusyState(false)}};"
     "$('threshold').oninput=()=>{ $('thresholdValue').value=$('threshold').value;scheduleImageRender()};"
     "$('dither').onchange=scheduleImageRender;"
     "$('imageFile').onchange=async event=>{const file=event.target.files[0];imagePbm=null;imageGray=null;$('imagePreview').hidden=true;"
@@ -647,15 +685,14 @@ static const char SETTINGS_PAGE[] =
     "imageBusyState(true);show('starterMessage','正在提交下载请求…');try{const result=await post('/api/images/starter','confirm=STARTER');"
     "show('starterMessage',result||'请求已提交，请查看设备屏幕')}catch(error){show('starterMessage',error.name==='TypeError'?"
     "'连接已断开，请查看设备屏幕上的下载结果。':error.message)}finally{imageBusyState(false)}};"
-    "$('upload').onclick=()=>{if(localAccess){show('updateMessage','本地升级请切换到设备热点。');return}const file=$('file'),button=$('upload'),progress=$('progress');if(!file.files.length){"
+    "$('upload').onclick=()=>{if(!stateReady||otaStarted)return;if(localAccess){show('updateMessage','本地升级请切换到设备热点。');return}const file=$('file'),button=$('upload'),progress=$('progress');if(!file.files.length){"
     "show('updateMessage','请先选择 OTA 固件');return}if(!confirm('开始写入固件？写入期间请保持供电。'))return;"
-    "button.disabled=true;file.disabled=true;const request=new XMLHttpRequest();request.open('POST','/update');"
+    "otaStarted=true;button.disabled=true;file.disabled=true;loadNotice();const request=new XMLHttpRequest();request.open('POST','/update');request.timeout=630000;"
     "request.setRequestHeader('Content-Type','application/octet-stream');request.setRequestHeader('X-RLCD-Token',token);"
     "request.upload.onprogress=event=>{if(event.lengthComputable){const value=Math.round(event.loaded*100/event.total);"
-    "progress.value=value;show('updateMessage','正在上传 '+value+'%')}};request.onload=()=>{show('updateMessage',request.responseText||"
-    "(request.status===200?'升级成功，设备即将重启':'升级失败'));if(request.status!==200){button.disabled=false;file.disabled=false}};"
-    "request.onerror=()=>show('updateMessage','连接中断，请查看设备屏幕');request.send(file.files[0])};"
-    "zones();settingsControls(true);alarmControls(true);updatesControls(true);weatherControls();conversationControls();marketControls();load().catch(error=>{show('settingsMessage',error.message);setSdState('unknown',0)}).finally(()=>{settingsControls(false);alarmControls(false);updatesControls(false)});</script></main></body></html>";
+    "progress.value=value;show('updateMessage',value===100?'上传完成，正在校验，请保持供电…':'正在上传 '+value+'%')}};request.onload=()=>{show('updateMessage',request.status===200?(request.responseText||'升级成功，设备即将重启'):(request.responseText||'升级未完成。')+' 请查看设备屏幕，重新开启设置后核对版本，再决定是否重试。')};"
+    "request.onerror=request.ontimeout=request.onabort=()=>show('updateMessage','连接中断或请求超时，升级结果尚未确认。请保持供电并查看设备屏幕，重新开启设置后核对版本，再决定是否重试。');request.send(file.files[0])};"
+    "zones();syncControls();load().catch(error=>{show('settingsMessage',error.message);setSdState('unknown',0)}).finally(syncControls);</script></main></body></html>";
 
 
 static const char UPDATE_SUCCESS_PAGE[] =
@@ -670,6 +707,9 @@ static bool s_task_active;
 static bool s_upload_started;
 static bool s_mutation_active;
 static bool s_session_closing;
+/* Latest successfully saved enabled configuration requests one background
+ * fetch when this portal closes normally. Never carried to another session. */
+static bool s_weather_refresh_pending;
 static bool s_session_deadline_active;
 static settings_portal_clock_t s_session_clock;
 static unsigned s_pair_failures;
@@ -689,6 +729,7 @@ static void reset_status_locked(firmware_update_state_t state,
     memset(s_session_token, 0, sizeof(s_session_token));
     s_mutation_active = false;
     s_session_closing = false;
+    s_weather_refresh_pending = false;
     s_session_deadline_active = false;
     s_session_clock = (settings_portal_clock_t){0};
     s_pair_failures = 0U;
@@ -1540,6 +1581,15 @@ static const char *conversation_service_form_value(
     }
 }
 
+static const char *settings_music_mode_name(app_music_mode_t mode)
+{
+    switch (mode) {
+    case APP_MUSIC_MODE_REPEAT_ONE: return "repeat_one";
+    case APP_MUSIC_MODE_REPEAT_ALL: return "repeat_all";
+    default: return "sequential";
+    }
+}
+
 static esp_err_t recovery_state_get_handler(httpd_req_t *request)
 {
     network_time_saved_network_t saved_network = {0};
@@ -1721,7 +1771,7 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         response->json, sizeof(response->json),
         "{\"local_network\":%s,\"wifi_configured\":%s,\"wifi_ssid\":\"%s\","
         "\"timezone\":%d,\"unit\":\"%s\","
-        "\"volume\":%u,\"alarm_volume\":%u,\"updates\":\"%s\","
+        "\"volume\":%u,\"alarm_volume\":%u,\"updates\":\"%s\",\"daily_pages_mask\":%u,\"music_mode\":\"%s\","
         "\"alarm\":\"%s\","
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
         "\"sd_state\":\"%s\",\"image_count\":%u,"
@@ -1744,6 +1794,8 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         settings.alarm_volume,
         settings.update_channel == APP_UPDATE_CHANNEL_BETA ? "beta"
                                                            : "stable",
+        (unsigned int)settings.daily_pages_mask,
+        settings_music_mode_name(settings.music_mode),
         settings.alarm_enabled ? "on" : "off",
         (unsigned int)settings.alarm_hour,
         (unsigned int)settings.alarm_minute,
@@ -1904,20 +1956,6 @@ static esp_err_t finish_wifi_change_request(httpd_req_t *request,
     s_session_closing = true;
     portEXIT_CRITICAL(&s_status_lock);
     xEventGroupSetBits(s_events, UPDATE_EVENT_WIFI_CHANGED);
-    return response_error;
-}
-
-static esp_err_t finish_weather_refresh_request(httpd_req_t *request,
-                                                const char *message)
-{
-    const esp_err_t response_error = send_page(
-        request, "200 OK", "text/plain; charset=utf-8", message);
-    portENTER_CRITICAL(&s_status_lock);
-    s_session_closing = true;
-    portEXIT_CRITICAL(&s_status_lock);
-    /* Keep mutation ownership until update_task consumes the terminal bit.
-     * This avoids a false/no-event gap at the fixed session deadline. */
-    xEventGroupSetBits(s_events, UPDATE_EVENT_WEATHER_REFRESH);
     return response_error;
 }
 
@@ -2156,23 +2194,17 @@ static esp_err_t weather_config_post_handler(httpd_req_t *request)
                 ? "天气配置未通过校验，原配置未更改。\n"
                 : "天气配置未能保存，原配置未更改。\n");
     }
-    if (!enabled) {
-        const esp_err_t notify_error =
-            weather_service_notify_configuration_changed();
-        if (notify_error != ESP_OK) {
-            ESP_LOGW(TAG, "could not apply disabled weather setting: %s",
-                     esp_err_to_name(notify_error));
-        }
-        return finish_regular_request(
-            request, "200 OK", "天气配置已保存，天气页面已关闭，无需重启。\n");
+    portENTER_CRITICAL(&s_status_lock);
+    s_weather_refresh_pending = enabled;
+    portEXIT_CRITICAL(&s_status_lock);
+    const esp_err_t notify_error = weather_service_notify_configuration_changed();
+    if (notify_error != ESP_OK) {
+        ESP_LOGW(TAG, "weather saved; service notification failed: %s",
+                 esp_err_to_name(notify_error));
     }
-
-    /* update_task consumes this terminal event, stops HTTP/SoftAP, and only
-     * then hands the maintenance-owned network session to the weather
-     * worker. No device restart is involved. */
-    return finish_weather_refresh_request(
-        request,
-        "天气配置已保存。设置热点即将关闭，设备将联网获取天气；请查看设备屏幕。\n");
+    return finish_regular_request(request, "200 OK", enabled
+        ? "天气配置已保存，可继续修改其他设置。按设备 BOOT 退出网页设置后获取天气，不切换当前页面。\n"
+        : "天气已关闭，配置已保留，无需重启。\n");
 }
 
 static esp_err_t weather_clear_post_handler(httpd_req_t *request)
@@ -2202,6 +2234,10 @@ static esp_err_t weather_clear_post_handler(httpd_req_t *request)
 
     esp_err_t error = weather_config_clear();
     if (error == ESP_OK) {
+        /* The config clear has committed, even if clearing its cache fails. */
+        portENTER_CRITICAL(&s_status_lock);
+        s_weather_refresh_pending = false;
+        portEXIT_CRITICAL(&s_status_lock);
         error = weather_service_clear_cache();
     }
     if (error != ESP_OK) {
@@ -2759,9 +2795,12 @@ static esp_err_t music_list_get_handler(httpd_req_t *request)
     const char *state = playing.state == AUDIO_MUSIC_PLAYING ? "playing" :
         playing.state == AUDIO_MUSIC_PAUSED ? "paused" : playing.state == AUDIO_MUSIC_ERROR ? "error" : "stopped";
     int written = snprintf(json, capacity,
-        "{\"ready\":%s,\"scanned\":%s,\"truncated\":%s,\"state\":\"%s\",\"elapsed\":%lu,\"selected_index\":%u,\"tracks\":[",
+        "{\"ready\":%s,\"scanned\":%s,\"truncated\":%s,\"state\":\"%s\",\"elapsed\":%lu,\"selected_index\":%u,\"playback_mode\":\"%s\",\"sleep_remaining_seconds\":%lu,\"tracks\":[",
         library.card_available ? "true" : "false", library.scanned ? "true" : "false", library.truncated ? "true" : "false",
-        state, (unsigned long)playing.elapsed_seconds, playing.selected_index);
+        state, (unsigned long)playing.elapsed_seconds, playing.selected_index,
+        playing.playback_mode == AUDIO_MUSIC_MODE_REPEAT_ONE ? "repeat_one" :
+        playing.playback_mode == AUDIO_MUSIC_MODE_REPEAT_ALL ? "repeat_all" : "sequential",
+        (unsigned long)playing.sleep_remaining_seconds);
     bool valid = written > 0 && (size_t)written < capacity;
     size_t length = valid ? (size_t)written : 0;
     for (size_t i = 0; valid && i < library.count; ++i) {
@@ -2810,6 +2849,27 @@ static esp_err_t music_command_post_handler(httpd_req_t *request)
     return finish_regular_request(request, error == ESP_OK ? "200 OK" : "409 Conflict",
         error != ESP_OK ? "暂时无法完成，请稍后重试。删除失败时原文件保留。\n" :
         deleting ? "歌曲已删除，无需重启。\n" : stopping ? "播放已停止。\n" : "已开始在设备扬声器播放。\n");
+}
+
+static esp_err_t music_sleep_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) return ESP_OK;
+    if (boot_recovery_is_active()) return send_mutation_unavailable(request);
+    char body[SETTINGS_PORTAL_SMALL_FORM_CAPACITY];
+    size_t length = 0U;
+    uint16_t minutes = 0U;
+    const esp_err_t received = receive_form(request, body, sizeof(body), &length);
+    if (received == ESP_ERR_TIMEOUT) return send_deadline_response(request);
+    if (received != ESP_OK ||
+        !settings_portal_parse_music_sleep_form(body, length, &minutes)) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                         "请选择 15、30、60 或 90 分钟，或取消定时。\n");
+    }
+    if (!begin_regular_mutation()) return send_mutation_unavailable(request);
+    const esp_err_t error = audio_music_set_sleep_timer(minutes);
+    return finish_regular_request(request, error == ESP_OK ? "200 OK" : "409 Conflict",
+        error != ESP_OK ? "请先播放歌曲，再设置定时停止。\n" :
+        minutes == 0U ? "本次定时已取消。\n" : "已开始计时，到时停止音乐，不关闭设备。\n");
 }
 
 static bool music_upload_checkpoint(void *context)
@@ -3305,6 +3365,7 @@ static esp_err_t start_web_server(void)
         {.uri = "/api/music/upload", .method = HTTP_POST, .handler = music_upload_post_handler},
         {.uri = "/api/music/play", .method = HTTP_POST, .handler = music_command_post_handler},
         {.uri = "/api/music/stop", .method = HTTP_POST, .handler = music_command_post_handler},
+        {.uri = "/api/music/sleep", .method = HTTP_POST, .handler = music_sleep_post_handler},
         {.uri = "/api/music/delete", .method = HTTP_POST, .handler = music_command_post_handler},
     };
     error = httpd_register_uri_handler(s_http_server, &root_uri);
@@ -3574,8 +3635,7 @@ static EventBits_t finish_active_request_after_timeout(void)
         wait_for = UPDATE_EVENT_MUTATION_ENDED |
                    UPDATE_EVENT_REPROVISION |
                    UPDATE_EVENT_GALLERY_INSTALL |
-                   UPDATE_EVENT_WIFI_CHANGED |
-                   UPDATE_EVENT_WEATHER_REFRESH;
+                   UPDATE_EVENT_WIFI_CHANGED;
     }
     if (wait_for == 0U) {
         return 0U;
@@ -3669,7 +3729,11 @@ static bool try_local_network_portal(bool *maintenance_owned)
 
 static void finish_update_task(void)
 {
+    if (!boot_recovery_is_active()) {
+        (void)weather_service_set_portal_active(false);
+    }
     portENTER_CRITICAL(&s_status_lock);
+    s_weather_refresh_pending = false;
     s_task_active = false;
     portEXIT_CRITICAL(&s_status_lock);
     vTaskDelete(NULL);
@@ -3678,6 +3742,17 @@ static void finish_update_task(void)
 static void update_task(void *argument)
 {
     (void)argument;
+    if (!boot_recovery_is_active()) {
+        const esp_err_t weather_error = weather_service_set_portal_active(true);
+        /* Weather is optional: an unavailable service must not remove the
+         * settings/recovery path. A running request will be rejected by the
+         * existing network ownership admission below. */
+        if (weather_error != ESP_OK && weather_error != ESP_ERR_INVALID_STATE) {
+            set_state(FIRMWARE_UPDATE_STATE_FAILED, weather_error);
+            finish_update_task();
+            return;
+        }
+    }
     bool maintenance_owned = false;
     if (try_local_network_portal(&maintenance_owned)) {
         finish_update_task();
@@ -3705,21 +3780,6 @@ static void update_task(void *argument)
     }
 
     EventBits_t bits = wait_portal_session(false);
-    if ((bits & UPDATE_EVENT_WEATHER_REFRESH) != 0U) {
-        vTaskDelay(pdMS_TO_TICKS(UPDATE_SERVER_STOP_DELAY_MS));
-        stop_web_server();
-        (void)stop_update_ap();
-        set_state(FIRMWARE_UPDATE_STATE_IDLE, ESP_OK);
-        const esp_err_t weather_error =
-            weather_service_request_refresh_from_maintenance();
-        if (weather_error != ESP_OK) {
-            network_time_end_maintenance();
-            ESP_LOGW(TAG, "could not start weather refresh: %s",
-                     esp_err_to_name(weather_error));
-        }
-        finish_update_task();
-        return;
-    }
     if ((bits & UPDATE_EVENT_GALLERY_INSTALL) != 0U) {
         vTaskDelay(pdMS_TO_TICKS(UPDATE_SERVER_STOP_DELAY_MS));
         stop_web_server();
@@ -3780,8 +3840,28 @@ static void update_task(void *argument)
         set_state(FIRMWARE_UPDATE_STATE_EXPIRED, ESP_ERR_TIMEOUT);
     }
     stop_web_server();
-    (void)stop_update_ap();
-    network_time_end_maintenance();
+    const esp_err_t stop_error = stop_update_ap();
+    bool pending_weather = false;
+    portENTER_CRITICAL(&s_status_lock);
+    pending_weather = s_weather_refresh_pending;
+    s_weather_refresh_pending = false;
+    portEXIT_CRITICAL(&s_status_lock);
+    /* Ordinary close/expiry only. Wi-Fi, gallery and OTA terminal branches
+     * above have their own ownership handoff and discard this queued fetch.
+     * httpd_stop has joined all handlers; no save can enqueue a late request. */
+    const bool fetch_weather = pending_weather && stop_error == ESP_OK &&
+        (bits & (UPDATE_EVENT_FAILED | UPDATE_EVENT_COMPLETE)) == 0U &&
+        !boot_recovery_is_active();
+    const esp_err_t weather_error = fetch_weather
+        ? weather_service_request_refresh_from_maintenance()
+        : ESP_ERR_INVALID_STATE;
+    if (weather_error != ESP_OK) {
+        network_time_end_maintenance();
+        if (fetch_weather) {
+            ESP_LOGW(TAG, "could not start deferred weather refresh: %s",
+                     esp_err_to_name(weather_error));
+        }
+    }
     finish_update_task();
 }
 

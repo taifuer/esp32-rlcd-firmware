@@ -1,28 +1,51 @@
 #include "page_state.h"
+#include "settings_model.h"
 
 #include <string.h>
 
-static app_page_t next_daily_page(const app_page_state_t *state)
+static uint8_t daily_page_bit(app_page_t page)
 {
-    if (state->current == APP_PAGE_HOME) {
-        if (state->weather_enabled) return APP_PAGE_WEATHER;
-        return state->market_enabled ? APP_PAGE_MARKET : APP_PAGE_CALENDAR;
+    switch (page) {
+    case APP_PAGE_WEATHER: return APP_DAILY_PAGE_WEATHER;
+    case APP_PAGE_MARKET: return APP_DAILY_PAGE_MARKET;
+    case APP_PAGE_CALENDAR: return APP_DAILY_PAGE_CALENDAR;
+    case APP_PAGE_IMAGE: return APP_DAILY_PAGE_IMAGE;
+    case APP_PAGE_MUSIC: return APP_DAILY_PAGE_MUSIC;
+    case APP_PAGE_VOICE: return APP_DAILY_PAGE_CHAT;
+    default: return 0U;
     }
-    if (state->current == APP_PAGE_WEATHER) {
-        return state->market_enabled ? APP_PAGE_MARKET : APP_PAGE_CALENDAR;
+}
+
+app_page_t app_page_state_next_daily_page(const app_page_state_t *state)
+{
+    static const app_page_t ring[] = {
+        APP_PAGE_HOME, APP_PAGE_WEATHER, APP_PAGE_MARKET, APP_PAGE_CALENDAR,
+        APP_PAGE_IMAGE, APP_PAGE_MUSIC, APP_PAGE_VOICE,
+    };
+    if (state == NULL) return APP_PAGE_HOME;
+    /* BOOT is inert in recovery, including when every daily page is hidden. */
+    if (state->recovery_mode) return state->current;
+    for (size_t i = 0U; i < sizeof(ring) / sizeof(ring[0]); ++i) {
+        if (ring[i] != state->current) continue;
+        for (++i; i < sizeof(ring) / sizeof(ring[0]); ++i) {
+            if (app_page_state_page_available(state, ring[i])) return ring[i];
+        }
+        break;
     }
-    if (state->current == APP_PAGE_MARKET) {
-        return APP_PAGE_CALENDAR;
-    }
-    if (state->current == APP_PAGE_CALENDAR && state->image_available) {
-        return APP_PAGE_IMAGE;
-    }
-    if ((state->current == APP_PAGE_CALENDAR || state->current == APP_PAGE_IMAGE) && state->music_available) {
-        return APP_PAGE_MUSIC;
-    }
-    if (state->current == APP_PAGE_CALENDAR || state->current == APP_PAGE_IMAGE ||
-        state->current == APP_PAGE_MUSIC) return APP_PAGE_VOICE;
     return APP_PAGE_HOME;
+}
+
+const char *app_page_daily_label(app_page_t page)
+{
+    switch (page) {
+    case APP_PAGE_WEATHER: return "WEATHER";
+    case APP_PAGE_MARKET: return "MARKET";
+    case APP_PAGE_CALENDAR: return "CALENDAR";
+    case APP_PAGE_IMAGE: return "IMAGE";
+    case APP_PAGE_MUSIC: return "MUSIC";
+    case APP_PAGE_VOICE: return "CHAT";
+    default: return "HOME";
+    }
 }
 
 static app_page_t next_system_page(app_page_t page)
@@ -45,6 +68,7 @@ void app_page_state_init(app_page_state_t *state)
     }
     memset(state, 0, sizeof(*state));
     state->current = APP_PAGE_HOME;
+    state->daily_pages_mask = APP_DAILY_PAGES_ALL_MASK;
 }
 
 void app_page_state_go_home(app_page_state_t *state)
@@ -52,21 +76,40 @@ void app_page_state_go_home(app_page_state_t *state)
     (void)app_page_state_open_page(state, APP_PAGE_HOME);
 }
 
-bool app_page_state_open_page(app_page_state_t *state, app_page_t page)
+bool app_page_state_page_available(const app_page_state_t *state,
+                                    app_page_t page)
 {
     if (state == NULL ||
         (!app_page_is_daily(page) && !app_page_is_system(page)) ||
         (state->recovery_mode && page != APP_PAGE_SETTINGS &&
          page != APP_PAGE_ONLINE_UPDATE) ||
+        (daily_page_bit(page) != 0U &&
+         (state->daily_pages_mask & daily_page_bit(page)) == 0U) ||
         (page == APP_PAGE_WEATHER && !state->weather_enabled) ||
         (page == APP_PAGE_MARKET && !state->market_enabled) ||
         (page == APP_PAGE_IMAGE && !state->image_available) ||
         (page == APP_PAGE_MUSIC && !state->music_available)) {
         return false;
     }
+    return true;
+}
+
+bool app_page_state_open_page(app_page_state_t *state, app_page_t page)
+{
+    if (!app_page_state_page_available(state, page)) return false;
 
     state->current = page;
     return true;
+}
+
+void app_page_state_set_daily_pages_mask(app_page_state_t *state, uint8_t mask)
+{
+    if (state == NULL) return;
+    state->daily_pages_mask = mask & APP_DAILY_PAGES_ALL_MASK;
+    if (!state->recovery_mode &&
+        !app_page_state_page_available(state, state->current)) {
+        app_page_state_go_home(state);
+    }
 }
 
 void app_page_state_set_weather_enabled(app_page_state_t *state,
@@ -223,9 +266,7 @@ void app_page_state_boot_short_press(app_page_state_t *state)
     if (state->recovery_mode) {
         return;
     }
-    state->current = app_page_is_daily(state->current)
-                         ? next_daily_page(state)
-                         : APP_PAGE_HOME;
+    state->current = app_page_state_next_daily_page(state);
 }
 
 void app_page_state_key_short_press(app_page_state_t *state)

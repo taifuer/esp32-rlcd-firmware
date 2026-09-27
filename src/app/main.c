@@ -59,6 +59,25 @@
 #include "weather_service.h"
 
 static const char *TAG = "rlcd_firmware";
+
+static audio_music_playback_mode_t music_mode_from_settings(app_music_mode_t mode)
+{
+    switch (mode) {
+    case APP_MUSIC_MODE_REPEAT_ONE: return AUDIO_MUSIC_MODE_REPEAT_ONE;
+    case APP_MUSIC_MODE_REPEAT_ALL: return AUDIO_MUSIC_MODE_REPEAT_ALL;
+    default: return AUDIO_MUSIC_MODE_SEQUENTIAL;
+    }
+}
+
+static const char *music_mode_label(audio_music_playback_mode_t mode)
+{
+    switch (mode) {
+    case AUDIO_MUSIC_MODE_REPEAT_ONE: return "REPEAT ONE";
+    case AUDIO_MUSIC_MODE_REPEAT_ALL: return "REPEAT ALL";
+    default: return "SEQUENTIAL";
+    }
+}
+
 typedef enum {
     APP_DISPLAY_NONE = 0,
     APP_DISPLAY_DASHBOARD,
@@ -654,7 +673,7 @@ static app_page_t voice_command_page(
 
 static bool accept_voice_engine_result(
     voice_session_state_t *session,
-    const audio_voice_status_t *status, bool image_available,
+    const audio_voice_status_t *status, const app_page_state_t *pages,
     voice_command_action_t *pending_action,
     esp_err_t *session_error)
 {
@@ -704,9 +723,15 @@ static bool accept_voice_engine_result(
 
     const voice_command_decision_t decision =
         voice_command_policy_decide(status->command_id,
-                                    image_available);
+            app_page_state_page_available(pages, APP_PAGE_IMAGE));
     switch (decision.kind) {
     case VOICE_COMMAND_DECISION_EXECUTE:
+        if (!app_page_state_page_available(
+                pages, voice_command_page(decision.action))) {
+            return voice_session_state_report_result(
+                session, status->generation,
+                VOICE_SESSION_RESULT_TARGET_UNAVAILABLE);
+        }
         *pending_action = decision.action;
         return voice_session_state_report_result(
             session, status->generation,
@@ -1279,6 +1304,11 @@ void app_main(void)
                  audio_status.microphones_ready,
                  esp_err_to_name(audio_init_error));
     }
+    audio_music_playback_mode_t applied_music_mode = AUDIO_MUSIC_MODE_SEQUENTIAL;
+    if (!recovery_mode) {
+        const audio_music_playback_mode_t requested = music_mode_from_settings(settings.music_mode);
+        if (audio_music_set_playback_mode(requested) == ESP_OK) applied_music_mode = requested;
+    }
 
     bool rtc_backup_monitor_ready = false;
     if (storage_error == ESP_OK) {
@@ -1468,6 +1498,7 @@ void app_main(void)
                              BUTTON_LONG_PRESS_DISABLED_MS);
     app_page_state_t page_state;
     app_page_state_init(&page_state);
+    app_page_state_set_daily_pages_mask(&page_state, settings.daily_pages_mask);
     app_page_state_set_recovery_mode(&page_state, recovery_mode);
     quick_settings_t quick_settings = {0};
     bool volume_preview_active = false;
@@ -1552,6 +1583,7 @@ void app_main(void)
     uint32_t previous_music_library_revision = 0;
     uint8_t previous_music_count = 0;
     uint8_t previous_music_volume = 0;
+    uint32_t previous_music_sleep_minutes = 0;
     sd_image_status_t initial_sd_image_status = {0};
     sd_image_store_get_status(&initial_sd_image_status);
     app_page_state_set_image_available(
@@ -1693,10 +1725,12 @@ void app_main(void)
             weather_interactive_page_opened = false;
         } else if (weather_status.config_enabled &&
                    !weather_interactive_page_opened) {
-            weather_interactive_page_opened =
-                app_page_state_open_page(&page_state,
-                                         APP_PAGE_WEATHER);
-            render_requested = true;
+            /* A request cannot make a hidden page visible. Mark the attempt
+             * handled even when rejected, without a redraw loop. */
+            weather_interactive_page_opened = true;
+            if (app_page_state_open_page(&page_state, APP_PAGE_WEATHER)) {
+                render_requested = true;
+            }
         }
         const bool weather_interactive_loading =
             weather_status.interactive_refresh &&
@@ -1714,16 +1748,27 @@ void app_main(void)
         music_library_get_status(&music_library);
         audio_music_status_t music_status = {0};
         audio_music_get_status(&music_status);
+        const uint32_t music_sleep_minutes = music_status.sleep_remaining_seconds / 60U +
+            (music_status.sleep_remaining_seconds % 60U != 0U ? 1U : 0U);
         const bool music_changed = music_status.revision != previous_music_revision ||
             music_library.revision != previous_music_library_revision ||
-            music_library.count != previous_music_count || music_status.volume != previous_music_volume;
+            music_library.count != previous_music_count || music_status.volume != previous_music_volume ||
+            music_sleep_minutes != previous_music_sleep_minutes;
         if (music_changed) {
+            const bool music_availability_changed = page_state.music_available !=
+                (!recovery_mode && music_library.count > 0U);
             app_page_state_set_music_available(&page_state, !recovery_mode && music_library.count > 0U);
             previous_music_revision = music_status.revision;
             previous_music_library_revision = music_library.revision;
             previous_music_count = music_library.count;
             previous_music_volume = music_status.volume;
-            if (app_page_state_current(&page_state) == APP_PAGE_MUSIC) render_requested = true;
+            previous_music_sleep_minutes = music_sleep_minutes;
+            /* A newly available/removed song may change another page's
+             * BOOT destination too, even while music stays in background. */
+            if (music_availability_changed ||
+                app_page_state_current(&page_state) == APP_PAGE_MUSIC) {
+                render_requested = true;
+            }
         }
         sd_image_status_t latest_sd_image_status = {0};
         sd_image_store_get_status(&latest_sd_image_status);
@@ -1798,14 +1843,10 @@ void app_main(void)
         voice_status = latest_voice_status;
         if (offline_voice_data_changed) {
             previous_voice_revision = voice_status.revision;
-            const bool image_available =
-                latest_sd_image_status.state ==
-                    SD_IMAGE_STATE_READY &&
-                latest_sd_image_status.image_count > 0U;
             if (!cloud_session_selected &&
                 accept_voice_engine_result(
                     &voice_session, &voice_status,
-                    image_available, &pending_voice_action,
+                    &page_state, &pending_voice_action,
                     &voice_session_error)) {
                 ESP_LOGI(TAG,
                          "offline voice result accepted: %s",
@@ -2035,6 +2076,31 @@ void app_main(void)
                 app_settings_get_snapshot(&snapshot);
             if (snapshot_error == ESP_OK &&
                 snapshot.generation != settings_generation) {
+                /* Visibility has no network/audio ownership requirements.
+                 * Apply it from the newest persisted record even if another
+                 * preference still waits for a running transaction. Modal
+                 * overlays keep this state, so return cannot revive a page
+                 * hidden while the portal or alarm covered it. */
+                if (page_state.daily_pages_mask !=
+                    snapshot.settings.daily_pages_mask) {
+                    app_page_state_set_daily_pages_mask(
+                        &page_state, snapshot.settings.daily_pages_mask);
+                    render_requested = true;
+                    weather_data_changed = true;
+                }
+                /* Music mode, like page visibility, does not need a radio
+                 * transition or an audio restart. Do not defer it behind a
+                 * busy power/OTA transaction. */
+                esp_err_t music_mode_error = ESP_OK;
+                const audio_music_playback_mode_t requested_music_mode =
+                    music_mode_from_settings(snapshot.settings.music_mode);
+                if (!recovery_mode && applied_music_mode != requested_music_mode) {
+                    music_mode_error = audio_music_set_playback_mode(requested_music_mode);
+                    if (music_mode_error == ESP_OK) {
+                        applied_music_mode = requested_music_mode;
+                        render_requested = true;
+                    }
+                }
                 const bool configured_power_changed =
                     snapshot.settings.manual_saving_requested !=
                     settings.manual_saving_requested;
@@ -2042,6 +2108,7 @@ void app_main(void)
                 app_power_policy_t next_power_policy = {0};
                 bool effective_mode_changed = false;
                 esp_err_t apply_error =
+                    music_mode_error != ESP_OK ? music_mode_error :
                     app_power_runtime_set_manual_saving_requested(
                         &next_power_runtime,
                         snapshot.settings.manual_saving_requested,
@@ -3738,6 +3805,8 @@ void app_main(void)
         }
 
         const app_page_t active_page = app_page_state_current(&page_state);
+        const char *next_daily_page = app_page_daily_label(
+            app_page_state_next_daily_page(&page_state));
         if (market_error == ESP_OK) {
             const bool market_visible = active_page == APP_PAGE_MARKET &&
                 !recovery_mode && !firmware_update_ui_active &&
@@ -4013,7 +4082,7 @@ void app_main(void)
                 } else if (firmware_update_status.state ==
                            FIRMWARE_UPDATE_STATE_CANCELLED) {
                     display_show_status("SETTINGS CLOSED",
-                                        "No changes made");
+                                        "Returning to device");
                 } else {
                     display_show_status(
                         "UPDATE FAILED",
@@ -4151,7 +4220,7 @@ void app_main(void)
                             pending_voice_action);
                     } else if (voice_phase ==
                                VOICE_SESSION_PHASE_TARGET_UNAVAILABLE) {
-                        voice_detail = "No image available";
+                        voice_detail = "Page hidden or unavailable";
                     } else if (voice_phase ==
                                VOICE_SESSION_PHASE_ENGINE_UNAVAILABLE) {
                         voice_detail = voice_unavailable_detail(
@@ -4336,14 +4405,14 @@ void app_main(void)
                 }
             } else if (display_mode == APP_DISPLAY_WEATHER) {
                 if (display_mode != previous_display_mode ||
-                    weather_data_changed) {
+                    render_requested || weather_data_changed) {
                     display_weather_t display_weather = {0};
                     make_display_weather(
                         &weather_status, &dashboard,
                         settings.temperature_unit ==
                             APP_TEMPERATURE_UNIT_FAHRENHEIT,
                         &display_weather);
-                    display_weather.market_enabled = market_status.config.enabled;
+                    display_weather.next_daily_page = next_daily_page;
                     display_show_weather(&display_weather);
                 }
             } else if (display_mode == APP_DISPLAY_MARKET) {
@@ -4352,17 +4421,13 @@ void app_main(void)
                     make_display_market(&market_status, &dashboard,
                         power_runtime.effective_state == APP_POWER_STATE_SAVING,
                         &market_view);
+                    market_view.next_daily_page = next_daily_page;
                     display_show_market(&market_view);
                 }
             } else if (display_mode == APP_DISPLAY_CALENDAR) {
                 if (display_mode != previous_display_mode ||
                     render_requested || calendar_data_changed) {
-                    const bool image_page_available =
-                        image_bitmap_snapshot != NULL &&
-                        latest_sd_image_status.state ==
-                            SD_IMAGE_STATE_READY;
-                    display_show_calendar(&dashboard,
-                                          image_page_available, music_library.count > 0U);
+                    display_show_calendar(&dashboard, next_daily_page);
                 }
             } else if (display_mode == APP_DISPLAY_MONOCHROME_IMAGE) {
                 if (display_mode != previous_display_mode ||
@@ -4376,7 +4441,7 @@ void app_main(void)
                             &selected_index, &image_count)) {
                         display_show_monochrome_image(
                             image_bitmap_snapshot, selected_index,
-                            image_count, music_library.count > 0U);
+                            image_count, next_daily_page);
                     } else {
                         app_page_state_set_image_available(&page_state,
                                                            false);
@@ -4400,6 +4465,9 @@ void app_main(void)
                         .volume = music_status.volume,
                         .index = music_status.selected_index,
                         .count = music_library.count,
+                        .next_daily_page = next_daily_page,
+                        .playback_mode = music_mode_label(music_status.playback_mode),
+                        .sleep_remaining_seconds = music_status.sleep_remaining_seconds,
                     };
                     display_show_music(&playing);
                 }

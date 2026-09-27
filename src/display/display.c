@@ -1165,9 +1165,11 @@ void display_show_weather(const display_weather_t *weather)
         DAILY_FOOTER_DIVIDER_Y + 1, WEATHER_SOURCE_BASELINE_Y + 4,
         WEATHER_SOURCE_BASELINE_Y, source);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    draw_centered(WEATHER_FOOTER_BASELINE_Y,
-                  display_interaction_weather_footer_with_market(
-                      weather->market_enabled));
+    char footer[64];
+    if (display_interaction_format_weather_footer(
+            footer, sizeof(footer), weather->next_daily_page)) {
+        draw_centered(WEATHER_FOOTER_BASELINE_Y, footer);
+    }
     u8g2_SendBuffer(s_u8g2);
 }
 
@@ -1191,7 +1193,7 @@ void display_show_market(const display_market_t *market)
 }
 
 void display_show_calendar(const display_dashboard_t *dashboard,
-                           bool image_available, bool music_available)
+                           const char *next_daily_page)
 {
     if (s_u8g2 == NULL || dashboard == NULL) {
         return;
@@ -1266,14 +1268,17 @@ void display_show_calendar(const display_dashboard_t *dashboard,
         }
     }
 
-    draw_daily_footer(
-        display_interaction_calendar_footer(image_available, music_available));
+    char footer[64];
+    if (display_interaction_format_daily_navigation(
+            footer, sizeof(footer), next_daily_page)) {
+        draw_daily_footer(footer);
+    }
     u8g2_SendBuffer(s_u8g2);
 }
 
 void display_show_monochrome_image(
     const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
-    size_t selected_index, size_t image_count, bool music_available)
+    size_t selected_index, size_t image_count, const char *next_daily_page)
 {
     if (s_u8g2 == NULL || bitmap == NULL) {
         return;
@@ -1292,7 +1297,7 @@ void display_show_monochrome_image(
     u8g2_SetDrawColor(s_u8g2, 1);
     char footer[64];
     if (display_interaction_format_image_navigation(
-            footer, sizeof(footer), selected_index, image_count, music_available)) {
+            footer, sizeof(footer), selected_index, image_count, next_daily_page)) {
         draw_image_footer(footer);
     }
     u8g2_SendBuffer(s_u8g2);
@@ -1346,16 +1351,24 @@ void display_show_music(const display_music_t *music)
         if (lines[1][0] != '\0') draw_utf8_centered_in_region(12, 376, 114, lines[1]);
     }
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    draw_centered(152, music->state != NULL ? music->state : "STOPPED");
+    if (music_display_format_status(value, sizeof(value), music->state, music->playback_mode)) {
+        draw_centered(152, value);
+    }
     u8g2_SetFont(s_u8g2, u8g2_font_logisoso20_tf);
     snprintf(value, sizeof(value), "%02u:%02u", (unsigned)(music->elapsed_seconds / 60U),
              (unsigned)(music->elapsed_seconds % 60U));
     draw_centered(188, value);
     u8g2_SetFont(s_u8g2, u8g2_font_6x13_tf);
-    snprintf(value, sizeof(value), "VOLUME %u%%", (unsigned)music->volume);
-    draw_centered(225, music->failed ? "CHECK FILE / CARD | KEY: RETRY" : value);
+    if (music_display_format_detail(value, sizeof(value), music->volume,
+                                   music->sleep_remaining_seconds, music->failed)) {
+        draw_centered(225, value);
+    }
     u8g2_DrawHLine(s_u8g2, 12, 250, 376);
-    draw_centered(270, music->playing ? "BOOT: CHAT | KEY: PAUSE" : "BOOT: CHAT | KEY: PLAY");
+    char footer[64];
+    if (display_interaction_format_music_navigation(
+            footer, sizeof(footer), music->next_daily_page, music->playing)) {
+        draw_centered(270, footer);
+    }
     draw_centered(294, "HOLD KEY 2s: NEXT | HOLD BOOT 2s: VOLUME");
     u8g2_SendBuffer(s_u8g2);
 }

@@ -65,7 +65,8 @@ typedef struct {
     const char *location;
     bool data_available;
     bool refreshing;
-    bool market_enabled;
+    /* Supplied by the application navigation model, never inferred here. */
+    const char *next_daily_page;
     const char *status_detail;
     bool current_date_valid;
     uint16_t current_year;
@@ -219,10 +220,10 @@ void display_show_dashboard(const display_dashboard_t *dashboard);
 void display_show_weather(const display_weather_t *weather);
 void display_show_market(const display_market_t *market);
 void display_show_calendar(const display_dashboard_t *dashboard,
-                           bool image_available, bool music_available);
+                           const char *next_daily_page);
 void display_show_monochrome_image(
     const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
-    size_t selected_index, size_t image_count, bool music_available);
+    size_t selected_index, size_t image_count, const char *next_daily_page);
 typedef struct {
     const char *filename;
     const char *state;
@@ -232,6 +233,9 @@ typedef struct {
     uint8_t count;
     bool playing;
     bool failed;
+    const char *next_daily_page;
+    const char *playback_mode;
+    uint32_t sleep_remaining_seconds;
 } display_music_t;
 void display_show_music(const display_music_t *music);
 void display_show_image_delete_confirmation(

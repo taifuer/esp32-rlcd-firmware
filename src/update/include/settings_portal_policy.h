@@ -57,6 +57,8 @@ bool settings_portal_parse_unix_form(const char *body, size_t length,
                                      int64_t *unix_seconds);
 bool settings_portal_parse_volume_form(const char *body, size_t length,
                                        uint8_t *volume);
+bool settings_portal_parse_music_sleep_form(const char *body, size_t length,
+                                           uint16_t *minutes);
 bool settings_portal_confirmation_matches(const char *body, size_t length,
                                           const char *expected_word);
 /* Escape a UTF-8 byte string for use between JSON quotes. */

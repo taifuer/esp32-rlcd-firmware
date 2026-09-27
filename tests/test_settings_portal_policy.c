@@ -34,7 +34,7 @@ int main(void)
     assert(!settings_portal_pair_code_matches("ABC12345", "code=abc12345", 13U));
     assert(!settings_portal_pair_code_matches("ABC12345", "code=ABC12345&x=1", 17U));
     assert(!settings_portal_pair_code_matches(NULL, "code=ABC12345", 13U));
-    const char *allowed[] = {"/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/music/upload?name=a.mp3", "/api/market/config"};
+    const char *allowed[] = {"/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/music/upload?name=a.mp3", "/api/music/sleep", "/api/market/config"};
     for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); ++i) assert(settings_portal_lan_post_allowed(allowed[i]));
     const char *denied[] = {"/api/wifi/change", "/api/conversation/config", "/api/weather/config", "/api/images/starter", "/update", "/api/settings/", "/api/music/upload/../update", "/api/settings%00", "/api/market/config/", "/api/market/config%00", NULL};
     for (size_t i = 0; i < sizeof(denied) / sizeof(denied[0]); ++i) assert(!settings_portal_lan_post_allowed(denied[i]));
@@ -45,6 +45,21 @@ int main(void)
     assert(!settings_portal_parse_volume_form("volume=-1", 9U, &volume));
     assert(!settings_portal_parse_volume_form("volume=1&x", 10U, &volume));
     assert(!settings_portal_parse_volume_form("volume=", 7U, &volume));
+    const char *sleep_forms[] = {"minutes=0", "minutes=15", "minutes=30", "minutes=60", "minutes=90"};
+    const uint16_t sleep_values[] = {0U, 15U, 30U, 60U, 90U};
+    uint16_t minutes = 42U;
+    for (size_t i = 0; i < sizeof(sleep_values) / sizeof(sleep_values[0]); ++i) {
+        assert(settings_portal_parse_music_sleep_form(sleep_forms[i], strlen(sleep_forms[i]), &minutes));
+        assert(minutes == sleep_values[i]);
+    }
+    const char *bad_sleep[] = {"minutes=", "minutes=1", "minutes=10", "minutes=00", "minutes=015", "minutes=-1", "minutes=+15", "minutes=%31%35", "minutes=15&minutes=30", "minutes=90&x=1", "minutes=900", "minute=15", "minutes=15\0x"};
+    for (size_t i = 0; i < sizeof(bad_sleep) / sizeof(bad_sleep[0]); ++i) {
+        const size_t length = i + 1U == sizeof(bad_sleep) / sizeof(bad_sleep[0]) ? 12U : strlen(bad_sleep[i]);
+        assert(!settings_portal_parse_music_sleep_form(bad_sleep[i], length, &minutes));
+        assert(minutes == 90U);
+    }
+    assert(!settings_portal_parse_music_sleep_form(NULL, 9U, &minutes));
+    assert(!settings_portal_parse_music_sleep_form("minutes=0", 9U, NULL));
     const uint8_t entropy[SETTINGS_PORTAL_TOKEN_BYTES] = {
         0x00U, 0x12U, 0x34U, 0x56U, 0x78U, 0x9aU, 0xbcU, 0xdeU,
         0xffU, 0xedU, 0xcbU, 0xa9U, 0x87U, 0x65U, 0x43U, 0x21U,

@@ -67,7 +67,9 @@ static inline size_t market_display_lines(
     }
     display_market_format_status(text, sizeof(text), market);
     market_display_add_line(&lines[n++], text, u8g2_font_6x13_tf, 12, 388, 264, false);
-    market_display_add_line(&lines[n++], display_interaction_market_navigation_footer(),
+    display_interaction_format_daily_navigation(text, sizeof(text),
+        market->next_daily_page != NULL ? market->next_daily_page : "CALENDAR");
+    market_display_add_line(&lines[n++], text,
                             u8g2_font_6x13_tf, 12, 388, 279, false);
     market_display_add_line(&lines[n++], display_interaction_market_action_footer(),
                             u8g2_font_6x13_tf, 12, 388, 294, false);

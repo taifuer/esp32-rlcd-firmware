@@ -106,7 +106,7 @@ bool settings_portal_lan_post_allowed(const char *uri)
         "/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/activity",
         "/api/market/config",
         "/api/images/select", "/api/images/delete", "/api/images/upload",
-        "/api/music/play", "/api/music/stop", "/api/music/delete", "/api/music/upload",
+        "/api/music/play", "/api/music/stop", "/api/music/delete", "/api/music/upload", "/api/music/sleep",
     };
     if (uri == NULL) return false;
     const size_t size = strcspn(uri, "?");
@@ -147,6 +147,24 @@ bool settings_portal_parse_volume_form(const char *body, size_t length,
     if (value > 100U) return false;
     *volume = (uint8_t)value;
     return true;
+}
+
+bool settings_portal_parse_music_sleep_form(const char *body, size_t length,
+                                           uint16_t *minutes)
+{
+    static const uint16_t allowed[] = {0U, 15U, 30U, 60U, 90U};
+    if (body == NULL || minutes == NULL || length < 9U || length > 10U ||
+        memcmp(body, "minutes=", 8U) != 0) return false;
+    unsigned value = 0U;
+    if (length == 10U && body[8] == '0') return false;
+    for (size_t i = 8U; i < length; ++i) {
+        if (body[i] < '0' || body[i] > '9') return false;
+        value = value * 10U + (unsigned)(body[i] - '0');
+    }
+    for (size_t i = 0U; i < sizeof(allowed) / sizeof(allowed[0]); ++i) {
+        if (value == allowed[i]) { *minutes = (uint16_t)value; return true; }
+    }
+    return false;
 }
 
 bool settings_portal_parse_unix_form(const char *body, size_t length,

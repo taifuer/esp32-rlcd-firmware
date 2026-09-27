@@ -14,12 +14,14 @@ enum {
     FORM_FIELD_ALARM_MINUTE = 1U << 6,
     FORM_FIELD_ALARM_DAYS = 1U << 7,
     FORM_FIELD_ALARM_VOLUME = 1U << 8,
+    FORM_FIELD_DAILY_PAGES = 1U << 9,
+    FORM_FIELD_MUSIC_MODE = 1U << 10,
     FORM_FIELD_ALL = FORM_FIELD_TIMEZONE | FORM_FIELD_UNIT |
                      FORM_FIELD_VOLUME |
                      FORM_FIELD_UPDATES | FORM_FIELD_ALARM |
                      FORM_FIELD_ALARM_HOUR | FORM_FIELD_ALARM_MINUTE |
                      FORM_FIELD_ALARM_DAYS,
-    FORM_KEY_CAPACITY = 16,
+    FORM_KEY_CAPACITY = 24,
     FORM_VALUE_CAPACITY = 24,
 };
 
@@ -41,6 +43,8 @@ void app_settings_defaults(app_settings_t *settings)
         .alarm_hour = APP_SETTINGS_DEFAULT_ALARM_HOUR,
         .alarm_minute = APP_SETTINGS_DEFAULT_ALARM_MINUTE,
         .alarm_weekdays = APP_SETTINGS_ALARM_WEEKDAYS_MASK,
+        .daily_pages_mask = APP_DAILY_PAGES_ALL_MASK,
+        .music_mode = APP_MUSIC_MODE_SEQUENTIAL,
     };
 }
 
@@ -67,7 +71,12 @@ bool app_settings_validate(const app_settings_t *settings)
            settings->alarm_minute < 60U &&
            settings->alarm_weekdays != 0U &&
            (settings->alarm_weekdays &
-            (uint8_t)~APP_SETTINGS_ALARM_ALL_DAYS_MASK) == 0U;
+            (uint8_t)~APP_SETTINGS_ALARM_ALL_DAYS_MASK) == 0U &&
+           (settings->daily_pages_mask &
+            (uint8_t)~APP_DAILY_PAGES_ALL_MASK) == 0U &&
+           (settings->music_mode == APP_MUSIC_MODE_SEQUENTIAL ||
+            settings->music_mode == APP_MUSIC_MODE_REPEAT_ONE ||
+            settings->music_mode == APP_MUSIC_MODE_REPEAT_ALL);
 }
 
 bool app_settings_set_field(app_settings_t *settings,
@@ -304,6 +313,26 @@ static bool assign_form_field(const char *key, const char *value,
             return false;
         }
         settings->alarm_weekdays = (uint8_t)weekdays;
+    } else if (strcmp(key, "daily_pages_mask") == 0) {
+        field = FORM_FIELD_DAILY_PAGES;
+        int mask = 0;
+        /* A mask is unsigned decimal; do not accept signs, spaces or hex. */
+        if (value[0] < '0' || value[0] > '9' ||
+            !parse_decimal(value, 0, APP_DAILY_PAGES_ALL_MASK, &mask)) {
+            return false;
+        }
+        settings->daily_pages_mask = (uint8_t)mask;
+    } else if (strcmp(key, "music_mode") == 0) {
+        field = FORM_FIELD_MUSIC_MODE;
+        if (strcmp(value, "sequential") == 0) {
+            settings->music_mode = APP_MUSIC_MODE_SEQUENTIAL;
+        } else if (strcmp(value, "repeat_one") == 0) {
+            settings->music_mode = APP_MUSIC_MODE_REPEAT_ONE;
+        } else if (strcmp(value, "repeat_all") == 0) {
+            settings->music_mode = APP_MUSIC_MODE_REPEAT_ALL;
+        } else {
+            return false;
+        }
     } else {
         return false;
     }
@@ -370,6 +399,10 @@ bool app_settings_parse_form(const char *body, size_t length,
                                  FORM_FIELD_ALARM_VOLUME;
             } else if (strcmp(value, "updates") == 0) {
                 section_fields = FORM_FIELD_UPDATES;
+            } else if (strcmp(value, "pages") == 0) {
+                section_fields = FORM_FIELD_DAILY_PAGES;
+            } else if (strcmp(value, "music") == 0) {
+                section_fields = FORM_FIELD_MUSIC_MODE;
             } else {
                 return false;
             }

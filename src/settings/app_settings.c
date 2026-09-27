@@ -26,8 +26,14 @@
 #define SETTINGS_SCHEMA5_RECORD_SLOT_B_KEY "cfg5_b"
 #define SETTINGS_SCHEMA6_RECORD_SLOT_A_KEY "cfg6_a"
 #define SETTINGS_SCHEMA6_RECORD_SLOT_B_KEY "cfg6_b"
-#define SETTINGS_RECORD_SLOT_A_KEY "cfg8_a"
-#define SETTINGS_RECORD_SLOT_B_KEY "cfg8_b"
+#define SETTINGS_SCHEMA8_RECORD_SLOT_A_KEY "cfg8_a"
+#define SETTINGS_SCHEMA8_RECORD_SLOT_B_KEY "cfg8_b"
+#define SETTINGS_SCHEMA9_RECORD_SLOT_A_KEY "cfg9_a"
+#define SETTINGS_SCHEMA9_RECORD_SLOT_B_KEY "cfg9_b"
+/* The publicly tested v9 record remains immutable during migration.
+ * Commit both v10 records before advancing the shared schema marker. */
+#define SETTINGS_RECORD_SLOT_A_KEY "cfg10_a"
+#define SETTINGS_RECORD_SLOT_B_KEY "cfg10_b"
 
 static const char *TAG = "app_settings";
 static SemaphoreHandle_t s_mutex;
@@ -535,6 +541,58 @@ static esp_err_t recover_legacy_settings(nvs_handle_t handle,
                                          app_settings_t *settings,
                                          uint16_t maximum_schema)
 {
+    if (maximum_schema >= 9U) {
+        settings_record_t records[2] = {0};
+        bool valid[2] = {false, false};
+        const char *keys[] = {SETTINGS_SCHEMA9_RECORD_SLOT_A_KEY,
+                              SETTINGS_SCHEMA9_RECORD_SLOT_B_KEY};
+        for (size_t index = 0U; index < 2U; ++index) {
+            uint8_t encoded[SETTINGS_RECORD_SCHEMA9_ENCODED_SIZE];
+            size_t size = sizeof(encoded);
+            const esp_err_t error = nvs_get_blob(
+                handle, keys[index], encoded, &size);
+            if (error == ESP_OK) {
+                valid[index] = settings_record_decode_schema9(
+                    encoded, size, &records[index]);
+            } else if (!recoverable_field_error(error) &&
+                       error != ESP_ERR_NVS_INVALID_LENGTH) {
+                return error;
+            }
+        }
+        const settings_record_slot_t latest = settings_record_select_latest(
+            valid[0] ? &records[0] : NULL, valid[1] ? &records[1] : NULL);
+        if (latest != SETTINGS_RECORD_SLOT_NONE) {
+            *settings = records[
+                latest == SETTINGS_RECORD_SLOT_A ? 0 : 1].settings;
+            return ESP_OK;
+        }
+    }
+    if (maximum_schema >= 8U) {
+        settings_record_t records[2] = {0};
+        bool valid[2] = {false, false};
+        const char *keys[] = {SETTINGS_SCHEMA8_RECORD_SLOT_A_KEY,
+                              SETTINGS_SCHEMA8_RECORD_SLOT_B_KEY};
+        for (size_t index = 0U; index < 2U; ++index) {
+            uint8_t encoded[SETTINGS_RECORD_SCHEMA8_ENCODED_SIZE];
+            size_t size = sizeof(encoded);
+            const esp_err_t error = nvs_get_blob(
+                handle, keys[index], encoded, &size);
+            if (error == ESP_OK) {
+                valid[index] = settings_record_decode_schema8(
+                    encoded, size, &records[index]);
+            } else if (!recoverable_field_error(error) &&
+                       error != ESP_ERR_NVS_INVALID_LENGTH) {
+                return error;
+            }
+        }
+        const settings_record_slot_t latest = settings_record_select_latest(
+            valid[0] ? &records[0] : NULL, valid[1] ? &records[1] : NULL);
+        if (latest != SETTINGS_RECORD_SLOT_NONE) {
+            *settings = records[
+                latest == SETTINGS_RECORD_SLOT_A ? 0 : 1].settings;
+            return ESP_OK;
+        }
+    }
     if (maximum_schema >= 7U) {
         settings_record_t records[2] = {0};
         bool valid[2] = {false, false};
@@ -645,7 +703,7 @@ static esp_err_t recover_settings_without_schema(
     if (!current_found) {
         *active_slot = SETTINGS_RECORD_SLOT_NONE;
         *generation = 0U;
-        return recover_legacy_settings(handle, settings, 7U);
+        return recover_legacy_settings(handle, settings, 9U);
     }
     return ESP_OK;
 }
@@ -765,7 +823,9 @@ static bool settings_equal(const app_settings_t *left,
            left->alarm_enabled == right->alarm_enabled &&
            left->alarm_hour == right->alarm_hour &&
            left->alarm_minute == right->alarm_minute &&
-           left->alarm_weekdays == right->alarm_weekdays;
+           left->alarm_weekdays == right->alarm_weekdays &&
+           left->daily_pages_mask == right->daily_pages_mask &&
+           left->music_mode == right->music_mode;
 }
 
 static esp_err_t migrate_to_current_schema(
@@ -881,7 +941,7 @@ esp_err_t app_settings_init(void)
         } else if (error == ESP_OK && schema == 1U) {
             error = load_v1_fields(handle, &loaded);
             needs_migration = error == ESP_OK;
-        } else if (error == ESP_OK && schema >= 2U && schema <= 7U) {
+        } else if (error == ESP_OK && schema >= 2U && schema <= 9U) {
             error = recover_legacy_settings(handle, &loaded, schema);
             needs_migration = error == ESP_OK;
         } else if (error == ESP_OK &&
@@ -900,7 +960,7 @@ esp_err_t app_settings_init(void)
                 error = load_current_schema(handle, &loaded, &active_slot,
                                             &generation);
             } else if (error == ESP_OK) {
-                error = recover_legacy_settings(handle, &loaded, 7U);
+                error = recover_legacy_settings(handle, &loaded, 9U);
                 needs_migration = error == ESP_OK;
             }
         }
@@ -987,6 +1047,9 @@ static esp_err_t save_settings_locked(const app_settings_t *settings)
 {
     if (s_future_schema) {
         return ESP_ERR_NOT_SUPPORTED;
+    }
+    if (settings_equal(settings, &s_settings)) {
+        return ESP_OK;
     }
     nvs_handle_t handle = 0;
     settings_record_slot_t written_slot = SETTINGS_RECORD_SLOT_NONE;

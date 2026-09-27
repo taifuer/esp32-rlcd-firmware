@@ -16,22 +16,31 @@ extern "C" {
  */
 #define DISPLAY_INTERACTION_FOOTER_MAX_CHARS 62U
 
-static inline const char *display_interaction_weather_footer(void)
+static inline bool display_interaction_format_daily_navigation(
+    char *buffer, size_t capacity, const char *next_page)
 {
-    return "BOOT: CALENDAR | KEY: SETTINGS | HOLD KEY 2s: REFRESH";
+    if (buffer == NULL || capacity == 0U) return false;
+    const int written = snprintf(buffer, capacity, "BOOT: %s | KEY: SETTINGS",
+                                 next_page != NULL ? next_page : "HOME");
+    if (written < 0 || (size_t)written >= capacity) {
+        buffer[0] = '\0';
+        return false;
+    }
+    return true;
 }
 
-static inline const char *display_interaction_weather_footer_with_market(
-    bool market_enabled)
+static inline bool display_interaction_format_weather_footer(
+    char *buffer, size_t capacity, const char *next_page)
 {
-    return market_enabled
-        ? "BOOT: MARKET | KEY: SETTINGS | HOLD KEY 2s: REFRESH"
-        : display_interaction_weather_footer();
-}
-
-static inline const char *display_interaction_market_navigation_footer(void)
-{
-    return "BOOT: CALENDAR | KEY: SETTINGS";
+    if (buffer == NULL || capacity == 0U) return false;
+    const int written = snprintf(buffer, capacity,
+        "BOOT: %s | KEY: SETTINGS | HOLD KEY 2s: REFRESH",
+        next_page != NULL ? next_page : "CALENDAR");
+    if (written < 0 || (size_t)written >= capacity) {
+        buffer[0] = '\0';
+        return false;
+    }
+    return true;
 }
 
 static inline const char *display_interaction_market_action_footer(void)
@@ -39,16 +48,9 @@ static inline const char *display_interaction_market_action_footer(void)
     return "HOLD KEY 2s: REFRESH";
 }
 
-static inline const char *display_interaction_calendar_footer(
-    bool image_available, bool music_available)
-{
-    return image_available ? "BOOT: IMAGE | KEY: SETTINGS"
-         : music_available ? "BOOT: MUSIC | KEY: SETTINGS"
-                           : "BOOT: CHAT | KEY: SETTINGS";
-}
-
 static inline bool display_interaction_format_image_navigation(
-    char *buffer, size_t capacity, size_t selected_index, size_t image_count, bool music_available)
+    char *buffer, size_t capacity, size_t selected_index, size_t image_count,
+    const char *next_page)
 {
     if (buffer == NULL || capacity == 0U) {
         return false;
@@ -61,14 +63,28 @@ static inline bool display_interaction_format_image_navigation(
         }
         written = snprintf(buffer, capacity,
                            "BOOT: %s | KEY: NEXT IMAGE | %u/%u",
-                           music_available ? "MUSIC" : "CHAT",
+                           next_page != NULL ? next_page : "CHAT",
                            (unsigned)(selected_index + 1U),
                            (unsigned)image_count);
     } else {
         written = snprintf(buffer, capacity,
-                           "BOOT: %s | KEY: SETTINGS", music_available ? "MUSIC" : "CHAT");
+                           "BOOT: %s | KEY: SETTINGS",
+                           next_page != NULL ? next_page : "CHAT");
     }
 
+    if (written < 0 || (size_t)written >= capacity) {
+        buffer[0] = '\0';
+        return false;
+    }
+    return true;
+}
+
+static inline bool display_interaction_format_music_navigation(
+    char *buffer, size_t capacity, const char *next_page, bool playing)
+{
+    if (buffer == NULL || capacity == 0U) return false;
+    const int written = snprintf(buffer, capacity, "BOOT: %s | KEY: %s",
+        next_page != NULL ? next_page : "CHAT", playing ? "PAUSE" : "PLAY");
     if (written < 0 || (size_t)written >= capacity) {
         buffer[0] = '\0';
         return false;

@@ -50,11 +50,16 @@ esp_err_t weather_service_get_status(weather_service_status_t *status,
                                      int64_t now_epoch_seconds,
                                      bool rtc_valid);
 esp_err_t weather_service_set_automatic_refresh_enabled(bool enabled);
+/* Suppress all new weather network work while the settings portal owns or
+ * is acquiring the radio. Configuration status still updates. */
+esp_err_t weather_service_set_portal_active(bool active);
 /* Start one user-visible refresh. A queued or running refresh is not
  * duplicated and returns ESP_ERR_INVALID_STATE. */
 esp_err_t weather_service_request_refresh(void);
-/* Called only after the settings HTTP response has been sent and its SoftAP
- * has stopped. The worker atomically takes over the maintenance session. */
+/* Called only after all settings HTTP handlers and SoftAP have stopped.
+ * Queue one non-interactive fetch using the latest saved configuration;
+ * atomically lift the portal gate and prioritize this maintenance handoff
+ * ahead of ordinary checks. The caller retains ownership on failure. */
 esp_err_t weather_service_request_refresh_from_maintenance(void);
 /* Dismiss the terminal result of a user-visible refresh. */
 esp_err_t weather_service_acknowledge_interactive_refresh(void);

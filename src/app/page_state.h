@@ -53,6 +53,7 @@ typedef struct {
     bool image_available;
     bool music_available;
     bool recovery_mode;
+    uint8_t daily_pages_mask;
 } app_page_state_t;
 
 void app_page_state_init(app_page_state_t *state);
@@ -60,6 +61,12 @@ void app_page_state_go_home(app_page_state_t *state);
 /* Browsing has no idle timer or persisted destination. Only explicit
  * navigation, recovery entry, or loss of the current page changes it. */
 bool app_page_state_open_page(app_page_state_t *state, app_page_t page);
+bool app_page_state_page_available(const app_page_state_t *state,
+                                    app_page_t page);
+void app_page_state_set_daily_pages_mask(app_page_state_t *state, uint8_t mask);
+/* The BOOT destination and display footer must use this same query. */
+app_page_t app_page_state_next_daily_page(const app_page_state_t *state);
+const char *app_page_daily_label(app_page_t page);
 void app_page_state_set_image_available(app_page_state_t *state,
                                         bool available);
 void app_page_state_set_music_available(app_page_state_t *state, bool available);

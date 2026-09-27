@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include "audio_music_policy.h"
 #include "music_library.h"
 
 typedef enum { AUDIO_MUSIC_STOPPED, AUDIO_MUSIC_PLAYING, AUDIO_MUSIC_PAUSED, AUDIO_MUSIC_ERROR } audio_music_state_t;
@@ -8,6 +9,8 @@ typedef struct {
     audio_music_state_t state;
     uint32_t revision;
     uint32_t elapsed_seconds;
+    audio_music_playback_mode_t playback_mode;
+    uint32_t sleep_remaining_seconds;
     uint8_t selected_index;
     uint8_t volume;
     esp_err_t error;
@@ -15,6 +18,12 @@ typedef struct {
 } audio_music_status_t;
 
 void audio_music_get_status(audio_music_status_t *status);
+/* Applies on the next natural track completion, without seeking/stopping. */
+esp_err_t audio_music_set_playback_mode(audio_music_playback_mode_t mode);
+/* 0 cancels; 15/30/60/90 starts or replaces a one-shot monotonic countdown.
+ * Nonzero requires playing/paused music. Pause and next keep the deadline;
+ * stop, preemption, EOF without continuation and errors cancel it. */
+esp_err_t audio_music_set_sleep_timer(uint16_t minutes);
 esp_err_t audio_music_toggle(void);
 esp_err_t audio_music_next(void);
 void audio_music_stop(void);

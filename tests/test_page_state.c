@@ -1,8 +1,117 @@
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "page_state.h"
+#include "settings_model.h"
+#include "display_interaction_model.h"
+
+static void assert_footer_destination(app_page_t page, app_page_t next)
+{
+    const char *target = app_page_daily_label(next);
+    char footer[64];
+    char prefix[24];
+    snprintf(prefix, sizeof(prefix), "BOOT: %s |", target);
+    if (page == APP_PAGE_WEATHER) {
+        assert(display_interaction_format_weather_footer(footer, sizeof(footer), target));
+    } else if (page == APP_PAGE_IMAGE) {
+        assert(display_interaction_format_image_navigation(footer, sizeof(footer), 31U, 32U, target));
+    } else if (page == APP_PAGE_MUSIC) {
+        assert(display_interaction_format_music_navigation(footer, sizeof(footer), target, true));
+    } else {
+        assert(display_interaction_format_daily_navigation(footer, sizeof(footer), target));
+    }
+    assert(strncmp(footer, prefix, strlen(prefix)) == 0);
+    assert(strlen(footer) <= DISPLAY_INTERACTION_FOOTER_MAX_CHARS);
+}
+
+static void test_every_visibility_and_availability_combination(void)
+{
+    const app_page_t daily[] = {APP_PAGE_HOME, APP_PAGE_WEATHER, APP_PAGE_MARKET,
+        APP_PAGE_CALENDAR, APP_PAGE_IMAGE, APP_PAGE_MUSIC, APP_PAGE_VOICE};
+    const app_page_t system[] = {APP_PAGE_SETTINGS, APP_PAGE_ONLINE_UPDATE, APP_PAGE_STATUS};
+    for (unsigned mask = 0U; mask <= APP_DAILY_PAGES_ALL_MASK; ++mask) {
+        for (unsigned flags = 0U; flags < 16U; ++flags) {
+            app_page_state_t state;
+            app_page_state_init(&state);
+            assert(state.daily_pages_mask == APP_DAILY_PAGES_ALL_MASK);
+            app_page_state_set_weather_enabled(&state, (flags & 1U) != 0U);
+            app_page_state_set_market_enabled(&state, (flags & 2U) != 0U);
+            app_page_state_set_image_available(&state, (flags & 4U) != 0U);
+            app_page_state_set_music_available(&state, (flags & 8U) != 0U);
+            app_page_state_set_daily_pages_mask(&state, (uint8_t)mask);
+            const bool available[] = {true,
+                (mask & APP_DAILY_PAGE_WEATHER) && (flags & 1U),
+                (mask & APP_DAILY_PAGE_MARKET) && (flags & 2U),
+                (mask & APP_DAILY_PAGE_CALENDAR) != 0U,
+                (mask & APP_DAILY_PAGE_IMAGE) && (flags & 4U),
+                (mask & APP_DAILY_PAGE_MUSIC) && (flags & 8U),
+                (mask & APP_DAILY_PAGE_CHAT) != 0U};
+            app_page_t ring[7];
+            size_t count = 0U;
+            for (size_t i = 0U; i < 7U; ++i) {
+                assert(app_page_state_page_available(&state, daily[i]) == available[i]);
+                if (available[i]) ring[count++] = daily[i];
+            }
+            /* Three complete bounded cycles cover the all-hidden HOME loop. */
+            for (unsigned repeat = 0U; repeat < 3U; ++repeat) {
+                for (size_t i = 0U; i < count; ++i) {
+                    assert(app_page_state_current(&state) == ring[i]);
+                    const app_page_t next = ring[(i + 1U) % count];
+                    assert(app_page_state_next_daily_page(&state) == next);
+                    assert_footer_destination(ring[i], next);
+                    app_page_state_boot_short_press(&state);
+                    assert(app_page_state_current(&state) == next);
+                }
+            }
+            for (size_t i = 0U; i < 7U; ++i) {
+                app_page_state_go_home(&state);
+                /* Voice and late asynchronous requests use this same guard. */
+                assert(app_page_state_open_page(&state, daily[i]) == available[i]);
+                assert(app_page_state_current(&state) == (available[i] ? daily[i] : APP_PAGE_HOME));
+                if (!available[i]) continue;
+                /* Modal overlays don't copy/restore stale page state. Hide
+                 * the underlying destination while covered, then return. */
+                app_page_state_set_daily_pages_mask(&state, 0U);
+                assert(app_page_state_current(&state) == APP_PAGE_HOME);
+                assert(state.weather_enabled == ((flags & 1U) != 0U));
+                assert(state.market_enabled == ((flags & 2U) != 0U));
+                assert(state.image_available == ((flags & 4U) != 0U));
+                assert(state.music_available == ((flags & 8U) != 0U));
+                assert(app_page_state_open_page(&state, daily[i]) == (i == 0U));
+                app_page_state_set_daily_pages_mask(&state, (uint8_t)mask);
+                assert(app_page_state_current(&state) == APP_PAGE_HOME);
+                assert(app_page_state_open_page(&state, daily[i]));
+                app_page_state_key_short_press(&state);
+                assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
+            }
+            for (size_t i = 0U; i < 3U; ++i) {
+                assert(app_page_state_open_page(&state, system[i]));
+                app_page_state_set_daily_pages_mask(&state, 0U);
+                assert(app_page_state_current(&state) == system[i]);
+                assert(app_page_state_next_daily_page(&state) == APP_PAGE_HOME);
+                app_page_state_key_short_press(&state);
+                assert(app_page_state_current(&state) == system[(i + 1U) % 3U]);
+                app_page_state_boot_short_press(&state);
+                assert(app_page_state_current(&state) == APP_PAGE_HOME);
+            }
+            app_page_state_set_recovery_mode(&state, true);
+            app_page_state_set_daily_pages_mask(&state, (uint8_t)mask);
+            for (size_t i = 0U; i < 7U; ++i) assert(!app_page_state_open_page(&state, daily[i]));
+            for (unsigned i = 0U; i < 4U; ++i) {
+                const app_page_t before = app_page_state_current(&state);
+                assert(app_page_state_next_daily_page(&state) == before);
+                app_page_state_boot_short_press(&state);
+                assert(app_page_state_current(&state) == before);
+                app_page_state_key_short_press(&state);
+                assert(app_page_state_current(&state) != before);
+            }
+            app_page_state_set_recovery_mode(&state, false);
+            assert(app_page_state_current(&state) == APP_PAGE_HOME);
+        }
+    }
+}
 
 static void test_browsing_stays_and_background_discovery_never_navigates(void)
 {
@@ -47,6 +156,7 @@ static void test_browsing_stays_and_background_discovery_never_navigates(void)
 
 int main(void)
 {
+    test_every_visibility_and_availability_combination();
     test_browsing_stays_and_background_discovery_never_navigates();
     app_page_state_t state;
     app_page_state_init(&state);
@@ -229,6 +339,11 @@ int main(void)
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
 
     app_page_state_init(NULL);
+    app_page_state_set_daily_pages_mask(NULL, 0U);
+    assert(!app_page_state_page_available(NULL, APP_PAGE_HOME));
+    assert(app_page_state_next_daily_page(NULL) == APP_PAGE_HOME);
+    app_page_state_set_daily_pages_mask(&state, UINT8_MAX);
+    assert(state.daily_pages_mask == APP_DAILY_PAGES_ALL_MASK);
     app_page_state_go_home(NULL);
     assert(!app_page_state_open_page(NULL, APP_PAGE_HOME));
     app_page_state_set_weather_enabled(NULL, true);

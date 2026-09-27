@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title desc">
+  <title id="title">长按设置入口提示</title>
+  <desc id="desc">黑底白字界面，显示打开网页设置、剩余两秒与松开取消。</desc>
+  <rect width="400" height="300" fill="#000"/>
+  <rect x="3.5" y="3.5" width="393" height="293" fill="none" stroke="#fff" stroke-width="1"/>
+  <text x="200" y="118" fill="#fff" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="32" font-weight="700">OPEN WEB SETTINGS</text>
+  <text x="200" y="170" fill="#fff" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="20" font-weight="700">KEEP HOLDING: 2s</text>
+  <text x="200" y="218" fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="13">RELEASE TO CANCEL</text>
+</svg>

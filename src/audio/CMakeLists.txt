@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS "audio_conversation_control.c" "audio_conversation_flow.c"
          "audio_response_watchdog.c"
+         "audio_music_policy.c"
          "audio_diagnostics.c"
          "audio_level.c" "audio_mono.c"
          "audio_session_state.c"
@@ -11,5 +12,5 @@ idf_component_register(
              esp_partition network music
              espressif__esp-sr espressif__esp-dsp espressif__dl_fft
              espressif__cjson heap mbedtls spi_flash
-    PRIV_REQUIRES esp_pm freertos log
+    PRIV_REQUIRES esp_pm esp_timer freertos log
 )

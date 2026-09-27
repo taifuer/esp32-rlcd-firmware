@@ -39,6 +39,8 @@ static SemaphoreHandle_t s_mutex;
 static SemaphoreHandle_t s_operation_mutex;
 static EventGroupHandle_t s_events;
 static bool s_initialized;
+static bool s_portal_active;
+static bool s_maintenance_refresh_pending;
 static weather_service_status_t s_status = {
     .state = WEATHER_SERVICE_STATE_DISABLED,
     .last_error = ESP_OK,
@@ -442,10 +444,54 @@ static void perform_refresh_locked(bool force, bool from_maintenance)
 static void perform_refresh(bool force, bool from_maintenance)
 {
     if (xSemaphoreTake(s_operation_mutex, portMAX_DELAY) == pdTRUE) {
-        perform_refresh_locked(force, from_maintenance);
+        /* Recheck after taking the operation lock: an old CHECK may have
+         * been read before the portal/maintenance handoff was queued. */
+        bool blocked = true;
+        if (xSemaphoreTake(s_mutex, portMAX_DELAY) == pdTRUE) {
+            blocked = s_portal_active ||
+                (!from_maintenance && s_maintenance_refresh_pending);
+            xSemaphoreGive(s_mutex);
+        }
+        if (!blocked) {
+            perform_refresh_locked(force, from_maintenance);
+        } else {
+            release_failed_maintenance_handoff(from_maintenance);
+        }
         xSemaphoreGive(s_operation_mutex);
     } else {
         release_failed_maintenance_handoff(from_maintenance);
+    }
+}
+
+static void process_weather_events(EventBits_t bits)
+{
+    bool portal_active = true;
+    bool from_maintenance = false;
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) == pdTRUE) {
+        portal_active = s_portal_active;
+        if (!portal_active && s_maintenance_refresh_pending) {
+            from_maintenance = true;
+            s_maintenance_refresh_pending = false;
+        }
+        xSemaphoreGive(s_mutex);
+    }
+    if (from_maintenance) {
+        perform_refresh(true, true);
+    } else if (!portal_active &&
+               (bits & WEATHER_EVENT_FORCE_REFRESH) != 0U) {
+        perform_refresh(true, false);
+    } else {
+        weather_config_snapshot_t snapshot = {0};
+        uint32_t fingerprint = 0U;
+        if (load_configuration(&snapshot, &fingerprint) == ESP_OK) {
+            const bool should_refresh = !portal_active &&
+                automatic_refresh_enabled() && snapshot.config.enabled &&
+                weather_config_is_configured(&snapshot.config);
+            weather_config_clear_sensitive(&snapshot, sizeof(snapshot));
+            if (should_refresh) {
+                perform_refresh(false, false);
+            }
+        }
     }
 }
 
@@ -458,24 +504,7 @@ static void weather_task(void *argument)
             s_events, WEATHER_EVENT_ALL, pdTRUE, pdFALSE,
             pdMS_TO_TICKS(WEATHER_CHECK_INTERVAL_MS));
         const uint32_t revision_before = status_revision();
-        if ((bits & WEATHER_EVENT_MAINTENANCE_REFRESH) != 0U) {
-            perform_refresh(true, true);
-        } else if ((bits & WEATHER_EVENT_FORCE_REFRESH) != 0U) {
-            perform_refresh(true, false);
-        } else {
-            weather_config_snapshot_t snapshot = {0};
-            uint32_t fingerprint = 0U;
-            if (load_configuration(&snapshot, &fingerprint) == ESP_OK) {
-                const bool should_refresh =
-                    automatic_refresh_enabled() && snapshot.config.enabled &&
-                    weather_config_is_configured(&snapshot.config);
-                weather_config_clear_sensitive(&snapshot,
-                                               sizeof(snapshot));
-                if (should_refresh) {
-                    perform_refresh(false, false);
-                }
-            }
-        }
+        process_weather_events(bits);
         if (status_revision() != revision_before) {
             ESP_LOGI(
                 TAG,
@@ -593,6 +622,29 @@ esp_err_t weather_service_set_automatic_refresh_enabled(bool enabled)
     return ESP_OK;
 }
 
+esp_err_t weather_service_set_portal_active(bool active)
+{
+    if (!s_initialized || s_mutex == NULL || s_events == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (active && (s_maintenance_refresh_pending ||
+                   s_status.state == WEATHER_SERVICE_STATE_REFRESHING)) {
+        xSemaphoreGive(s_mutex);
+        return ESP_ERR_NOT_FINISHED;
+    }
+    const bool changed = s_portal_active != active;
+    s_portal_active = active;
+    const bool check = changed && !active && !s_maintenance_refresh_pending;
+    xSemaphoreGive(s_mutex);
+    if (check) {
+        xEventGroupSetBits(s_events, WEATHER_EVENT_CHECK);
+    }
+    return ESP_OK;
+}
+
 esp_err_t weather_service_request_refresh(void)
 {
     if (!s_initialized || s_mutex == NULL || s_events == NULL) {
@@ -602,7 +654,7 @@ esp_err_t weather_service_request_refresh(void)
     if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
-    if (!s_status.config_enabled ||
+    if (s_portal_active || s_maintenance_refresh_pending || !s_status.config_enabled ||
         s_status.state == WEATHER_SERVICE_STATE_REFRESHING ||
         (xEventGroupGetBits(s_events) & WEATHER_EVENT_FORCE_REFRESH) != 0U) {
         xSemaphoreGive(s_mutex);
@@ -646,7 +698,15 @@ esp_err_t weather_service_request_refresh_from_maintenance(void)
     if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
-    s_status.interactive_refresh = true;
+    if (s_maintenance_refresh_pending ||
+        s_status.state == WEATHER_SERVICE_STATE_REFRESHING) {
+        xSemaphoreGive(s_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_maintenance_refresh_pending = true;
+    s_portal_active = false;
+    /* A saved setting is not a request to navigate to another page. */
+    s_status.interactive_refresh = false;
     s_status.state = WEATHER_SERVICE_STATE_REFRESHING;
     s_status.failure_stage = WEATHER_FAILURE_STAGE_NONE;
     s_status.last_error = ESP_OK;

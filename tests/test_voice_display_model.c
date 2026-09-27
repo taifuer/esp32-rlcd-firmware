@@ -60,12 +60,16 @@ static void assert_footer_uses_concrete_targets(const char *footer)
 
 static void test_targeted_navigation_footers(void)
 {
-    assert(strcmp(display_interaction_weather_footer(),
+    char footer[64];
+    assert(display_interaction_format_weather_footer(footer, sizeof(footer), "CALENDAR"));
+    assert(strcmp(footer,
                   "BOOT: CALENDAR | KEY: SETTINGS | HOLD KEY 2s: REFRESH") ==
            0);
-    assert(strcmp(display_interaction_calendar_footer(true, false),
+    assert(display_interaction_format_daily_navigation(footer, sizeof(footer), "IMAGE"));
+    assert(strcmp(footer,
                   "BOOT: IMAGE | KEY: SETTINGS") == 0);
-    assert(strcmp(display_interaction_calendar_footer(false, false),
+    assert(display_interaction_format_daily_navigation(footer, sizeof(footer), "CHAT"));
+    assert(strcmp(footer,
                   "BOOT: CHAT | KEY: SETTINGS") == 0);
     assert(strcmp(display_interaction_status_footer(),
                   "BOOT: HOME | KEY: SETTINGS | HOLD KEY 2s: SYNC TIME") == 0);
@@ -90,12 +94,17 @@ static void test_targeted_navigation_footers(void)
     assert(strcmp(display_interaction_recovery_restart_hint(),
                   "PWR OFF / ON") == 0);
 
-    assert_footer_uses_concrete_targets(
-        display_interaction_weather_footer());
-    assert_footer_uses_concrete_targets(
-        display_interaction_calendar_footer(true, false));
-    assert_footer_uses_concrete_targets(
-        display_interaction_calendar_footer(false, false));
+    const char *targets[] = {"HOME", "WEATHER", "MARKET", "CALENDAR", "IMAGE", "MUSIC", "CHAT"};
+    for (size_t i = 0U; i < sizeof(targets) / sizeof(targets[0]); ++i) {
+        assert(display_interaction_format_weather_footer(footer, sizeof(footer), targets[i]));
+        assert_footer_uses_concrete_targets(footer);
+        assert(display_interaction_format_daily_navigation(footer, sizeof(footer), targets[i]));
+        assert_footer_uses_concrete_targets(footer);
+        for (unsigned playing = 0U; playing < 2U; ++playing) {
+            assert(display_interaction_format_music_navigation(footer, sizeof(footer), targets[i], playing));
+            assert_footer_uses_concrete_targets(footer);
+        }
+    }
     assert_footer_uses_concrete_targets(display_interaction_status_footer());
     assert_footer_uses_concrete_targets(display_interaction_chat_footer());
     assert_footer_uses_concrete_targets(
@@ -119,36 +128,52 @@ static void test_image_navigation_footer(void)
     char footer[64];
     char short_footer[12] = "stale";
 
-    assert(strcmp(display_interaction_calendar_footer(false, true),
+    assert(display_interaction_format_daily_navigation(footer, sizeof(footer), "MUSIC"));
+    assert(strcmp(footer,
                   "BOOT: MUSIC | KEY: SETTINGS") == 0);
     assert(display_interaction_format_image_navigation(
-        footer, sizeof(footer), 0U, 2U, true));
+        footer, sizeof(footer), 0U, 2U, "MUSIC"));
     assert(strcmp(footer, "BOOT: MUSIC | KEY: NEXT IMAGE | 1/2") == 0);
     assert_footer_fits(footer);
 
     assert(display_interaction_format_image_navigation(
-        footer, sizeof(footer), 1U, 6U, false));
+        footer, sizeof(footer), 1U, 6U, "CHAT"));
     assert(strcmp(footer,
                   "BOOT: CHAT | KEY: NEXT IMAGE | 2/6") == 0);
     assert_footer_uses_concrete_targets(footer);
 
     assert(display_interaction_format_image_navigation(
-        footer, sizeof(footer), 99U, 6U, false));
+        footer, sizeof(footer), 99U, 6U, "CHAT"));
     assert(strcmp(footer,
                   "BOOT: CHAT | KEY: NEXT IMAGE | 1/6") == 0);
 
     assert(display_interaction_format_image_navigation(
-        footer, sizeof(footer), 0U, 1U, false));
+        footer, sizeof(footer), 0U, 1U, "CHAT"));
     assert(strcmp(footer, "BOOT: CHAT | KEY: SETTINGS") == 0);
     assert_footer_uses_concrete_targets(footer);
 
     assert(!display_interaction_format_image_navigation(
-        short_footer, sizeof(short_footer), 0U, 32U, false));
+        short_footer, sizeof(short_footer), 0U, 32U, "HOME"));
     assert(short_footer[0] == '\0');
     assert(!display_interaction_format_image_navigation(
-        NULL, sizeof(footer), 0U, 1U, false));
+        NULL, sizeof(footer), 0U, 1U, "HOME"));
     assert(!display_interaction_format_image_navigation(
-        footer, 0U, 0U, 1U, false));
+        footer, 0U, 0U, 1U, "HOME"));
+    assert(display_interaction_format_image_navigation(
+        footer, sizeof(footer), 0U, 1U, "HOME"));
+    assert(strcmp(footer, "BOOT: HOME | KEY: SETTINGS") == 0);
+    assert(!display_interaction_format_daily_navigation(NULL, sizeof(footer), "HOME"));
+    assert(!display_interaction_format_daily_navigation(footer, 0U, "HOME"));
+    assert(!display_interaction_format_daily_navigation(short_footer, sizeof(short_footer), "HOME"));
+    assert(short_footer[0] == '\0');
+    assert(!display_interaction_format_weather_footer(NULL, sizeof(footer), "HOME"));
+    assert(!display_interaction_format_weather_footer(footer, 0U, "HOME"));
+    assert(!display_interaction_format_weather_footer(short_footer, sizeof(short_footer), "HOME"));
+    assert(short_footer[0] == '\0');
+    assert(!display_interaction_format_music_navigation(NULL, sizeof(footer), "HOME", true));
+    assert(!display_interaction_format_music_navigation(footer, 0U, "HOME", true));
+    assert(!display_interaction_format_music_navigation(short_footer, sizeof(short_footer), "HOME", true));
+    assert(short_footer[0] == '\0');
     assert_footer_uses_concrete_targets(
         display_interaction_image_action_footer());
 }

@@ -20,6 +20,13 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/audio/include src/audio/audio_music_policy.c tests/test_audio_music_policy.c \
+  -o "${RLCD_TEST_TMP}/test_audio_music_policy"
+"${RLCD_TEST_TMP}/test_audio_music_policy"
+node tests/test_audio_music_runtime.mjs
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/music/include src/music/music_format.c tests/test_music_format.c \
   -o "${RLCD_TEST_TMP}/test_music_format"
 "${RLCD_TEST_TMP}/test_music_format"
@@ -145,7 +152,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_button_state"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
-  -Isrc/app \
+  -Isrc/app -Isrc/settings/include -Isrc/display \
   src/app/page_state.c tests/test_page_state.c \
   -o "${RLCD_TEST_TMP}/test_page_state"
 
@@ -165,6 +172,14 @@ cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
   "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" \
   "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
   -o "${RLCD_TEST_TMP}/test_settings_layout"
+
+cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
+  -I"${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc" -Isrc/display \
+  tests/test_music_layout.c \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_font.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
+  -o "${RLCD_TEST_TMP}/test_music_layout"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
@@ -187,7 +202,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
-  -Isrc/app -Isrc/input/include \
+  -Isrc/app -Isrc/input/include -Isrc/settings/include \
   src/app/page_state.c src/input/button_state.c \
   tests/test_weather_refresh_interaction.c \
   -o "${RLCD_TEST_TMP}/test_weather_refresh_interaction"
@@ -467,6 +482,14 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
+  -Itests/weather_service_stubs -Isrc/weather/include -Isrc/weather \
+  src/weather/weather_model.c src/weather/weather_config_model.c \
+  src/weather/weather_request.c src/weather/weather_location_catalog.c \
+  src/weather/weather_cache_record.c tests/test_weather_service.c \
+  -o "${RLCD_TEST_TMP}/test_weather_service"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/display/include \
   src/display/weather_display_model.c \
   tests/test_weather_display_model.c \
@@ -490,6 +513,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_page_state"
 "${RLCD_TEST_TMP}/test_quick_settings"
 "${RLCD_TEST_TMP}/test_settings_layout"
+"${RLCD_TEST_TMP}/test_music_layout"
 
 cc -std=c17 -fsanitize=undefined -fno-sanitize-recover=all \
   -ffunction-sections -fdata-sections -Wl,--gc-sections \
@@ -572,5 +596,6 @@ ASAN_OPTIONS=detect_leaks=0 \
 "${RLCD_TEST_TMP}/test_weather_gzip"
 "${RLCD_TEST_TMP}/test_weather_request"
 "${RLCD_TEST_TMP}/test_weather_cache_record"
+"${RLCD_TEST_TMP}/test_weather_service"
 "${RLCD_TEST_TMP}/test_weather_display_model"
 python3 tests/test_rlcd_image_tool.py

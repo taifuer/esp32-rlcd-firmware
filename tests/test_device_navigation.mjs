@@ -50,3 +50,34 @@ assert.match(main, /static market_service_status_t market_status;/,
 assert.match(main, /market_error = recovery_mode \? ESP_ERR_NOT_SUPPORTED/,
   'recovery boot does not start market networking');
 console.log('Market navigation: fixed page, nonblocking refresh, power/visibility gates and recovery isolation passed.');
+
+const pageState = fs.readFileSync(new URL('../src/app/page_state.c', import.meta.url), 'utf8');
+assert.match(pageState, /state->current = app_page_state_next_daily_page\(state\);/);
+assert.match(main, /const char \*next_daily_page = app_page_daily_label\(\s*app_page_state_next_daily_page\(&page_state\)\)/);
+assert.match(main, /display_weather.next_daily_page = next_daily_page/);
+assert.match(main, /market_view.next_daily_page = next_daily_page/);
+assert.match(main, /display_show_calendar\(&dashboard, next_daily_page\)/);
+assert.match(main, /display_show_monochrome_image\([\s\S]{0,160}image_count, next_daily_page\)/);
+assert.match(main, /\.next_daily_page = next_daily_page/);
+assert.doesNotMatch(display, /BOOT: (?:CALENDAR|CHAT) \| KEY: (?:PLAY|PAUSE)/);
+assert.match(main, /app_page_state_set_daily_pages_mask\(&page_state, settings.daily_pages_mask\)/);
+const refresh = main.split('snapshot.generation != settings_generation) {')[1]
+  .split('const bool configured_power_changed')[0];
+assert.match(refresh, /app_page_state_set_daily_pages_mask\(\s*&page_state, snapshot.settings.daily_pages_mask\)/,
+  'visibility hot-applies from latest saved settings before any power transaction can defer it');
+const voiceHandoff = main.split('static bool accept_voice_engine_result(')[1]
+  .split('case VOICE_COMMAND_DECISION_UNAVAILABLE:')[0];
+assert.match(voiceHandoff, /app_page_state_page_available\(\s*pages, voice_command_page\(decision.action\)\)/,
+  'hidden voice targets are unavailable before showing a matched result');
+assert.match(main, /app_page_state_open_page\(&page_state,\s*target_page\)/,
+  'late voice completion rechecks availability');
+assert.doesNotMatch(main, /page_state\.current\s*=/,
+  'modal return and asynchronous callbacks cannot bypass visibility by restoring a raw page');
+assert.doesNotMatch(main, /"No changes made"/,
+  'closing the portal must not imply successfully saved settings were discarded');
+assert.match(refresh, /audio_music_set_playback_mode\(requested_music_mode\)/,
+  'music mode hot-applies before a power/network transaction may defer other settings');
+assert.match(main, /music_sleep_minutes != previous_music_sleep_minutes/,
+  'paused music countdown redraws by minute, without relying on playback progress');
+assert.match(main, /\.sleep_remaining_seconds = music_status.sleep_remaining_seconds/);
+console.log('Daily page visibility: shared BOOT/footer destination, live preference application and guarded voice navigation passed.');
