@@ -1,9 +1,13 @@
 # AI 对话 Beta
 
 本功能自 v0.20.0 正式固件开始提供。AI 对话是“对话”页中的可选 Beta 功能，不增加新页面，也不
-替代设备上的 ESP-SR MultiNet 离线指令。默认接入只需提供自己的阿里云百炼 API Key；
-无需创建百炼应用，也无需填写 Workspace ID 或 App ID。需要使用新加坡地域或业务空间
+替代设备上的 ESP-SR MultiNet 离线指令。默认接入使用自己的阿里云百炼 API Key，并需在
+对应业务空间开通所选模型的调用权限。无需创建百炼应用，也无需填写 Workspace ID 或
+App ID。需要使用新加坡地域或业务空间
 专属域名时，才在高级设置中填写官方 API Host。
+
+v0.31.0 将默认模型更新为 `qwen-audio-3.0-realtime-flash`，并自动迁移旧配置。
+迁移、实机反馈与发布记录见 [v0.31.0 计划](v0.31-plan.md)。
 
 AI 对话未开启、未配置 API Key、家庭 Wi-Fi 当前离线或设备处于 `SAVING` 时，设备会
 直接使用本地 MultiNet，不等待云端连接超时。此时页面显示 `OFFLINE COMMANDS` 和
@@ -19,8 +23,8 @@ AI 对话未开启、未配置 API Key、家庭 Wi-Fi 当前离线或设备处�
   会完整结束。结束、取消、失败或到达边界后关闭连接并清理临时上下文，下次需要重新
   长按开始；
 - 回答默认使用一至三个短句；问题较复杂时先给结论和最重要的三点，用户可以继续追问。
-  默认模型还设置了输出上限，避免一轮回答长期占用设备；如果模型达到上限，设备会播完
-  已经生成的内容并正常进入续问，不会在播完后误报失败；
+  这是回答风格提示，不是严格字数上限。持续接收和播放的回答不会因五分钟新轮准入期限
+  被截断；网络长时间无进展仍会超时结束；
 - 回复文字按实际字体宽度换行并持续显示最新 4 行；字幕跟随扬声器已经播放的音频推进，
   不会在声音尚未播放完时直接跳到回答末尾；
 - 当前仍是手动 PTT 半双工：收音时不播放，播放时不收音。播放中短按 `KEY`
@@ -29,27 +33,42 @@ AI 对话未开启、未配置 API Key、家庭 Wi-Fi 当前离线或设备处�
   安装固件或执行其他设备动作；设备导航仍由离线 MultiNet 的安全指令完成；
 - 固件固定 `wss://`、Realtime 路径和受控模型参数。高级设置只能填写受支持的阿里云官方
   API Host，不能填写完整 URL、路径、端口、IP、代理、自建转发或其他厂商地址；
-- 默认模型是 `qwen3-omni-flash-realtime`。高级设置可改为
-  `qwen-audio-3.0-realtime-flash`，两者都只使用手动 PTT、有界多轮文字与语音回复，不启用
+- 当前默认且唯一可选模型是 `qwen-audio-3.0-realtime-flash`，使用手动 PTT、有界多轮文字与语音回复，不启用
   `smart_turn`、Function Calling、联网搜索或其他自动操作能力。
 
-两种模型均使用 16 kHz、16-bit、单声道 PCM 输入和 24 kHz、16-bit、单声道 PCM 输出。
-模型选择只影响下一次新会话，不能突破上述产品边界。两者的官方能力、固件实际差异、费用
-口径和目标板 A/B 方案见[AI 对话模型评估](cloud-voice-evaluation.md)。
+使用 16 kHz、16-bit、单声道 PCM 输入和 24 kHz、16-bit、单声道 PCM 输出。
+配置只影响下一次新会话，不改变上述产品边界。模型迁移原因与历史选型见
+[AI 对话模型评估](cloud-voice-evaluation.md)。
+
+### 从旧模型升级
+
+旧默认模型 `qwen3-omni-flash-realtime` 已被官方列入 2026 年 10 月 10 日下线名单。
+升级到 v0.31.0 后，设备会自动将旧模型改为 Audio 3，保留 API Key、API Host 和
+启用状态；已经使用 Audio 3 的配置不重复迁移。无需重新粘贴 Key，也不会自动开启 AI。
+
+**旧 Key 可以保留，但旧模型可用不代表新模型已授权。** 在百炼控制台选择原 Key 对应的
+地域和业务空间，确认 Audio 3 已开通调用权限，再从设备发起对话。只补充云端授权不需要
+重新烧录固件或重新输入 Key。
+
+迁移成功时，门户在本次开机期间显示简短说明。若迁移结果暂时无法保存，设备本次仍使用
+新模型，门户会提示在热点模式下重新保存 AI 配置；原凭据不会被清除。下次正常启动若已
+读到新模型，不再显示迁移提示。升级、迁移和保存配置都不自动发起云端测试。
 
 ## 准备和配置
 
 按下面 7 步即可完成默认北京地域的配置：
 
-1. 登录阿里云账号，打开[百炼 API Key 控制台](https://bailian.console.aliyun.com/?apiKey=1)；
-   如果账号尚未开通百炼，先按页面提示开通服务；
-2. 确认控制台地域为**华北 2（北京）**，然后点击“创建 API Key”；
-3. 按默认按量付费方式创建后，立即复制并妥善保存 Key。这里需要的是百炼模型服务的
+1. 登录[百炼控制台](https://bailian.console.aliyun.com/)，选择**华北 2（北京）**和准备使用的
+   业务空间；如果账号尚未开通百炼，先按页面提示开通服务；
+2. 在模型广场搜索 `qwen-audio-3.0-realtime-flash`，确认当前业务空间可调用；如提示
+   授权或开通，先按页面完成；
+3. 在同一地域和业务空间打开 [API Key 管理](https://bailian.console.aliyun.com/?apiKey=1)，
+   按默认按量付费方式创建 Key，立即复制并妥善保存。这里需要的是百炼模型服务的
    **API Key**，不要填写阿里云 RAM 的 AccessKey ID 或 AccessKey Secret；Token Plan、
    Coding Plan 等专属套餐 Key 不在当前固件的验证范围内。详细步骤可参考
    [阿里云官方说明](https://help.aliyun.com/zh/model-studio/get-api-key)；
 4. 按[网页设置入口](device-settings.md#网页设置)打开门户，连接屏幕显示的临时热点；
-5. 在“AI 对话”中选择开启，将刚才复制的 API Key 直接粘贴到输入框；
+5. 在“联网 → AI 对话”中选择开启，将刚才复制的 API Key 直接粘贴到输入框；
 6. 保持默认模型，并让 API Host 留空。默认北京共享接口不需要 Workspace ID、App ID，
    也不需要创建百炼应用；
 7. 保存后关闭设置门户，等待设备恢复家庭 Wi-Fi。设备处于 `NORMAL` 且取得 IPv4 后，
@@ -60,6 +79,10 @@ API Key 使用普通文本框以兼容手机设置窗口粘贴，输入内容在
 留空，会保留原 Key；关闭 AI 对话也只停用云端，不会删除 Key。“清除 AI 对话配置”的
 独立确认操作会删除已保存 Key、关闭云端，并恢复默认模型与默认 API Host。配置保存或
 清除后无需重启设备。
+
+门户显示当前生效模型和最近一次对话结果。保存成功只表示配置已写入设备，不表示 Key、
+模型权限或网络已经验证；关闭门户后，在设备“对话”页主动试用。最近结果只在本次开机的
+内存中保存，重新保存配置或重启后显示“尚未测试”，不会保存对话内容。
 
 ### API Host
 
@@ -73,8 +96,9 @@ API Host 留空时使用北京共享域名 `dashscope.aliyuncs.com`，这是只�
 - `<workspace-id>.ap-southeast-1.maas.aliyuncs.com`：新加坡业务空间专属域名。
 
 这里只填写主机名，不要加 `wss://`、路径、查询参数或端口。固件内部按受控规则组成完整
-Realtime URL，并拒绝其他域名。API Key 必须与 API Host 的地域和业务空间相匹配，固件
-不会在鉴权失败后自动跨地域重试。专属域名中的 Workspace ID 由阿里云生成并已经包含在
+Realtime URL，并拒绝其他域名。API Key、所选模型的调用权限与 API Host 必须对应同一
+地域和业务空间，固件不会在鉴权失败后自动跨地域重试。专属域名中的 Workspace ID 由
+阿里云生成并已经包含在
 主机名中，设置门户不再单独索取 Workspace ID。
 
 非默认 API Host 不是秘密，设置页会回显已保存值以便继续编辑；默认北京共享 Host 仍以
@@ -140,6 +164,11 @@ API Key 保存在设备 NVS 中。设置门户状态接口不会返回完整 Key
 或账单上限。请以使用时的[阿里云百炼模型价格](https://help.aliyun.com/zh/model-studio/model-pricing)
 和控制台账单为准。
 
+2026-09-28 核对的 Audio 3.0 Flash 北京公开原价为音频输入 **6 元/百万 Token**、
+文本与音频联合输出 **12 元/百万 Token**（输出文本不另计费）。这不是每轮固定费用；
+请以[该模型价格页](https://help.aliyun.com/zh/model-studio/qwen-audio-3-0-realtime-flash)
+的最新信息和实际账单为准。
+
 ## 常见问题
 
 ### 已保存 API Key，但仍显示离线指令
@@ -150,10 +179,25 @@ API Key 保存在设备 NVS 中。设置门户状态接口不会返回完整 Key
 
 ### 云端连接或鉴权失败
 
+v0.31.0 起，服务端关闭会话会及时结束等待，不再一律等到 15 秒后报超时。
+失败后在网页“联网 → AI 对话”展开“连接诊断”，可查看连接、会话创建、设置发送、
+会话确认及关闭码。它只记录这次流程走到哪里，不能单凭关闭码判断 Key 无效或模型下线。
+诊断保留到重启、下一次会话完成或重新保存配置，不保留语音、文字或服务端原始错误。
+保存配置仍不代表连接成功，也不会自动调用云端。
+
 确认 API Key 仍有效、具有所选模型的调用权限，并与 API Host 的地域和业务空间相符。
+如果旧模型可用、升级后新模型失败，优先检查新模型是否已在相同地域与业务空间授权；
+模型名称已迁移不代表云端权限也已开通，操作见[准备和配置](#准备和配置)。
 使用默认共享域名失败时，不要随意填写第三方地址；如果账号要求专属域名，应从百炼业务
-空间详情复制官方主机名。屏幕只显示简短失败原因，USB 日志只记录非敏感的阶段、错误名或
-错误码，不会输出 Key、请求头、语音或对话正文。
+空间详情复制官方主机名。屏幕显示简短行动提示，门户“最近对话”可查看失败类别：
+
+- 身份验证或权限失败：检查 Key、模型权限、Host 所属地域与业务空间；
+- 模型不可用：核对账户可用模型和固件版本；
+- 请求过于频繁或服务暂不可用：稍后重试；
+- 网络超时或安全连接失败：检查网络及设备时间后重试。
+
+错误原因不足以确定时只提示一般失败，不推断欠费或模型下线。不自动重发用户音频，
+也不尝试其他地域。状态接口不会返回原始服务错误消息、Key、请求头、语音或对话正文。
 
 ### 屏幕有回复但没有声音
 
@@ -165,9 +209,8 @@ API Key 保存在设备 NVS 中。设置门户状态接口不会返回完整 Key
 
 - [Realtime API 的 API Key 鉴权与共享 WebSocket 地址](https://help.aliyun.com/en/model-studio/realtime-token-authentication)
 - [阿里云百炼 Base URL 与业务空间专属域名](https://help.aliyun.com/zh/model-studio/base-url)
-- [`qwen3-omni-flash-realtime` 模型信息](https://help.aliyun.com/zh/model-studio/qwen3-omni-flash-realtime)
-- [Qwen-Omni Realtime 客户端事件](https://help.aliyun.com/zh/model-studio/client-events)
-- [Qwen-Omni Realtime 服务端事件](https://help.aliyun.com/zh/model-studio/server-events)
+- [旧模型下线清单](https://platform.qianwenai.com/docs/changelog/model-deprecations/old-models)
 - [`qwen-audio-3.0-realtime-flash` 模型信息](https://help.aliyun.com/zh/model-studio/qwen-audio-3-0-realtime-flash)
 - [Qwen-Audio Realtime 使用指南](https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides)
+- [Qwen-Audio Realtime 客户端事件](https://help.aliyun.com/zh/model-studio/fun-audiochat-client-events)
 - [阿里云百炼模型价格](https://help.aliyun.com/zh/model-studio/model-pricing)

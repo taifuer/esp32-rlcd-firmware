@@ -15,24 +15,21 @@ static void test_model_specific_session_update(void)
     size_t written = 0U;
     assert(conversation_protocol_build_session_update(
         message, sizeof(message), EVENT_ID,
-        CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME, &written));
+        CONVERSATION_DEFAULT_MODEL, &written));
     assert(written == strlen(message));
     assert(strstr(message, "\"type\":\"session.update\"") != NULL);
     assert(strstr(message, "\"modalities\":[\"text\",\"audio\"]") !=
            NULL);
-    assert(strstr(message, "\"voice\":\"Cherry\"") != NULL);
+    assert(strstr(message, "\"voice\":\"longanqian\"") != NULL);
     assert(strstr(message, "\"turn_detection\":null") != NULL);
     assert(strstr(message, "\"input_audio_format\":\"pcm\"") != NULL);
     assert(strstr(message, "\"output_audio_format\":\"pcm\"") != NULL);
-    assert(strstr(message, "\"max_tokens\":256") != NULL);
-    assert(strstr(message, "\"max_history_turns\"") == NULL);
+    assert(strstr(message, "\"max_tokens\"") == NULL);
+    assert(strstr(message, "\"max_history_turns\":5") != NULL);
     assert(strstr(message, "中文通常不超过六十字") != NULL);
     assert(strstr(message, "英文通常不超过四十词") != NULL);
-    assert(strstr(
-               message,
-               "\"input_audio_transcription\":{\"model\":"
-               "\"qwen3-asr-flash-realtime\"}") != NULL);
-    assert(strstr(message, "longanqian") == NULL);
+    assert(strstr(message, "input_audio_transcription") == NULL);
+    assert(strstr(message, "qwen3-asr") == NULL);
     assert(strstr(message, "multimodal-dialog") == NULL);
     assert(strstr(message, "workspace_id") == NULL);
     assert(strstr(message, "app_id") == NULL);
@@ -45,6 +42,15 @@ static void test_model_specific_session_update(void)
     assert(strstr(message, "Cherry") == NULL);
     assert(strstr(message, "\"max_history_turns\":5") != NULL);
     assert(strstr(message, "\"max_tokens\"") == NULL);
+    assert(strstr(message, "enable_search") == NULL);
+    assert(strstr(message, "\"tools\"") == NULL);
+    assert(strstr(message, "smart_turn") == NULL);
+
+    /* Retired model IDs remain decodable from storage, never callable. */
+    assert(!conversation_protocol_build_session_update(
+        message, sizeof(message), EVENT_ID,
+        CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME, &written));
+    assert(message[0] == '\0' && written == 0U);
 
     char too_small[32];
     assert(!conversation_protocol_build_session_update(

@@ -181,6 +181,15 @@ cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
   "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
   -o "${RLCD_TEST_TMP}/test_music_layout"
 
+cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
+  -I"${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc" \
+  -Isrc/conversation/include \
+  src/conversation/conversation_feedback.c tests/test_conversation_layout.c \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_font.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
+  -o "${RLCD_TEST_TMP}/test_conversation_layout"
+
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/app \
@@ -258,6 +267,28 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -o "${RLCD_TEST_TMP}/test_conversation_config"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Itests/conversation_storage_stubs -Isrc/conversation \
+  -Isrc/conversation/include -Isrc/storage/include \
+  src/conversation/conversation_config_model.c \
+  src/conversation/conversation_config_record.c \
+  tests/test_conversation_storage.c \
+  -o "${RLCD_TEST_TMP}/test_conversation_storage"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/conversation/include \
+  src/conversation/conversation_feedback.c \
+  tests/test_conversation_feedback.c \
+  -o "${RLCD_TEST_TMP}/test_conversation_feedback"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/conversation/include -Isrc/conversation \
+  src/conversation/conversation_lifecycle.c tests/test_conversation_lifecycle.c \
+  -o "${RLCD_TEST_TMP}/test_conversation_lifecycle"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/app \
   src/app/network_screen_policy.c tests/test_network_screen_policy.c \
   -o "${RLCD_TEST_TMP}/test_network_screen_policy"
@@ -327,6 +358,20 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   src/conversation/conversation_turn_state.c \
   tests/test_conversation_turn_state.c \
   -o "${RLCD_TEST_TMP}/test_conversation_turn_state"
+
+# Compile the production client, not a duplicate lifecycle implementation.
+# Platform fakes inject close/finish/late callbacks and verify allocation wipes.
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=address,undefined -fno-sanitize-recover=all \
+  -Itests/conversation_client_stubs -Isrc/conversation -Isrc/conversation/include \
+  -I"${RLCD_CJSON_DIR}/cJSON" \
+  src/conversation/conversation_client.c src/conversation/conversation_lifecycle.c \
+  src/conversation/conversation_config_model.c src/conversation/conversation_protocol.c \
+  src/conversation/conversation_text_buffer.c src/conversation/conversation_caption_sync.c \
+  src/conversation/conversation_turn_state.c tests/test_conversation_client_events.c \
+  "${RLCD_TEST_TMP}/cJSON.o" -lm \
+  -o "${RLCD_TEST_TMP}/test_conversation_client_events"
+ASAN_OPTIONS=detect_leaks=0 "${RLCD_TEST_TMP}/test_conversation_client_events"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/update/include \
@@ -514,6 +559,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_quick_settings"
 "${RLCD_TEST_TMP}/test_settings_layout"
 "${RLCD_TEST_TMP}/test_music_layout"
+"${RLCD_TEST_TMP}/test_conversation_layout"
 
 cc -std=c17 -fsanitize=undefined -fno-sanitize-recover=all \
   -ffunction-sections -fdata-sections -Wl,--gc-sections \
@@ -560,6 +606,9 @@ done
 "${RLCD_TEST_TMP}/test_settings_record"
 "${RLCD_TEST_TMP}/test_settings_storage"
 "${RLCD_TEST_TMP}/test_conversation_config"
+"${RLCD_TEST_TMP}/test_conversation_storage"
+"${RLCD_TEST_TMP}/test_conversation_feedback"
+"${RLCD_TEST_TMP}/test_conversation_lifecycle"
 "${RLCD_TEST_TMP}/test_network_screen_policy"
 "${RLCD_TEST_TMP}/test_voice_backend_policy"
 "${RLCD_TEST_TMP}/test_boot_recovery_policy"

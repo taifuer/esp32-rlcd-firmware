@@ -7,6 +7,7 @@
 
 #include "app_settings.h"
 #include "audio_alert.h"
+#include "audio_conversation.h"
 #include "audio_music.h"
 #include "boot_recovery.h"
 #include "clock_service.h"
@@ -77,8 +78,6 @@
 #define SETTINGS_STATE_JSON_CAPACITY 6144U
 #define SETTINGS_MARKET_JSON_CAPACITY 2048U
 #define SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "aliyun_realtime"
-#define SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI                              \
-    "qwen3-omni-flash-realtime"
 #define SETTINGS_CONVERSATION_MODEL_QWEN_AUDIO_3                           \
     "qwen-audio-3.0-realtime-flash"
 
@@ -143,7 +142,7 @@ static const char SETTINGS_PAGE[] =
     "grid-template-columns:repeat(7,minmax(0,1fr));gap:.35rem}.day{display:flex;flex-direction:column;align-items:center;"
     "gap:.35rem;margin:0;padding:.55rem .2rem;border:1px solid #d7dade;border-radius:.55rem;font-weight:500}.day input{width:auto;margin:0;padding:0;min-height:0;accent-color:#171717}button{margin-top:.9rem;"
     "border-color:#171717;background:#171717;color:#fff;font-weight:650}button.secondary{background:#fff;color:#171717}"
-    "button.danger{background:#fff;color:#a32626;border-color:#c96c6c}small,.note{font-size:.88rem;color:#676b70}"
+    "button.danger{background:#fff;color:#a32626;border-color:#c96c6c}small,.note{font-size:.88rem;color:#676b70}#conversationActiveModel{overflow-wrap:anywhere}"
     ".row{display:grid;grid-template-columns:1fr auto;gap:.75rem;align-items:center}.row output{min-width:3ch;text-align:right}"
     "progress{width:100%;height:1rem;margin-top:1rem}.message{min-height:1.5rem;margin-top:.75rem;color:#333}.message:empty{display:none}"
     "button:disabled,input:disabled,select:disabled{cursor:not-allowed;opacity:.48}.sd-state{padding:.75rem .85rem;border-radius:.55rem;background:#f2f3f4;color:#333}"
@@ -275,6 +274,10 @@ static const char SETTINGS_PAGE[] =
     "<button id=\"marketSave\" type=\"submit\">保存市场看板</button></form>"
     "<p id=\"marketMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section>"
     "<section><details><summary class=\"section-toggle\">AI 对话 Beta<span id=\"conversationStatus\">正在读取…</span></summary>"
+    "<p id=\"conversationActiveModel\" class=\"note\">当前模型：正在读取…</p>"
+    "<p id=\"conversationLastResult\" class=\"note\" role=\"status\" aria-live=\"polite\">最近对话：尚未测试</p>"
+    "<details id=\"conversationDiagnostics\" hidden><summary>连接诊断</summary><p id=\"conversationDiagnosticText\" class=\"note\"></p></details>"
+    "<p id=\"conversationMigration\" class=\"note\" hidden></p>"
     "<form id=\"conversationForm\" autocomplete=\"off\">"
     "<input type=\"hidden\" name=\"service\" value=\""
     SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "\">"
@@ -286,11 +289,9 @@ static const char SETTINGS_PAGE[] =
     "<p class=\"note\">关闭 AI 对话不会删除 API Key；未配置、断网或省电时仍使用离线语音指令。</p>"
     "<details class=\"advanced\"><summary>高级设置</summary>"
     "<label for=\"conversationModel\">对话模型</label><select id=\"conversationModel\" name=\"model\">"
-    "<option value=\"" SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI
-    "\">Qwen3 Omni Flash Realtime（默认）</option>"
     "<option value=\"" SETTINGS_CONVERSATION_MODEL_QWEN_AUDIO_3
-    "\">Qwen Audio 3.0 Realtime Flash</option></select>"
-    "<p class=\"note\">仅可选择固件已验证的阿里云百炼 Realtime 模型。</p>"
+    "\">Qwen Audio 3.0 Realtime Flash（默认）</option></select>"
+    "<p class=\"note\">目前支持这一款模型；保存配置不会自动连接或发起收费测试。</p>"
     "<label for=\"conversationApiHost\">API Host（可选）</label>"
     "<input id=\"conversationApiHost\" name=\"api_host\" maxlength=\"127\" "
     "placeholder=\"llm-xxx.cn-beijing.maas.aliyuncs.com\" autocomplete=\"off\">"
@@ -444,7 +445,15 @@ static const char SETTINGS_PAGE[] =
     "function setConversationState(state){const cloud=state&&typeof state==='object'?state:null;conversationAvailable=cloud!==null&&cloud.available===true&&cloud.service==='" SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "'&&typeof cloud.configured==='boolean'&&typeof cloud.enabled==='boolean'&&typeof cloud.model==='string'&&typeof cloud.api_host==='string'&&typeof cloud.shared_endpoint==='boolean';"
     "conversationConfigured=conversationAvailable&&cloud.configured===true;conversationEnabled=conversationConfigured&&cloud.enabled===true;$('conversationStatus').textContent=!conversationAvailable?'暂不可用':!conversationConfigured?'未配置':conversationEnabled?'已开启':'已关闭';"
     "$('conversationEnabled').value=conversationEnabled?'on':'off';"
-    "const modelSelect=$('conversationModel');modelSelect.value=conversationAvailable?cloud.model:'';if(modelSelect.selectedIndex<0)modelSelect.value='" SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI "';$('conversationApiHost').value=conversationAvailable&&!(cloud.shared_endpoint&&cloud.api_host==='" CONVERSATION_DEFAULT_API_HOST "')?cloud.api_host:'';$('conversationKey').value='';"
+    "const modelSelect=$('conversationModel');modelSelect.value=conversationAvailable?cloud.model:'';if(modelSelect.selectedIndex<0)modelSelect.value='" SETTINGS_CONVERSATION_MODEL_QWEN_AUDIO_3 "';$('conversationApiHost').value=conversationAvailable&&!(cloud.shared_endpoint&&cloud.api_host==='" CONVERSATION_DEFAULT_API_HOST "')?cloud.api_host:'';$('conversationKey').value='';"
+    "$('conversationActiveModel').textContent='当前模型：'+(conversationAvailable?cloud.model:'暂不可用');"
+    "const results={not_tested:'尚未测试',success:'成功',failed:'失败',cancelled:'已取消'};const result=conversationAvailable&&Object.prototype.hasOwnProperty.call(results,cloud.last_result)?cloud.last_result:'not_tested';"
+    "$('conversationLastResult').textContent='最近对话：'+(!conversationAvailable?'暂不可用':results[result])+(result==='failed'&&typeof cloud.last_hint==='string'&&cloud.last_hint?' · '+cloud.last_hint:'');"
+    "const diag=cloud&&cloud.diagnostics;const hasDiag=result==='failed'&&diag&&['websocket_connected','session_created','session_update_sent','session_ready'].every(key=>typeof diag[key]==='boolean')&&Number.isInteger(diag.close_code)&&diag.close_code>=0&&diag.close_code<=65535&&Number.isInteger(diag.transport_end)&&diag.transport_end>=0&&diag.transport_end<=3;"
+    "$('conversationDiagnostics').hidden=!hasDiag;$('conversationDiagnostics').open=false;"
+    "$('conversationDiagnosticText').textContent=hasDiag?['连接建立：'+(diag.websocket_connected?'是':'否'),'会话创建：'+(diag.session_created?'已收到':'未收到'),'会话设置：'+(diag.session_update_sent?'已发送':'未发送'),'会话确认：'+(diag.session_ready?'已收到':'未收到'),'结束事件：'+['无','连接中断','服务端关闭','会话结束'][diag.transport_end],'关闭码：'+(diag.close_code||'未提供')].join('；')+'。':'';"
+    "const migration=conversationAvailable?cloud.migration:'none';$('conversationMigration').hidden=!['completed','pending'].includes(migration);"
+    "$('conversationMigration').textContent=migration==='completed'?'已自动更新旧模型，API Key、Host 和开关保持不变。':migration==='pending'?'本次已使用新模型，但迁移结果尚未保存。请在热点模式下保存一次 AI 对话配置；原凭据仍保留。':'';"
     "show('conversationMessage',conversationAvailable?'':'AI 对话设置暂不可用；其他设备设置仍可正常使用。');conversationControls()}"
     "function storedControls(){const available=stateReady&&storedImages.length>0&&!imageBusy&&!storedBusy;"
     "$('storedPrevious').disabled=!available||storedImages.length<2;$('storedNext').disabled=!available||storedImages.length<2;"
@@ -1590,6 +1599,16 @@ static const char *settings_music_mode_name(app_music_mode_t mode)
     }
 }
 
+static const char *conversation_migration_name(
+    conversation_config_migration_t migration)
+{
+    switch (migration) {
+    case CONVERSATION_CONFIG_MIGRATION_COMPLETED: return "completed";
+    case CONVERSATION_CONFIG_MIGRATION_PENDING: return "pending";
+    default: return "none";
+    }
+}
+
 static esp_err_t recovery_state_get_handler(httpd_req_t *request)
 {
     network_time_saved_network_t saved_network = {0};
@@ -1672,6 +1691,8 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
             SETTINGS_JSON_ESCAPE_CAPACITY(64U)];
         char escaped_weather_city[
             SETTINGS_JSON_ESCAPE_CAPACITY(64U)];
+        char escaped_conversation_hint[
+            SETTINGS_JSON_ESCAPE_CAPACITY(192U)];
         char json[SETTINGS_STATE_JSON_CAPACITY];
     } settings_state_response_t;
     settings_state_response_t *const response = heap_caps_calloc(
@@ -1708,12 +1729,18 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
     const char *conversation_model =
         conversation_model_name(conversation_status.model);
     if (conversation_model == NULL) {
-        conversation_model = SETTINGS_CONVERSATION_MODEL_QWEN3_OMNI;
+        conversation_model = SETTINGS_CONVERSATION_MODEL_QWEN_AUDIO_3;
     }
     const bool conversation_configured =
         conversation_available && conversation_status.configured;
     const bool conversation_enabled =
         conversation_configured && conversation_status.enabled;
+    conversation_feedback_status_t conversation_feedback = {0};
+    if (conversation_available) {
+        audio_conversation_get_last_result(&conversation_feedback);
+        conversation_feedback = conversation_feedback_for_generation(
+            &conversation_feedback, conversation_status.generation);
+    }
     weather_config_status_t weather_status = {0};
     const esp_err_t weather_error =
         weather_config_get_status(&weather_status);
@@ -1746,6 +1773,10 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
             conversation_status.api_host,
             response->escaped_api_host,
             sizeof(response->escaped_api_host)) ||
+        !settings_portal_json_escape(
+            conversation_feedback_error_hint_zh(conversation_feedback.error),
+            response->escaped_conversation_hint,
+            sizeof(response->escaped_conversation_hint)) ||
         !settings_portal_json_escape(
             weather_status.api_host,
             response->escaped_weather_api_host,
@@ -1783,7 +1814,12 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         "\"conversation\":{\"available\":%s,\"configured\":%s,"
         "\"enabled\":%s,"
         "\"model\":\"%s\",\"service\":\"%s\","
-        "\"api_host\":\"%s\",\"shared_endpoint\":%s},"
+        "\"api_host\":\"%s\",\"shared_endpoint\":%s,"
+        "\"migration\":\"%s\",\"last_result\":\"%s\","
+        "\"last_error\":\"%s\",\"last_hint\":\"%s\",\"completed_turns\":%u,"
+        "\"diagnostics\":{\"websocket_connected\":%s,\"session_created\":%s,"
+        "\"session_update_sent\":%s,\"session_ready\":%s,"
+        "\"close_code\":%u,\"transport_end\":%u}},"
         "\"token\":\"%s\"}",
         local_network_portal() ? "true" : "false",
         saved_network.configured ? "true" : "false",
@@ -1817,6 +1853,17 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         conversation_model, conversation_service,
         response->escaped_api_host,
         conversation_status.shared_endpoint ? "true" : "false",
+        conversation_migration_name(conversation_status.migration),
+        conversation_feedback_result_name(conversation_feedback.result),
+        conversation_feedback_error_name(conversation_feedback.error),
+        response->escaped_conversation_hint,
+        (unsigned int)conversation_feedback.completed_turns,
+        conversation_feedback.diagnostics.websocket_connected ? "true" : "false",
+        conversation_feedback.diagnostics.session_created ? "true" : "false",
+        conversation_feedback.diagnostics.session_update_sent ? "true" : "false",
+        conversation_feedback.diagnostics.session_ready ? "true" : "false",
+        (unsigned int)conversation_feedback.diagnostics.close_code,
+        (unsigned int)conversation_feedback.diagnostics.transport_end,
         response->token);
     memset(&conversation_status, 0, sizeof(conversation_status));
     memset(&weather_status, 0, sizeof(weather_status));
@@ -2356,7 +2403,7 @@ static esp_err_t conversation_config_post_handler(httpd_req_t *request)
                 : "AI 对话配置未能保存，原配置未更改。\n");
     }
     return finish_regular_request(
-        request, "200 OK", "AI 对话配置已保存，无需重启。\n");
+        request, "200 OK", "AI 对话配置已保存，尚未验证连接。退出网页设置后，可在设备对话页试用。\n");
 }
 
 static esp_err_t conversation_clear_post_handler(httpd_req_t *request)

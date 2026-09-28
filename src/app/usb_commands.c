@@ -5,6 +5,8 @@
 #include <string.h>
 
 #include "audio_diagnostics.h"
+#include "audio_conversation.h"
+#include "conversation_config.h"
 #include "audio_voice.h"
 #include "app_settings.h"
 #include "boot_recovery.h"
@@ -95,7 +97,7 @@ static void log_datetime(const char *prefix, const pcf85063_datetime_t *datetime
 static void process_line(const char *line, bool rtc_available)
 {
     if (strcmp(line, "HELP") == 0) {
-        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | GET_BOOT | GET_AUDIO | GET_VOICE | RESET_VOICE_DIAG | GET_SETTINGS | RESET_WIFI | HELP");
+        ESP_LOGI(TAG, "Commands: SET_TIME YYYY-MM-DD HH:MM:SS | GET_TIME | GET_NETWORK | GET_BOOT | GET_AUDIO | GET_VOICE | GET_CHAT | RESET_VOICE_DIAG | GET_SETTINGS | RESET_WIFI | HELP");
         return;
     }
 
@@ -126,6 +128,42 @@ static void process_line(const char *line, bool rtc_available)
             (unsigned)status.previous_main_stack_free,
             (unsigned)status.previous_free_internal_heap,
             (unsigned)status.previous_minimum_internal_heap);
+        return;
+    }
+
+    if (strcmp(line, "GET_CHAT") == 0) {
+        /* USB polling runs on the main task. Keep diagnostic snapshots off
+         * its stack; get_status never copies the API key. */
+        typedef struct {
+            conversation_config_status_t config;
+            conversation_feedback_status_t last;
+        } chat_diagnostic_report_t;
+        chat_diagnostic_report_t *report = heap_caps_calloc(
+            1U, sizeof(*report), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (report == NULL) {
+            ESP_LOGW(TAG, "CHAT unavailable");
+            return;
+        }
+        if (conversation_config_get_status(&report->config) != ESP_OK) {
+            heap_caps_free(report);
+            ESP_LOGW(TAG, "CHAT unavailable");
+            return;
+        }
+        audio_conversation_get_last_result(&report->last);
+        report->last = conversation_feedback_for_generation(
+            &report->last, report->config.generation);
+        ESP_LOGI(TAG,
+                 "CHAT result=%s error=%s ws=%u created=%u update=%u "
+                 "ready=%u end=%u close=%u",
+                 conversation_feedback_result_name(report->last.result),
+                 conversation_feedback_error_name(report->last.error),
+                 (unsigned)report->last.diagnostics.websocket_connected,
+                 (unsigned)report->last.diagnostics.session_created,
+                 (unsigned)report->last.diagnostics.session_update_sent,
+                 (unsigned)report->last.diagnostics.session_ready,
+                 (unsigned)report->last.diagnostics.transport_end,
+                 (unsigned)report->last.diagnostics.close_code);
+        heap_caps_free(report);
         return;
     }
 

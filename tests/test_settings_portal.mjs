@@ -40,6 +40,9 @@ for (const [id, expected] of Object.entries({
 assert.match(html, /<footer>© .*target="_blank" rel="noopener noreferrer">ESP32 固件/);
 assert.match(html, /<details><summary class="section-toggle">天气/);
 assert.match(html, /<details><summary class="section-toggle">AI 对话 Beta/);
+assert.doesNotMatch(html, /qwen3-omni-flash-realtime/);
+assert.match(html, /Qwen Audio 3\.0 Realtime Flash（默认）/);
+assert.match(html, /保存配置不会自动连接或发起收费测试/);
 assert.match(html, /<details><summary class="section-toggle">市场看板/);
 assert.match(html, /<details><summary class="section-toggle">显示页面/);
 assert.match(html, /隐藏只跳过页面，不停用功能，也不删除配置或文件/);
@@ -90,7 +93,8 @@ let state = {
   weather: {available: true, enabled: false, configured: false, key_saved: false,
     api_host: '', province_id: 0, city_id: 0},
   conversation: {available: true, service: 'aliyun_realtime', configured: false, enabled: false,
-    model: 'qwen3-omni-flash-realtime', api_host: 'dashscope.aliyuncs.com', shared_endpoint: true},
+    model: 'qwen-audio-3.0-realtime-flash', api_host: 'dashscope.aliyuncs.com', shared_endpoint: true,
+    migration: 'none', last_result: 'not_tested', last_error: 'none', last_hint: '', completed_turns: 0},
 };
 let market = {enabled: false, ids: [0, 3, 7, 9, 11],
   presets: ['上证指数', '深证成指', '创业板指', '沪深300', '中证500', '上证50', '科创50', '恒生指数',
@@ -183,6 +187,58 @@ const context = vm.createContext({
 });
 vm.runInContext(javascript, context);
 await new Promise(resolve => setImmediate(resolve));
+// Reading/rendering AI state never tests a paid endpoint or starts a session.
+const aiWritesBefore = writes.length;
+assert.equal(elements.conversationActiveModel.textContent, '当前模型：qwen-audio-3.0-realtime-flash');
+assert.equal(elements.conversationLastResult.textContent, '最近对话：尚未测试');
+assert.equal(elements.conversationMigration.hidden, true);
+const renderConversation = overrides => vm.runInContext(
+  'setConversationState(' + JSON.stringify({...state.conversation, ...overrides}) + ')', context);
+renderConversation({configured: true, enabled: true, migration: 'completed'});
+assert.equal(elements.conversationStatus.textContent, '已开启');
+assert.equal(elements.conversationLastResult.textContent, '最近对话：尚未测试', 'enabled is not proof of a successful conversation');
+assert.equal(elements.conversationMigration.hidden, false);
+assert.match(elements.conversationMigration.textContent, /API Key、Host 和开关保持不变/);
+renderConversation({migration: 'pending'});
+assert.match(elements.conversationMigration.textContent, /迁移结果尚未保存/);
+renderConversation({last_result: 'success', last_hint: 'stale error'});
+assert.equal(elements.conversationLastResult.textContent, '最近对话：成功');
+renderConversation({last_result: 'failed', last_hint: '身份验证失败，请检查 API Key。'});
+assert.equal(elements.conversationLastResult.textContent, '最近对话：失败 · 身份验证失败，请检查 API Key。');
+assert.equal(elements.conversationDiagnostics.hidden, true, 'older/absent diagnostics stay hidden');
+const connectionDiag = {websocket_connected: true, session_created: true,
+  session_update_sent: true, session_ready: false, close_code: 1008, transport_end: 2};
+renderConversation({last_result: 'failed', diagnostics: connectionDiag});
+assert.equal(elements.conversationDiagnostics.hidden, false);
+assert.equal(elements.conversationDiagnostics.open, false, 'details stay collapsed initially');
+assert.match(elements.conversationDiagnosticText.textContent, /会话确认：未收到/);
+assert.match(elements.conversationDiagnosticText.textContent, /服务端关闭/);
+assert.match(elements.conversationDiagnosticText.textContent, /关闭码：1008/);
+renderConversation({last_result: 'failed', diagnostics: {...connectionDiag, close_code: 0, transport_end: 3}});
+assert.match(elements.conversationDiagnosticText.textContent, /会话结束/);
+assert.match(elements.conversationDiagnosticText.textContent, /关闭码：未提供/);
+for (const malformed of [null, {}, {...connectionDiag, close_code: '<svg onload=bad>'},
+  {...connectionDiag, close_code: -1}, {...connectionDiag, close_code: 65536},
+  {...connectionDiag, transport_end: 99}, {...connectionDiag, session_ready: 'true'}]) {
+  renderConversation({last_result: 'failed', diagnostics: malformed});
+  assert.equal(elements.conversationDiagnostics.hidden, true);
+  assert.equal(elements.conversationDiagnosticText.textContent, '');
+}
+for (const result of ['success', 'cancelled', 'not_tested']) {
+  renderConversation({last_result: result, diagnostics: connectionDiag});
+  assert.equal(elements.conversationDiagnostics.hidden, true);
+  assert.equal(elements.conversationDiagnosticText.textContent, '');
+}
+renderConversation({last_result: 'cancelled', last_hint: 'stale error'});
+assert.equal(elements.conversationLastResult.textContent, '最近对话：已取消');
+renderConversation({last_result: '__proto__', migration: '<script>bad</script>'});
+assert.equal(elements.conversationLastResult.textContent, '最近对话：尚未测试');
+assert.equal(elements.conversationMigration.hidden, true);
+renderConversation({available: false, last_result: 'success'});
+assert.equal(elements.conversationLastResult.textContent, '最近对话：暂不可用');
+assert.equal(elements.conversationSave.disabled, true);
+renderConversation({});
+assert.equal(writes.length, aiWritesBefore, 'state display must not generate a mutation or cloud test');
 assert.equal(elements.volume.value, 50);
 assert.ok(pageIds.every(id => elements[id].checked), 'migration/default all pages are offered');
 assert.equal(elements.marketChoices.children.length, 15);

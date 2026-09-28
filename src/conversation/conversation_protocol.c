@@ -67,50 +67,32 @@ bool conversation_protocol_build_session_update(
     char *output, size_t capacity, const char *event_id,
     conversation_model_t model, size_t *written)
 {
-    const char *voice = NULL;
-    const char *transcription = NULL;
-    const char *response_limits = NULL;
-    switch (model) {
-    case CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME:
-        voice = "Cherry";
-        transcription =
-            "\"input_audio_transcription\":{\"model\":"
-            "\"qwen3-asr-flash-realtime\"},";
-        response_limits = "\"max_tokens\":256,";
-        break;
-    case CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH:
-        voice = "longanqian";
-        transcription = "";
-        response_limits = "\"max_history_turns\":5,";
-        break;
-    case CONVERSATION_MODEL_COUNT:
-    default:
-        break;
+    if (written != NULL) {
+        *written = 0U;
     }
     if (output == NULL || capacity == 0U ||
-        !event_id_is_safe(event_id) || voice == NULL ||
-        transcription == NULL || response_limits == NULL) {
+        !event_id_is_safe(event_id) ||
+        model != CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH) {
         if (output != NULL && capacity > 0U) {
             output[0] = '\0';
         }
         return false;
     }
 
-    /* Both selected model families use PCM16 mono at fixed 16 kHz input and
-     * 24 kHz output. The legacy format fields are the most broadly compatible
-     * representation for qwen3-omni-flash-realtime. */
+    /* Audio 3 uses PCM16 mono, 16 kHz input / 24 kHz output, and native input
+     * transcription. max_history_turns limits context, not response length;
+     * its documented protocol does not expose the old Omni max_tokens field. */
     const int result = snprintf(
         output, capacity,
         "{\"event_id\":\"%s\",\"type\":\"session.update\","
         "\"session\":{\"modalities\":[\"text\",\"audio\"],"
-        "\"voice\":\"%s\",\"instructions\":"
+        "\"voice\":\"longanqian\",\"instructions\":"
         "\"你是简洁友好的中英双语语音助手。跟随用户语言，用适合朗读的纯文本回答。默认先给结论，只说一至三个短句；中文通常不超过六十字，英文通常不超过四十词。内容较多时只给最重要的三点，并请用户继续追问。不要复述问题，不用Markdown，不主动展开。用户明确要求详细说明时仍分轮简短回答；单词学习需要清楚朗读。\","
         "\"input_audio_format\":\"pcm\","
         "\"output_audio_format\":\"pcm\","
-        "%s"
-        "%s"
+        "\"max_history_turns\":5,"
         "\"turn_detection\":null}}",
-        event_id, voice, response_limits, transcription);
+        event_id);
     return finish_message(output, capacity, result, written);
 }
 

@@ -1,5 +1,25 @@
 # 开发与发布流程
 
+## v0.31.0 正式构建记录
+
+2026-09-28，用户确认新模型未授权导致连接失败，授权后 dev.2 测试正常并同意发布。
+正式版沿用相同功能源码，以 `RLCD_PROJECT_VERSION=0.31.0` 使用固定 ESP-IDF v5.5.3
+构建。依赖检查、全套主机测试通过；不重新下载工具链，不通过 USB 写入设备。
+
+正式 OTA 与 dev.2 同为 2,232,144 字节，仅 75 字节不同，位于版本、构建时间、ELF 摘要
+和镜像校验字段。分区与离线语音模型不变，云端配置格式不变；升级仅迁移旧模型编号，
+保留 Key、Host 与开关，不能代替百炼中的模型授权。
+
+- OTA：2.23 MB，SHA-256
+  `997341c64c04aaddf28db2fb63325ab8c25d33e387ffbf2a6c01704614d4fa97`。
+- Factory：8.56 MB（8,560,811 字节），SHA-256
+  `1d78405a8f4597a90dd05b9d41d6ea6b5f26299cb222bc7134cc2474b903ea8e`。
+- 模型：2.20 MB（2,203,819 字节），SHA-256
+  `29e156e606a46114b19a3e2f56406bc7045894743ae1e623d0b9e4c5ed1486bf`。
+
+发布文件与效果图见 [`dist/v0.31.0/`](../dist/v0.31.0/)。实机反馈、未完成专项与迁移
+验证见 [v0.31.0 记录](v0.31-plan.md)，AI 对话继续保留 Beta。
+
 ## v0.30.0 正式构建记录
 
 2026-09-27，用户确认 dev.2 使用正常并授权发布。正式版沿用已验收的功能源码，以
@@ -291,12 +311,12 @@ Git。删除 `sdkconfig` 后会恢复项目默认值。
 
 ### 构建版本与更新通道
 
-仓库默认构建版本为 `0.30.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
+仓库默认构建版本为 `0.31.0`。需要构建其他版本时，通过环境变量覆盖，不直接为一次
 候选构建修改 `CMakeLists.txt`：
 
 ```bash
-RLCD_PROJECT_VERSION=0.31.0-dev.1 ./scripts/build.sh
-RLCD_PROJECT_VERSION=0.30.0 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.32.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.31.0 ./scripts/build.sh
 ```
 
 版本必须是固件可比较的 SemVer，且不带文件名使用的前导 `v`：
@@ -811,6 +831,21 @@ Factory 镜像为 8,560,811 bytes，SHA-256 为
 ```bash
 ./scripts/collect-voice-diagnostics.sh --port COM5
 ```
+
+AI Chat 的连接问题使用独立的安全采集流程，不使用下述离线语音测试矩阵：
+
+```bash
+./scripts/collect-chat-diagnostics.sh COM5 900
+```
+
+出现 `MONITOR_OPEN` 后在设备主动发起对话。脚本只查询 `GET_BOOT`、`GET_NETWORK` 和
+`GET_CHAT`，不修改配置、不启动麦克风或云请求；默认监听 15 分钟，过滤后的诊断保存到
+忽略提交的 `build/chat-diagnostics-*.log`。`GET_CHAT` 返回当前配置对应的最近一次已完成
+会话：四个里程碑、结束事件与数值关闭码，不包含正文、Host 或 Key；`end` 的 0—3
+分别表示无事件、连接中断、对端关闭、任务或会话结束。无关闭码用 0 表示，不推断原因。
+采集脚本有独立 `-SelfTest` 过滤自测，未知日志整行丢弃；不要改成原始流转储或开启 DEBUG。
+旧版本可能在 ERROR 日志输出认证请求头，INFO 上限本身不能防止；新候选在构建时禁用
+`tcp_transport` 的这些日志，保留应用自身固定诊断及 HTTP/TLS 客户端错误。
 
 打开原生 USB 串口可能使 ESP32-S3 重新启动，也会提供 USB 数据主机证据，使设备处于
 `NORMAL | USB`；因此这套流程只建立 USB/NORMAL 基线，不能用来证明低电 `SAVING` 功耗

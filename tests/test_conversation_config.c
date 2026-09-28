@@ -74,6 +74,9 @@ static void test_defaults_models_and_secret_free_status(void)
     assert(config.schema_version == CONVERSATION_CONFIG_SCHEMA_VERSION);
     assert(config.service == CONVERSATION_SERVICE_ALIYUN_REALTIME);
     assert(config.model == CONVERSATION_DEFAULT_MODEL);
+    assert(config.model == CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH);
+    assert(CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME == 0);
+    assert(CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH == 1);
     assert(!config.enabled);
     assert(config.api_key[0] == '\0');
     assert(config.api_host[0] == '\0');
@@ -91,11 +94,16 @@ static void test_defaults_models_and_secret_free_status(void)
     assert(conversation_model_from_name(
         "qwen-audio-3.0-realtime-flash", &model));
     assert(model == CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH);
+    assert(!conversation_model_is_supported(
+        CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME));
+    assert(!conversation_model_from_name("qwen3-omni-flash-realtime", &model));
     assert(!conversation_model_from_name("qwen-uncontrolled", &model));
 
     conversation_config_status_t status;
     conversation_config_make_status(NULL, &status);
     assert(!status.enabled && !status.configured);
+    assert(status.migration == CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(status.generation == 0U);
     assert(status.model == CONVERSATION_DEFAULT_MODEL);
     assert(status.shared_endpoint);
     assert(strcmp(status.api_host, CONVERSATION_DEFAULT_API_HOST) == 0);
@@ -107,6 +115,26 @@ static void test_defaults_models_and_secret_free_status(void)
     assert(strcmp(status.api_host, CONVERSATION_DEFAULT_API_HOST) == 0);
     assert(!memory_contains(&status, sizeof(status),
                             "sk-secret-must-not-be-presented"));
+    conversation_config_reset(&config);
+}
+
+static void test_retired_model_cannot_be_used_or_written(void)
+{
+    conversation_config_t config = make_config("sk-legacy-runtime");
+    config.model = CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME;
+    assert(conversation_config_validate(&config) ==
+           CONVERSATION_CONFIG_RESULT_INVALID_MODEL);
+    uint8_t encoded[CONVERSATION_CONFIG_RECORD_ENCODED_SIZE];
+    memset(encoded, 0x5a, sizeof(encoded));
+    assert(!conversation_config_record_encode(1U, &config, encoded,
+                                              sizeof(encoded)));
+    for (size_t index = 0U; index < sizeof(encoded); ++index) {
+        assert(encoded[index] == 0U);
+    }
+    conversation_config_status_t status;
+    conversation_config_make_status(&config, &status);
+    assert(!status.configured);
+    assert(!memory_contains(&status, sizeof(status), "sk-legacy-runtime"));
     conversation_config_reset(&config);
 }
 
@@ -148,13 +176,17 @@ static void test_api_host_policy_and_endpoint_builder(void)
     assert(!conversation_api_host_is_allowed(NULL));
 
     char endpoint[CONVERSATION_ENDPOINT_MAX_LENGTH + 1U];
-    assert(conversation_config_build_endpoint(
+    assert(!conversation_config_build_endpoint(
         "", CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME,
+        endpoint, sizeof(endpoint)));
+    assert(endpoint[0] == '\0');
+    assert(conversation_config_build_endpoint(
+        "", CONVERSATION_DEFAULT_MODEL,
         endpoint, sizeof(endpoint)));
     assert(strcmp(
                endpoint,
                "wss://dashscope.aliyuncs.com/api-ws/v1/realtime?"
-               "model=qwen3-omni-flash-realtime") == 0);
+               "model=qwen-audio-3.0-realtime-flash") == 0);
     assert(conversation_config_build_endpoint(
         "llm-demo.ap-southeast-1.maas.aliyuncs.com",
         CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH,
@@ -211,6 +243,11 @@ static void test_update_preserves_key_and_controls_model(void)
     assert(conversation_config_apply_update(&candidate, &replacement,
                                             &replaced) ==
            CONVERSATION_CONFIG_RESULT_INVALID_MODEL);
+    replacement = make_update("sk-valid",
+        CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME, true, "");
+    assert(conversation_config_apply_update(&candidate, &replacement,
+                                            &replaced) ==
+           CONVERSATION_CONFIG_RESULT_INVALID_MODEL);
     replacement = make_update("sk-valid", CONVERSATION_DEFAULT_MODEL, true,
                               "example.com");
     assert(conversation_config_apply_update(&candidate, &replacement,
@@ -255,7 +292,7 @@ static void test_portal_form_parser(void)
 {
     static const char valid_form[] =
         "service=aliyun_realtime&enabled=on&"
-        "model=qwen3-omni-flash-realtime&api_host=&"
+        "model=qwen-audio-3.0-realtime-flash&api_host=&"
         "api_key=sk-test%2Bvalue";
     conversation_config_update_t update;
     assert(conversation_config_parse_form(valid_form, strlen(valid_form),
@@ -283,21 +320,21 @@ static void test_portal_form_parser(void)
 
     static const char duplicate_form[] =
         "service=aliyun_realtime&service=aliyun_realtime&enabled=on&"
-        "model=qwen3-omni-flash-realtime&api_host=&api_key=k";
+        "model=qwen-audio-3.0-realtime-flash&api_host=&api_key=k";
     assert(conversation_config_parse_form(
                duplicate_form, strlen(duplicate_form), &update) ==
            CONVERSATION_CONFIG_RESULT_DUPLICATE_FIELD);
 
     static const char missing_form[] =
         "service=aliyun_realtime&enabled=on&"
-        "model=qwen3-omni-flash-realtime&api_host=";
+        "model=qwen-audio-3.0-realtime-flash&api_host=";
     assert(conversation_config_parse_form(missing_form,
                                           strlen(missing_form), &update) ==
            CONVERSATION_CONFIG_RESULT_MISSING_FIELD);
 
     static const char unexpected_form[] =
         "service=aliyun_realtime&enabled=on&"
-        "model=qwen3-omni-flash-realtime&api_host=&api_key=k&"
+        "model=qwen-audio-3.0-realtime-flash&api_host=&api_key=k&"
         "endpoint=wss%3A%2F%2Fevil.invalid";
     assert(conversation_config_parse_form(
                unexpected_form, strlen(unexpected_form), &update) ==
@@ -305,20 +342,20 @@ static void test_portal_form_parser(void)
 
     static const char bad_encoding_form[] =
         "service=aliyun_realtime&enabled=on&"
-        "model=qwen3-omni-flash-realtime&api_host=%GG&api_key=k";
+        "model=qwen-audio-3.0-realtime-flash&api_host=%GG&api_key=k";
     assert(conversation_config_parse_form(
                bad_encoding_form, strlen(bad_encoding_form), &update) ==
            CONVERSATION_CONFIG_RESULT_INVALID_ENCODING);
 
     static const char nul_encoding_form[] =
         "service=aliyun_realtime&enabled=on&"
-        "model=qwen3-omni-flash-realtime&api_host=&api_key=sk%00hidden";
+        "model=qwen-audio-3.0-realtime-flash&api_host=&api_key=sk%00hidden";
     assert(conversation_config_parse_form(
                nul_encoding_form, strlen(nul_encoding_form), &update) ==
            CONVERSATION_CONFIG_RESULT_INVALID_ENCODING);
 
     static const char wrong_service_form[] =
-        "service=other&enabled=on&model=qwen3-omni-flash-realtime&"
+        "service=other&enabled=on&model=qwen-audio-3.0-realtime-flash&"
         "api_host=&api_key=k";
     assert(conversation_config_parse_form(
                wrong_service_form, strlen(wrong_service_form), &update) ==
@@ -331,16 +368,23 @@ static void test_portal_form_parser(void)
                wrong_model_form, strlen(wrong_model_form), &update) ==
            CONVERSATION_CONFIG_RESULT_INVALID_MODEL);
 
+    static const char retired_model_form[] =
+        "service=aliyun_realtime&enabled=on&model=qwen3-omni-flash-realtime&"
+        "api_host=&api_key=k";
+    assert(conversation_config_parse_form(
+               retired_model_form, strlen(retired_model_form), &update) ==
+           CONVERSATION_CONFIG_RESULT_INVALID_MODEL);
+
     static const char wrong_host_form[] =
         "service=aliyun_realtime&enabled=on&"
-        "model=qwen3-omni-flash-realtime&api_host=example.com&api_key=k";
+        "model=qwen-audio-3.0-realtime-flash&api_host=example.com&api_key=k";
     assert(conversation_config_parse_form(
                wrong_host_form, strlen(wrong_host_form), &update) ==
            CONVERSATION_CONFIG_RESULT_INVALID_API_HOST);
 
     static const char wrong_enabled_form[] =
         "service=aliyun_realtime&enabled=yes&"
-        "model=qwen3-omni-flash-realtime&api_host=&api_key=k";
+        "model=qwen-audio-3.0-realtime-flash&api_host=&api_key=k";
     assert(conversation_config_parse_form(
                wrong_enabled_form, strlen(wrong_enabled_form), &update) ==
            CONVERSATION_CONFIG_RESULT_INVALID_FORM);
@@ -349,7 +393,7 @@ static void test_portal_form_parser(void)
     const int prefix = snprintf(
         encoded_key_form, sizeof(encoded_key_form),
         "service=aliyun_realtime&enabled=on&"
-        "model=qwen3-omni-flash-realtime&api_host=&api_key=");
+        "model=qwen-audio-3.0-realtime-flash&api_host=&api_key=");
     assert(prefix > 0 && (size_t)prefix < sizeof(encoded_key_form));
     size_t encoded_length = (size_t)prefix;
     for (size_t index = 0U; index < CONVERSATION_API_KEY_MAX_LENGTH;
@@ -455,6 +499,7 @@ static void test_record_selection_handles_generation_wrap(void)
 int main(void)
 {
     test_defaults_models_and_secret_free_status();
+    test_retired_model_cannot_be_used_or_written();
     test_api_host_policy_and_endpoint_builder();
     test_update_preserves_key_and_controls_model();
     test_bounds_and_clear();

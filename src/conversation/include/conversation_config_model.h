@@ -25,13 +25,24 @@ typedef enum {
 } conversation_service_t;
 
 typedef enum {
+    /* Persisted ID 0 is retained only to decode and migrate old records.
+     * Never reuse its value for a different model. */
     CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME = 0,
     CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH,
     CONVERSATION_MODEL_COUNT,
 } conversation_model_t;
 
 #define CONVERSATION_DEFAULT_MODEL                                        \
-    CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME
+    CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH
+
+/* Boot-local migration feedback, not a history stored in NVS. A subsequent
+ * boot loading the current model reports NONE. PENDING still uses the new
+ * model in RAM; a later successful save completes persistence. */
+typedef enum {
+    CONVERSATION_CONFIG_MIGRATION_NONE = 0,
+    CONVERSATION_CONFIG_MIGRATION_COMPLETED,
+    CONVERSATION_CONFIG_MIGRATION_PENDING,
+} conversation_config_migration_t;
 
 typedef struct {
     uint16_t schema_version;
@@ -58,6 +69,8 @@ typedef struct {
     conversation_model_t model;
     bool enabled;
     bool configured;
+    conversation_config_migration_t migration;
+    uint32_t generation;
     bool shared_endpoint;
     char api_host[CONVERSATION_API_HOST_MAX_LENGTH + 1U];
 } conversation_config_status_t;

@@ -58,6 +58,23 @@ idf.py -B build \
   merge-bin --output rlcd_firmware_factory.bin
 install -m 0644 build/rlcd_firmware.bin build/rlcd_firmware_ota.bin
 
+# Guard the concrete upstream ERROR path that can print Authorization. The
+# request-construction strings themselves are necessary and are not secrets.
+ws_transport_object="build/esp-idf/tcp_transport/CMakeFiles/__idf_tcp_transport.dir/transport_ws.c.obj"
+if ! command -v strings >/dev/null; then
+  echo '缺少 strings，无法验证认证请求头日志保护。' >&2
+  exit 1
+fi
+if [[ ! -f "$ws_transport_object" ]]; then
+  echo '未找到 WebSocket transport 对象，无法验证认证请求头日志保护。' >&2
+  exit 1
+fi
+if LC_ALL=C strings "$ws_transport_object" | grep -F 'Error write Upgrade header' >/dev/null; then
+  echo 'WebSocket transport 仍包含原始认证请求头日志，拒绝发布。' >&2
+  exit 1
+fi
+echo 'WebSocket 认证请求头日志保护: OK'
+
 if ! grep -Fxq 'CONFIG_FATFS_API_ENCODING_UTF_8=y' sdkconfig || \
    ! grep -Fxq 'CONFIG_FATFS_MAX_LFN=127' sdkconfig; then
   echo '音乐文件名需要 FatFs UTF-8 和 127 字符 LFN；请按 docs/development.md 更新本机 sdkconfig。' >&2

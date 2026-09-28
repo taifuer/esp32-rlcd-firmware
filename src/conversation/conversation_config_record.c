@@ -177,12 +177,21 @@ bool conversation_config_record_decode(
                      CONVERSATION_API_HOST_MAX_LENGTH,
                      get_u16(encoded, API_HOST_LENGTH_OFFSET), true,
                      config.api_host, sizeof(config.api_host));
+    /* Only the decoder accepts the retired model ID. Validate every other
+     * field using the replacement, then return the original persisted ID so
+     * the storage service can select the newest record before migrating it.
+     * Runtime validation and the encoder never accept the retired model. */
+    const conversation_model_t stored_model = config.model;
+    if (stored_model == CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME) {
+        config.model = CONVERSATION_DEFAULT_MODEL;
+    }
     if (!decoded || conversation_config_validate(&config) !=
                         CONVERSATION_CONFIG_RESULT_OK) {
         conversation_config_clear_sensitive(&config, sizeof(config));
         return false;
     }
 
+    config.model = stored_model;
     record->generation = get_u32(encoded, GENERATION_OFFSET);
     record->config = config;
     conversation_config_clear_sensitive(&config, sizeof(config));

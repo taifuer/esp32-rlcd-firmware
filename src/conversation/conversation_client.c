@@ -6,11 +6,14 @@
 #include <string.h>
 
 #include "conversation_caption_sync.h"
+#include "conversation_lifecycle.h"
 #include "conversation_protocol.h"
 #include "conversation_turn_state.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "esp_random.h"
+#include "esp_tls_errors.h"
 #include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -41,6 +44,8 @@ enum {
 #define CONVERSATION_EVENT_RESPONSE_ENDED BIT3
 #define CONVERSATION_EVENT_STOPPED BIT4
 #define CONVERSATION_EVENT_FAILED BIT5
+
+static const char *TAG = "conversation";
 
 struct conversation_client {
     esp_websocket_client_handle_t websocket;
@@ -97,20 +102,33 @@ static void bump_revision_locked(conversation_client_t *client)
     }
 }
 
-static void set_phase(conversation_client_t *client,
-                      conversation_client_phase_t phase)
+static bool local_shutdown_locked(const conversation_client_t *client)
 {
-    lock_client(client);
-    client->status.phase = phase;
-    bump_revision_locked(client);
-    unlock_client(client);
-    xEventGroupSetBits(client->events, CONVERSATION_EVENT_STATE_CHANGED);
+    return client->closing || client->finish_in_progress || client->stop_sent;
+}
+
+static bool accept_events_locked(const conversation_client_t *client)
+{
+    const conversation_client_phase_t phase = client->status.phase;
+    return conversation_lifecycle_accept_events(
+        &client->status.diagnostics, local_shutdown_locked(client),
+        phase == CONVERSATION_CLIENT_PHASE_FAILED ||
+            phase == CONVERSATION_CLIENT_PHASE_STOPPING ||
+            phase == CONVERSATION_CLIENT_PHASE_STOPPED);
 }
 
 static void set_failed(conversation_client_t *client, esp_err_t error,
                        int service_code, const char *service_name)
 {
     lock_client(client);
+    /* Transport callbacks and local cleanup can race. Never replace the first
+     * concrete failure with a secondary parser/socket error during teardown,
+     * or turn a deliberate cancellation into a failed conversation. */
+    if (local_shutdown_locked(client) ||
+        client->status.phase == CONVERSATION_CLIENT_PHASE_FAILED) {
+        unlock_client(client);
+        return;
+    }
     client->status.phase = CONVERSATION_CLIENT_PHASE_FAILED;
     client->status.last_error = error != ESP_OK ? error : ESP_FAIL;
     client->status.service_error_code = service_code;
@@ -213,7 +231,8 @@ static bool sync_visible_caption_locked(conversation_client_t *client,
 static bool response_cancel_requested(conversation_client_t *client)
 {
     lock_client(client);
-    const bool requested = client->turn.response_cancel_sent;
+    const bool requested = client->turn.response_cancel_sent ||
+                           !accept_events_locked(client);
     unlock_client(client);
     return requested;
 }
@@ -256,6 +275,10 @@ static bool enqueue_pcm_bytes(conversation_client_t *client,
         return true;
     }
     lock_client(client);
+    if (!accept_events_locked(client)) {
+        unlock_client(client);
+        return true;
+    }
     client->status.received_audio_bytes += (uint32_t)sent;
     conversation_caption_sync_note_audio_received(
         &client->caption, sent);
@@ -277,10 +300,28 @@ static bool enqueue_pcm_bytes(conversation_client_t *client,
     return sent == length;
 }
 
+static void handle_transport_end(
+    conversation_client_t *client, conversation_transport_end_t end,
+    const esp_websocket_event_data_t *data);
+
 static void apply_server_event(conversation_client_t *client,
                                const conversation_server_event_t *event,
                                const uint8_t *audio)
 {
+    if (event->kind == CONVERSATION_SERVER_EVENT_SESSION_FINISHED) {
+        /* Protocol-level termination is also terminal: otherwise startup's
+         * readiness loop would wait for an acknowledgement that cannot come.
+         * Do not invent a WebSocket close code from this JSON event. */
+        ESP_LOGI(TAG, "session_finished");
+        handle_transport_end(client, CONVERSATION_TRANSPORT_END_FINISHED, NULL);
+        return;
+    }
+    lock_client(client);
+    const bool accept = accept_events_locked(client);
+    unlock_client(client);
+    if (!accept) {
+        return;
+    }
     if (event->kind == CONVERSATION_SERVER_EVENT_AUDIO_DELTA) {
         if (response_cancel_requested(client)) {
             return;
@@ -301,17 +342,32 @@ static void apply_server_event(conversation_client_t *client,
     }
 
     EventBits_t bits = CONVERSATION_EVENT_STATE_CHANGED;
+    bool session_created = false;
+    bool session_updated = false;
     lock_client(client);
+    /* A cancellation can arrive while PCM backpressure releases this mutex. */
+    if (!accept_events_locked(client)) {
+        unlock_client(client);
+        return;
+    }
     const bool already_failed =
         client->status.phase == CONVERSATION_CLIENT_PHASE_FAILED;
     switch (event->kind) {
     case CONVERSATION_SERVER_EVENT_SESSION_CREATED:
-        if (!already_failed) {
+        session_created = !client->status.diagnostics.session_created;
+        client->status.diagnostics.session_created = true;
+        /* A delayed/duplicate created event is evidence, not a request to
+         * rewind an acknowledged session or an already active user turn. */
+        if (client->status.phase == CONVERSATION_CLIENT_PHASE_CONNECTING) {
             client->status.phase = CONVERSATION_CLIENT_PHASE_STARTING;
         }
         break;
     case CONVERSATION_SERVER_EVENT_SESSION_UPDATED:
-        if (!already_failed) {
+        session_updated = !client->status.diagnostics.session_ready;
+        client->status.diagnostics.session_ready = true;
+        if (session_updated &&
+            (client->status.phase == CONVERSATION_CLIENT_PHASE_CONNECTING ||
+             client->status.phase == CONVERSATION_CLIENT_PHASE_STARTING)) {
             conversation_turn_state_mark_session_ready(&client->turn);
             client->status.turn_index = client->turn.index;
             client->status.phase = CONVERSATION_CLIENT_PHASE_LISTENING;
@@ -383,10 +439,7 @@ static void apply_server_event(conversation_client_t *client,
         }
         break;
     case CONVERSATION_SERVER_EVENT_SESSION_FINISHED:
-        if (!already_failed) {
-            client->status.phase = CONVERSATION_CLIENT_PHASE_STOPPED;
-        }
-        bits |= CONVERSATION_EVENT_STOPPED;
+        /* Handled before the ordinary session-event gate above. */
         break;
     case CONVERSATION_SERVER_EVENT_ERROR:
         client->turn.response_requested = false;
@@ -405,6 +458,12 @@ static void apply_server_event(conversation_client_t *client,
     }
     bump_revision_locked(client);
     unlock_client(client);
+    if (session_created) {
+        ESP_LOGI(TAG, "session_created");
+    }
+    if (session_updated) {
+        ESP_LOGI(TAG, "session_updated");
+    }
     xEventGroupSetBits(client->events, bits);
 }
 
@@ -442,6 +501,12 @@ static void finish_text_message(conversation_client_t *client)
 static void handle_data_event(conversation_client_t *client,
                               const esp_websocket_event_data_t *data)
 {
+    lock_client(client);
+    const bool accept = accept_events_locked(client);
+    unlock_client(client);
+    if (!accept) {
+        return;
+    }
     if (data == NULL || data->data_len < 0 || data->payload_len < 0 ||
         data->payload_offset < 0 ||
         data->payload_offset > data->payload_len ||
@@ -498,9 +563,9 @@ static void handle_websocket_error(
     const esp_websocket_event_data_t *data)
 {
     lock_client(client);
-    const bool expected_shutdown = client->closing ||
-                                   client->finish_in_progress ||
-                                   client->stop_sent;
+    const bool expected_shutdown = local_shutdown_locked(client) ||
+                                   client->status.phase ==
+                                       CONVERSATION_CLIENT_PHASE_FAILED;
     unlock_client(client);
     if (expected_shutdown) {
         return;
@@ -509,12 +574,30 @@ static void handle_websocket_error(
     int service_code = 0;
     const char *service_name = "TransportError";
     if (data != NULL) {
+        /* esp_websocket_client also reports failed HTTP upgrades as TCP
+         * transport errors. Preserve the actual HTTP status before looking
+         * at errno so 401/403/429 do not become vague network failures. */
+        const int handshake_status =
+            data->error_handle.esp_ws_handshake_status_code;
+        if (handshake_status >= 400 && handshake_status <= 599) {
+            set_failed(client, error, handshake_status, "HandshakeError");
+            return;
+        }
         switch (data->error_handle.error_type) {
         case WEBSOCKET_ERROR_TYPE_TCP_TRANSPORT:
             if (data->error_handle.esp_tls_last_esp_err != ESP_OK) {
                 error = data->error_handle.esp_tls_last_esp_err;
             }
             service_code = data->error_handle.esp_transport_sock_errno;
+            if (error == ESP_ERR_ESP_TLS_CONNECTION_TIMEOUT ||
+                error == ESP_ERR_ESP_TLS_SERVER_HANDSHAKE_TIMEOUT) {
+                error = ESP_ERR_TIMEOUT;
+                service_name = "TransportTimeout";
+            } else if (data->error_handle.esp_tls_cert_verify_flags != 0 ||
+                       error == ESP_ERR_MBEDTLS_SSL_HANDSHAKE_FAILED ||
+                       error == ESP_ERR_MBEDTLS_X509_CRT_PARSE_FAILED) {
+                service_name = "TlsError";
+            }
             break;
         case WEBSOCKET_ERROR_TYPE_HANDSHAKE:
             service_code = data->error_handle.esp_ws_handshake_status_code;
@@ -532,6 +615,12 @@ static void handle_websocket_error(
         case WEBSOCKET_ERROR_TYPE_SERVER_CLOSE:
             service_code = data->close_status_code;
             service_name = "ServerClose";
+            lock_client(client);
+            if (client->status.diagnostics.close_code == 0U &&
+                conversation_lifecycle_valid_close_code(service_code)) {
+                client->status.diagnostics.close_code = (uint16_t)service_code;
+            }
+            unlock_client(client);
             break;
         case WEBSOCKET_ERROR_TYPE_NONE:
         default:
@@ -539,6 +628,50 @@ static void handle_websocket_error(
         }
     }
     set_failed(client, error, service_code, service_name);
+}
+
+static void handle_transport_end(
+    conversation_client_t *client, conversation_transport_end_t end,
+    const esp_websocket_event_data_t *data)
+{
+    lock_client(client);
+    const bool expected = local_shutdown_locked(client);
+    const bool fail = conversation_lifecycle_end(
+        &client->status.diagnostics, end,
+        data != NULL ? data->close_status_code : 0, expected,
+        client->status.phase == CONVERSATION_CLIENT_PHASE_FAILED);
+    client->status.connected = false;
+    client->turn.response_requested = false;
+    client->turn.response_active = false;
+    if (fail) {
+        client->status.phase = CONVERSATION_CLIENT_PHASE_FAILED;
+        client->status.last_error = ESP_ERR_INVALID_STATE;
+        client->status.service_error_code =
+            client->status.diagnostics.close_code;
+        copy_status_text(
+            client->status.service_error_name,
+            sizeof(client->status.service_error_name),
+            end == CONVERSATION_TRANSPORT_END_CLOSED ? "ServerClose" :
+            end == CONVERSATION_TRANSPORT_END_DISCONNECTED ? "Disconnected" :
+                                                           "TransportStopped");
+    } else if (expected &&
+               client->status.phase != CONVERSATION_CLIENT_PHASE_FAILED) {
+        client->status.phase = CONVERSATION_CLIENT_PHASE_STOPPED;
+    }
+    const bool failed =
+        client->status.phase == CONVERSATION_CLIENT_PHASE_FAILED;
+    const unsigned close_code = client->status.diagnostics.close_code;
+    bump_revision_locked(client);
+    unlock_client(client);
+    /* Numeric code only: event data_ptr can contain a non-NUL-terminated,
+     * arbitrary peer reason and must never be logged or retained. */
+    ESP_LOGI(TAG, "transport_end=%u close_code=%u expected=%u",
+             (unsigned)end, close_code, expected ? 1U : 0U);
+    xEventGroupClearBits(client->events, CONVERSATION_EVENT_CONNECTED);
+    xEventGroupSetBits(client->events,
+                       CONVERSATION_EVENT_STATE_CHANGED |
+                           (failed ? CONVERSATION_EVENT_FAILED :
+                                     CONVERSATION_EVENT_STOPPED));
 }
 
 static void websocket_event_handler(void *handler_arg,
@@ -551,15 +684,25 @@ static void websocket_event_handler(void *handler_arg,
         return;
     }
     switch ((esp_websocket_event_id_t)event_id) {
-    case WEBSOCKET_EVENT_CONNECTED:
+    case WEBSOCKET_EVENT_CONNECTED: {
         lock_client(client);
-        client->status.connected = true;
-        client->status.last_error = ESP_OK;
-        bump_revision_locked(client);
+        const bool accept = accept_events_locked(client);
+        const bool first = !client->status.diagnostics.websocket_connected;
+        if (accept) {
+            client->status.connected = true;
+            client->status.diagnostics.websocket_connected = true;
+            bump_revision_locked(client);
+        }
         unlock_client(client);
-        xEventGroupSetBits(client->events, CONVERSATION_EVENT_CONNECTED |
-                                               CONVERSATION_EVENT_STATE_CHANGED);
+        if (accept) {
+            if (first) {
+                ESP_LOGI(TAG, "ws_connected");
+            }
+            xEventGroupSetBits(client->events, CONVERSATION_EVENT_CONNECTED |
+                                                   CONVERSATION_EVENT_STATE_CHANGED);
+        }
         break;
+    }
     case WEBSOCKET_EVENT_DATA:
         handle_data_event(client,
                           (const esp_websocket_event_data_t *)event_data);
@@ -569,25 +712,22 @@ static void websocket_event_handler(void *handler_arg,
             client, (const esp_websocket_event_data_t *)event_data);
         break;
     case WEBSOCKET_EVENT_DISCONNECTED:
-        lock_client(client);
-        client->status.connected = false;
-        const bool expected = client->closing || client->stop_sent ||
-                              client->finish_in_progress;
-        if (!expected &&
-            client->status.phase != CONVERSATION_CLIENT_PHASE_FAILED) {
-            client->status.phase = CONVERSATION_CLIENT_PHASE_FAILED;
-            client->status.last_error = ESP_ERR_INVALID_STATE;
-        }
-        bump_revision_locked(client);
-        unlock_client(client);
-        xEventGroupSetBits(client->events,
-                           CONVERSATION_EVENT_STATE_CHANGED |
-                               (expected ? 0U : CONVERSATION_EVENT_FAILED));
+        handle_transport_end(
+            client, CONVERSATION_TRANSPORT_END_DISCONNECTED,
+            (const esp_websocket_event_data_t *)event_data);
         break;
     case WEBSOCKET_EVENT_CLOSED:
+        handle_transport_end(
+            client, CONVERSATION_TRANSPORT_END_CLOSED,
+            (const esp_websocket_event_data_t *)event_data);
+        break;
+    case WEBSOCKET_EVENT_FINISH:
+        handle_transport_end(
+            client, CONVERSATION_TRANSPORT_END_FINISHED,
+            (const esp_websocket_event_data_t *)event_data);
+        break;
     case WEBSOCKET_EVENT_BEFORE_CONNECT:
     case WEBSOCKET_EVENT_BEGIN:
-    case WEBSOCKET_EVENT_FINISH:
     case WEBSOCKET_EVENT_ANY:
     case WEBSOCKET_EVENT_MAX:
     default:
@@ -702,7 +842,16 @@ esp_err_t conversation_client_start_transport(
     if (client == NULL || client->websocket == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
-    set_phase(client, CONVERSATION_CLIENT_PHASE_CONNECTING);
+    lock_client(client);
+    if (client->status.phase != CONVERSATION_CLIENT_PHASE_IDLE ||
+        !accept_events_locked(client)) {
+        unlock_client(client);
+        return ESP_ERR_INVALID_STATE;
+    }
+    client->status.phase = CONVERSATION_CLIENT_PHASE_CONNECTING;
+    bump_revision_locked(client);
+    unlock_client(client);
+    xEventGroupSetBits(client->events, CONVERSATION_EVENT_STATE_CHANGED);
     const esp_err_t error = esp_websocket_client_start(client->websocket);
     if (error != ESP_OK) {
         set_failed(client, error, 0, "TransportStart");
@@ -716,9 +865,11 @@ esp_err_t conversation_client_send_start(conversation_client_t *client)
         return ESP_ERR_INVALID_STATE;
     }
     lock_client(client);
-    const bool already_sent = client->start_sent;
+    const bool can_send = !client->start_sent &&
+                          accept_events_locked(client) &&
+                          client->status.connected;
     unlock_client(client);
-    if (already_sent ||
+    if (!can_send ||
         !esp_websocket_client_is_connected(client->websocket)) {
         return ESP_ERR_INVALID_STATE;
     }
@@ -739,16 +890,23 @@ esp_err_t conversation_client_send_start(conversation_client_t *client)
     if (error == ESP_OK) {
         lock_client(client);
         client->start_sent = true;
+        const bool first = !client->status.diagnostics.session_update_sent;
+        /* A successful socket write is a historical milestone even if a
+         * peer close was dispatched before this synchronous call returned.
+         * It must not resurrect the connection or rewind its current phase. */
+        client->status.diagnostics.session_update_sent = true;
         /* session.updated can be processed by the WebSocket task before the
          * synchronous send call returns. Never move that newer LISTENING (or
          * FAILED) state backwards to STARTING. */
-        if (client->status.phase !=
-                CONVERSATION_CLIENT_PHASE_LISTENING &&
-            client->status.phase != CONVERSATION_CLIENT_PHASE_FAILED) {
+        if (accept_events_locked(client) &&
+            client->status.phase == CONVERSATION_CLIENT_PHASE_CONNECTING) {
             client->status.phase = CONVERSATION_CLIENT_PHASE_STARTING;
         }
         bump_revision_locked(client);
         unlock_client(client);
+        if (first) {
+            ESP_LOGI(TAG, "session_update_sent");
+        }
         xEventGroupSetBits(client->events,
                            CONVERSATION_EVENT_STATE_CHANGED);
     }
@@ -811,7 +969,8 @@ esp_err_t conversation_client_send_speech(conversation_client_t *client)
         return ESP_ERR_INVALID_STATE;
     }
     lock_client(client);
-    const bool can_start = client->start_sent && client->turn.index > 0U &&
+    const bool can_start = accept_events_locked(client) &&
+                           client->start_sent && client->turn.index > 0U &&
                            !client->turn.send_speech_sent &&
                            client->status.phase ==
                                CONVERSATION_CLIENT_PHASE_LISTENING;
@@ -840,7 +999,8 @@ esp_err_t conversation_client_send_pcm(conversation_client_t *client,
         return ESP_ERR_INVALID_ARG;
     }
     lock_client(client);
-    const bool can_send = client->turn.send_speech_sent &&
+    const bool can_send = accept_events_locked(client) &&
+                          client->turn.send_speech_sent &&
                           !client->turn.audio_committed &&
                           !client->turn.stop_speech_sent &&
                           !client->turn.cancel_speech_sent;
@@ -879,7 +1039,8 @@ esp_err_t conversation_client_stop_speech(conversation_client_t *client)
         return ESP_ERR_INVALID_STATE;
     }
     lock_client(client);
-    const bool can_stop = client->turn.send_speech_sent &&
+    const bool can_stop = accept_events_locked(client) &&
+                          client->turn.send_speech_sent &&
                           client->turn.audio_sent &&
                           !client->turn.stop_speech_sent &&
                           !client->turn.cancel_speech_sent;
@@ -918,7 +1079,8 @@ esp_err_t conversation_client_stop_speech(conversation_client_t *client)
         lock_client(client);
         client->turn.stop_speech_sent = true;
         client->status.speech_ended = true;
-        if (client->status.phase !=
+        if (accept_events_locked(client) &&
+            client->status.phase !=
                 CONVERSATION_CLIENT_PHASE_RESPONDING &&
             client->status.phase !=
                 CONVERSATION_CLIENT_PHASE_RESPONSE_ENDED &&
@@ -1036,7 +1198,7 @@ esp_err_t conversation_client_cancel_turn(
          * separate clear acknowledgement. No response was created for this
          * cancelled turn, so this is its local turn boundary. */
         lock_client(client);
-        if (client->status.phase != CONVERSATION_CLIENT_PHASE_FAILED) {
+        if (accept_events_locked(client)) {
             client->status.phase =
                 CONVERSATION_CLIENT_PHASE_RESPONSE_ENDED;
             client->status.response_ended = true;

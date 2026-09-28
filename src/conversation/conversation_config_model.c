@@ -175,8 +175,7 @@ bool conversation_service_is_supported(conversation_service_t service)
 
 bool conversation_model_is_supported(conversation_model_t model)
 {
-    return model == CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME ||
-           model == CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH;
+    return model == CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH;
 }
 
 const char *conversation_model_name(conversation_model_t model)
@@ -202,7 +201,8 @@ bool conversation_model_from_name(const char *name,
         const conversation_model_t candidate =
             (conversation_model_t)value;
         const char *candidate_name = conversation_model_name(candidate);
-        if (candidate_name != NULL && strcmp(name, candidate_name) == 0) {
+        if (conversation_model_is_supported(candidate) &&
+            candidate_name != NULL && strcmp(name, candidate_name) == 0) {
             *model = candidate;
             return true;
         }
@@ -282,6 +282,7 @@ bool conversation_config_build_endpoint(const char *api_host,
 {
     const char *name = conversation_model_name(model);
     if (endpoint == NULL || capacity == 0U || name == NULL ||
+        !conversation_model_is_supported(model) ||
         !conversation_api_host_is_allowed(api_host)) {
         if (endpoint != NULL && capacity > 0U) {
             endpoint[0] = '\0';

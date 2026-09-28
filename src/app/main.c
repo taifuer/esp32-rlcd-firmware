@@ -592,13 +592,11 @@ static bool accept_cloud_conversation_status(
 static const char *cloud_voice_error_detail(
     const audio_conversation_status_t *status)
 {
-    if (status != NULL && status->service_error_name[0] != '\0') {
-        return status->service_error_name;
-    }
-    if (status != NULL && status->last_error != ESP_OK) {
-        return esp_err_to_name(status->last_error);
-    }
-    return "Cloud conversation stopped";
+    return conversation_feedback_error_hint(
+        status != NULL &&
+                status->feedback_error != CONVERSATION_FEEDBACK_ERROR_NONE
+            ? status->feedback_error
+            : CONVERSATION_FEEDBACK_ERROR_UNKNOWN);
 }
 
 static bool voice_engine_available(
@@ -1551,7 +1549,10 @@ void app_main(void)
     if (conversation_config_error == ESP_OK) {
         (void)conversation_config_get_status(&cloud_config_status);
     }
-    audio_conversation_status_t cloud_voice_status = {0};
+    /* This main-task-only snapshot contains two text windows. Keep it out of
+     * the already tight main stack; each poll still copies the audio worker's
+     * current state, including cleared text after cancel/dismiss. */
+    static audio_conversation_status_t cloud_voice_status;
     audio_conversation_get_status(&cloud_voice_status);
     uint32_t previous_cloud_voice_revision =
         cloud_voice_status.revision;

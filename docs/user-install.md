@@ -3,7 +3,7 @@
 本文面向只想使用发布固件、不参与源码开发的用户。开发者请参阅
 [开发与发布指南](development.md)和[开发烧录指南](flashing.md)。
 
-本文的下载与烧录示例以 v0.30.0 正式版为准；功能交互同时跟随当前源码。
+本文的下载与烧录示例以 v0.31.0 正式版为准；功能交互同时跟随当前源码。
 AI 对话仍是默认关闭的 Beta 功能；未开启、离线或处于 `SAVING` 时继续使用本地
 MultiNet 指令识别。市场看板同样是可选 Beta 功能，默认关闭，开启方法见
 [市场看板](market-dashboard.md)。
@@ -13,7 +13,7 @@ MultiNet 指令识别。市场看板同样是可选 Beta 功能，默认关闭�
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.30.0/`](../dist/v0.30.0/)。
+[`dist/v0.31.0/`](../dist/v0.31.0/)。
 GitHub 的 Latest 入口指向最新正式版本，历史固件也在 `dist/` 中按版本保存。
 v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明；v0.18.0
 起还包含离线语音模型。
@@ -26,13 +26,13 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 
 | 文件 | 用途 | 安装方式 |
 | --- | --- | --- |
-| `esp32-rlcd-firmware-v0.30.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，包含语音模型并清除 NVS |
-| `esp32-rlcd-firmware-v0.30.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
-| `esp32-rlcd-firmware-v0.30.0-model.bin` | 为旧设备补装自 v0.18.0 起提供的离线语音模型 | 仅与同版本 OTA 通过项目 USB 脚本写入，不可单独启动或上传网页 |
+| `esp32-rlcd-firmware-v0.31.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，包含语音模型并清除 NVS |
+| `esp32-rlcd-firmware-v0.31.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
+| `esp32-rlcd-firmware-v0.31.0-model.bin` | 为旧设备补装自 v0.18.0 起提供的离线语音模型 | 仅与同版本 OTA 通过项目 USB 脚本写入，不可单独启动或上传网页 |
 
 目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
 参数；全部发布二进制的 SHA-256 见
-[`dist/v0.30.0/SHA256SUMS`](../dist/v0.30.0/SHA256SUMS)。
+[`dist/v0.31.0/SHA256SUMS`](../dist/v0.31.0/SHA256SUMS)。
 
 不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
 镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
@@ -41,18 +41,21 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 ### 从旧版本升级
 
 v0.7.0—v0.9.0 没有在线更新客户端，可从原系统中心最后一页的本地更新入口上传
-v0.30.0 `-ota.bin`，或使用 USB 写入。v0.10.0 及更新版本可直接从 `ONLINE UPDATE`
+v0.31.0 `-ota.bin`，或使用 USB 写入。v0.10.0 及更新版本可直接从 `ONLINE UPDATE`
 升级到当前稳定版，不需要逐版本安装；v0.6.0 及更早版本必须使用 Factory 固件完整安装。
 
 在线更新和网页本地 OTA 只更新应用，不写语音模型。从 v0.16.0 等旧正式版升级后，时钟、
 低功耗及其他功能可以正常使用，但对话页会提示模型不可用。要使用离线语音指令，可执行
 一次“USB 应用与模型更新”；该方法保留 Wi-Fi 和其他 NVS 设置。首次安装或允许重新配网时，
-直接写入 v0.30.0 Factory 即可同时安装应用和模型。
+直接写入 v0.31.0 Factory 即可同时安装应用和模型。
 
-v0.30.0 会迁移并保留原有设备偏好；新增偏好的默认值为显示全部日常页、顺序播放音乐。
+v0.30.0 起迁移并保留原有设备偏好；新增偏好的默认值为显示全部日常页、顺序播放音乐。
 从开发版升级时保留已保存的选择。若之后回退旧固件，
 旧版会因设置格式较新而使用默认偏好并禁止改写；重新升级可恢复新版保存的偏好。
 Wi-Fi 等独立配置不受此规则影响，详见[升级与回退](v0.30-plan.md#升级与回退)。
+
+v0.31.0 自动迁移 AI 旧模型配置，保留 API Key、Host 和开关。新模型仍需在相同地域与
+业务空间开通调用权限，见[AI 对话配置](cloud-voice.md#准备和配置)。
 
 设备默认只检查 `stable.json`；只有在设置门户明确开启 Beta 固件更新后才检查
 `testing.json`，版本名本身不会切换通道。联网后的自动流程只记录检查结果，不会自动下载
@@ -89,7 +92,7 @@ Wi-Fi 等独立配置不受此规则影响，详见[升级与回退](v0.30-plan.
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.30.0
+cd dist/v0.31.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -97,18 +100,18 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.30.0/esp32-rlcd-firmware-v0.30.0-factory.bin
-shasum -a 256 dist/v0.30.0/esp32-rlcd-firmware-v0.30.0-ota.bin
-shasum -a 256 dist/v0.30.0/esp32-rlcd-firmware-v0.30.0-model.bin
+shasum -a 256 dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-factory.bin
+shasum -a 256 dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-ota.bin
+shasum -a 256 dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-model.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.30.0\esp32-rlcd-firmware-v0.30.0-factory.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.30.0\esp32-rlcd-firmware-v0.30.0-ota.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.30.0\esp32-rlcd-firmware-v0.30.0-model.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.30.0\SHA256SUMS
+(Get-FileHash .\dist\v0.31.0\esp32-rlcd-firmware-v0.31.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.31.0\esp32-rlcd-firmware-v0.31.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.31.0\esp32-rlcd-firmware-v0.31.0-model.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.31.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -128,7 +131,7 @@ Get-Content .\dist\v0.30.0\SHA256SUMS
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.30.0/esp32-rlcd-firmware-v0.30.0-factory.bin \
+  --firmware dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-factory.bin \
   --confirm
 ```
 
@@ -169,7 +172,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.30.0\esp32-rlcd-firmware-v0.30.0-factory.bin
+  0x0 .\dist\v0.31.0\esp32-rlcd-firmware-v0.31.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -187,7 +190,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.30.0/esp32-rlcd-firmware-v0.30.0-factory.bin
+  0x0 dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -204,13 +207,13 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
 ## 旧设备补装离线语音模型
 
 已经运行 v0.7.0 或更新版本、并且希望保留 Wi-Fi 与设备偏好的设备，可通过 Windows + WSL
-一次写入 v0.30.0 应用和同版本模型。离线语音模型自 v0.18.0 起提供。先把 OTA、模型和
-`SHA256SUMS` 放在同一目录；从 Release 下载或使用仓库 `dist/v0.30.0/` 即已满足这一
+一次写入 v0.31.0 应用和同版本模型。离线语音模型自 v0.18.0 起提供。先把 OTA、模型和
+`SHA256SUMS` 放在同一目录；从 Release 下载或使用仓库 `dist/v0.31.0/` 即已满足这一
 条件。进入 ROM 下载模式后执行：
 
 ```bash
 ./scripts/update-app.sh --port COM5 \
-  --firmware dist/v0.30.0/esp32-rlcd-firmware-v0.30.0-ota.bin \
+  --firmware dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-ota.bin \
   --confirm
 ```
 
@@ -374,7 +377,7 @@ USB 校时脚本。若希望关机仍保持时间，应按微雪产品文档使�
 
 ### 对话页显示模型不可用
 
-这通常表示设备从旧版本仅通过在线更新或网页 OTA 安装了 v0.30.0 应用。其他功能不受
+这通常表示设备从旧版本仅通过在线更新或网页 OTA 安装了 v0.31.0 应用。其他功能不受
 影响；按“旧设备补装离线语音模型”通过 USB 同时写入同版本 OTA 和模型，或使用 Factory
 重新完整安装。`-model.bin` 不能单独启动，也不能上传到设置门户。
 

@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "conversation_config.h"
+#include "conversation_diagnostics.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -43,6 +44,7 @@ typedef struct {
     uint32_t received_audio_bytes;
     esp_err_t last_error;
     int service_error_code;
+    conversation_diagnostics_t diagnostics;
     char service_error_name[65];
     char transcript[CONVERSATION_CLIENT_TEXT_CAPACITY];
     char response[CONVERSATION_CLIENT_TEXT_CAPACITY];

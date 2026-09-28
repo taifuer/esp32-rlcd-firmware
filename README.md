@@ -6,13 +6,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.30.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.31.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
-v0.30.0 增加日常页面显隐、音乐循环播放与定时停止，并改善天气保存和网页断线后的操作体验。
-具体变化见[版本说明](dist/v0.30.0/README.md)，配置方法见[设备设置](docs/device-settings.md)。
+v0.31.0 将 AI 默认模型更新为 Qwen Audio 3.0 Realtime Flash，自动迁移旧配置，并完善
+连接失败提示与最近对话结果。具体变化见[版本说明](dist/v0.31.0/README.md)。
+升级保留 API Key，但新模型仍需在百炼对应业务空间授权，步骤见[AI 对话配置](docs/cloud-voice.md#准备和配置)。
 
 ## 效果预览
 
@@ -36,7 +37,7 @@ v0.30.0 增加日常页面显隐、音乐循环播放与定时停止，并改善
 
 ## 当前功能
 
-以下对应 v0.30.0。
+以下对应 v0.31.0。
 
 - 三段式首屏显示公历、农历、星期、温湿度、三态环境舒适度、电量和网络结果；`NORMAL`
   等大显示 `HH:MM:SS`，`SAVING` 显示 `HH:MM`；
@@ -63,7 +64,7 @@ v0.30.0 增加日常页面显隐、音乐循环播放与定时停止，并改善
   且处于 `NORMAL` 时，在同一 WebSocket 会话中支持最多 5 轮中英文问答；每轮仍由按键
   明确开始，续问等待 30 秒，新一轮可在会话开始后的 5 分钟内发起；已经开始的回答会
   完整结束。回答默认简短，回复文字会跟随本地播放进度滚动显示最新 4 行。停用、离线、
-  省电或未配置时自动使用本地 MultiNet；默认模型为 `qwen3-omni-flash-realtime`，无需创建百炼应用或填写
+  省电或未配置时自动使用本地 MultiNet；默认模型为 `qwen-audio-3.0-realtime-flash`，无需创建百炼应用或填写
   Workspace ID、App ID，也不使用唤醒词或后台监听；
 - Chat 属于日常功能；系统页只留设置、在线更新和状态，页脚明确写出按键目的地；
 - 日常页与系统页停留在用户选中的页面，不自动返回；正常开机仍进入时钟；
@@ -112,7 +113,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.30.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.31.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -120,11 +121,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.30.0
+cd dist/v0.31.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.30.0/esp32-rlcd-firmware-v0.30.0-factory.bin \
+  --firmware dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-factory.bin \
   --confirm
 ```
 
@@ -191,7 +192,7 @@ cd ../..
 - [自动配网与网络校时](docs/network-time.md)：配网、NVS、SNTP 与离线行为；
 - [界面与按键](docs/home-screen.md)：首屏、月历、条件图片页、系统中心和实体按键；
 - [设备设置](docs/device-settings.md)：网页入口、设置分区、设备端操作与页面停留规则；
-- [AI 对话 Beta](docs/cloud-voice.md)：API Key 获取、多轮交互、离线回退、
+- [AI 对话 Beta](docs/cloud-voice.md)：API Key 获取、模型授权、多轮交互、离线回退、
   数据与费用边界；
 - [天气 Beta](docs/weather.md)：QWeather 凭据、级联选址、刷新、离线缓存和费用边界；
 - [市场看板 Beta](docs/market-dashboard.md)：指数选择、刷新规则、报价时间和数据来源；

@@ -18,6 +18,7 @@ static bool s_initialized;
 static conversation_config_t s_config;
 static conversation_config_record_slot_t s_active_slot;
 static uint32_t s_generation;
+static conversation_config_migration_t s_migration;
 
 static bool recoverable_record_error(esp_err_t error)
 {
@@ -136,10 +137,6 @@ esp_err_t conversation_config_init(void)
         error = read_record_slot(handle, CONVERSATION_CONFIG_RECORD_SLOT_B,
                                  &slot_b, &slot_b_valid);
     }
-    if (handle_open) {
-        nvs_close(handle);
-    }
-
     if (error == ESP_OK) {
         const conversation_config_record_slot_t latest =
             conversation_config_record_select_latest(
@@ -148,6 +145,7 @@ esp_err_t conversation_config_init(void)
         conversation_config_reset(&s_config);
         s_active_slot = latest;
         s_generation = 0U;
+        s_migration = CONVERSATION_CONFIG_MIGRATION_NONE;
         if (latest == CONVERSATION_CONFIG_RECORD_SLOT_A) {
             s_config = slot_a.config;
             s_generation = slot_a.generation;
@@ -155,7 +153,30 @@ esp_err_t conversation_config_init(void)
             s_config = slot_b.config;
             s_generation = slot_b.generation;
         }
+        if (s_config.model ==
+            CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME) {
+            /* Keep the newest valid source slot intact until the replacement
+             * record has been committed to the other slot. A storage failure
+             * must neither erase credentials nor use the retired model nor
+             * make an otherwise usable local boot fail. */
+            s_config.model = CONVERSATION_DEFAULT_MODEL;
+            s_migration = CONVERSATION_CONFIG_MIGRATION_PENDING;
+            const conversation_config_record_slot_t target =
+                latest == CONVERSATION_CONFIG_RECORD_SLOT_A
+                    ? CONVERSATION_CONFIG_RECORD_SLOT_B
+                    : CONVERSATION_CONFIG_RECORD_SLOT_A;
+            const uint32_t generation = s_generation + 1U;
+            if (write_record_slot(handle, target, generation, &s_config) ==
+                ESP_OK) {
+                s_active_slot = target;
+                s_generation = generation;
+                s_migration = CONVERSATION_CONFIG_MIGRATION_COMPLETED;
+            }
+        }
         s_initialized = true;
+    }
+    if (handle_open) {
+        nvs_close(handle);
     }
     conversation_config_clear_sensitive(&slot_a, sizeof(slot_a));
     conversation_config_clear_sensitive(&slot_b, sizeof(slot_b));
@@ -194,6 +215,8 @@ esp_err_t conversation_config_get_status(
         return ESP_ERR_TIMEOUT;
     }
     conversation_config_make_status(&s_config, status);
+    status->migration = s_migration;
+    status->generation = s_generation;
     xSemaphoreGive(s_mutex);
     return ESP_OK;
 }
@@ -238,6 +261,9 @@ esp_err_t conversation_config_save(
         s_config = candidate;
         s_active_slot = target;
         s_generation = generation;
+        if (s_migration == CONVERSATION_CONFIG_MIGRATION_PENDING) {
+            s_migration = CONVERSATION_CONFIG_MIGRATION_COMPLETED;
+        }
     }
     conversation_config_clear_sensitive(&candidate, sizeof(candidate));
     xSemaphoreGive(s_mutex);
@@ -266,7 +292,11 @@ esp_err_t conversation_config_clear(void)
     if (error == ESP_OK) {
         conversation_config_reset(&s_config);
         s_active_slot = CONVERSATION_CONFIG_RECORD_SLOT_NONE;
-        s_generation = 0U;
+        /* Preserve a boot-local configuration identity across clear/save.
+         * Resetting to zero could associate a prior result with a different
+         * API key saved later in this boot. No cleared record is retained. */
+        ++s_generation;
+        s_migration = CONVERSATION_CONFIG_MIGRATION_NONE;
     }
     xSemaphoreGive(s_mutex);
     return error;

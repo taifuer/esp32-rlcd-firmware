@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "conversation_feedback.h"
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -41,6 +42,7 @@ typedef struct {
     uint8_t max_turns;
     audio_conversation_state_t state;
     esp_err_t last_error;
+    conversation_feedback_error_t feedback_error;
     int service_error_code;
     char service_error_name[65];
     char transcript[AUDIO_CONVERSATION_TEXT_CAPACITY];
@@ -48,6 +50,10 @@ typedef struct {
 } audio_conversation_status_t;
 
 void audio_conversation_get_status(audio_conversation_status_t *status);
+/* Last finished cloud session only; not reset by dismiss or local commands.
+ * Presentation must match config_generation to the current saved config.
+ * This summary is RAM-only and never starts a connection or a microphone. */
+void audio_conversation_get_last_result(conversation_feedback_status_t *status);
 /* Start network/protocol preparation as soon as the VOICE-page hold is
  * accepted. Capture begins only after release_key() is called. */
 esp_err_t audio_conversation_start(uint32_t generation);

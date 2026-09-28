@@ -66,7 +66,7 @@ elseif(DEFINED ENV{RLCD_PROJECT_VERSION} AND
        NOT "$ENV{RLCD_PROJECT_VERSION}" STREQUAL "")
     set(PROJECT_VER "$ENV{RLCD_PROJECT_VERSION}")
 else()
-    set(PROJECT_VER "0.30.0")
+    set(PROJECT_VER "0.31.0")
 endif()
 set(COMPONENTS app)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
@@ -82,3 +82,10 @@ target_compile_options(${st7305_component_lib} PRIVATE -Wno-unused-function)
 # on a runtime log-level setting.
 idf_component_get_property(qrcode_component_lib qrcode COMPONENT_LIB)
 target_compile_definitions(${qrcode_component_lib} PRIVATE LOG_LOCAL_LEVEL=ESP_LOG_NONE)
+
+# The pinned WebSocket transport logs the complete HTTP Upgrade request at
+# ERROR level on a write failure, including Authorization. Compile transport
+# logs out; retain structured errors from esp-tls, the HTTP/WebSocket clients
+# and our own fixed, credential-free conversation diagnostics.
+idf_component_get_property(tcp_transport_component_lib tcp_transport COMPONENT_LIB)
+target_compile_definitions(${tcp_transport_component_lib} PRIVATE LOG_LOCAL_LEVEL=ESP_LOG_NONE)

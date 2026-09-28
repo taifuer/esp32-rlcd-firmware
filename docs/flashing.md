@@ -18,6 +18,19 @@ USB Serial/JTAG
 
 COM 号可能变化，但 VID/PID 不应变化。`flash.sh` 会在写入前强制核对设备身份。
 
+如果 `usbipd list` 能看到 `303a:1001`，状态却是 `Shared (forced)`，而 Windows
+没有对应 COM 口，先解除**这个设备**的共享占用，不要反复尝试 WSL attach。
+按列表核对实际 BUSID，在 Windows 管理员 PowerShell 执行
+`usbipd unbind --busid <实际 BUSID>`。当前终端未提权时，也可通过正常 UAC 请求执行：
+
+```powershell
+$usbipdExe = (Get-Command usbipd.exe).Source
+Start-Process -FilePath $usbipdExe -ArgumentList @('unbind', '--busid', '<实际 BUSID>') -Verb RunAs -Wait
+```
+
+用户确认 UAC 后，再运行串口核对脚本。此操作不写固件，不需要进入 BOOT 或重启电脑；
+WSL 的命令执行权限不等于 Windows 管理员权限，不能把一次普通权限拒绝当成无法请求提权。
+
 ## 工具只下载一次
 
 `./scripts/flash.sh` 会调用 `install-esptool-windows.sh`。首次运行时，它从 Espressif
@@ -132,30 +145,30 @@ Bootloader 时使用。v0.18.0 新增的模型区域位于旧布局原本未分�
 使用发布目录时可分别通过 `--firmware` 与 `--model` 指定已列入同一 `SHA256SUMS` 的文件。
 此流程仍需手动进入 ROM 下载模式。
 
-仓库中的 v0.30.0 正式发布目录可以直接使用：
+仓库中的 v0.31.0 正式发布目录可以直接使用：
 
 ```bash
 ./scripts/update-app.sh \
   --port COM5 \
-  --firmware dist/v0.30.0/esp32-rlcd-firmware-v0.30.0-ota.bin \
-  --model dist/v0.30.0/esp32-rlcd-firmware-v0.30.0-model.bin \
+  --firmware dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-ota.bin \
+  --model dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-model.bin \
   --confirm
 ```
 
 发布目录中的 `SHA256SUMS` 同时覆盖 Factory、OTA 和模型；如果同版本的 `-model.bin` 与
 `-ota.bin` 位于同一目录，脚本也能自动找到模型，可省略 `--model`。
 
-旧设备迁移到 v0.30.0 且首次启用自 v0.18.0 起提供的离线语音时，需要执行一次本流程来
+旧设备迁移到 v0.31.0 且首次启用自 v0.18.0 起提供的离线语音时，需要执行一次本流程来
 安装模型；在线更新和设置门户本地 OTA 仍只更新应用。模型已经安装后，普通用户和日常
 开发继续优先使用设备内更新，无需数据线和 ROM 下载模式。完整步骤见
 [固件安装与更新](firmware-update.md)。
 
 ### 构建版本与在线通道
 
-仓库默认生成 `0.30.0`。构建后续预发布候选时使用环境变量，例如：
+仓库默认生成 `0.31.0`。构建后续预发布候选时使用环境变量，例如：
 
 ```bash
-RLCD_PROJECT_VERSION=0.31.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.32.0-dev.1 ./scripts/build.sh
 ```
 
 所有版本默认读取 `stable.json`，只有在设备设置中显式开启 Beta 更新后才读取
