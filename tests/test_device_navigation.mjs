@@ -81,3 +81,21 @@ assert.match(main, /music_sleep_minutes != previous_music_sleep_minutes/,
   'paused music countdown redraws by minute, without relying on playback progress');
 assert.match(main, /\.sleep_remaining_seconds = music_status.sleep_remaining_seconds/);
 console.log('Daily page visibility: shared BOOT/footer destination, live preference application and guarded voice navigation passed.');
+
+assert.match(main, /app_page_state_set_daily_pages_order\(&page_state, settings.daily_pages_order\)/);
+const chatView = display.split('void display_show_voice(')[1].split('void display_show_quick_settings(')[0];
+assert.match(chatView, /display_interaction_format_daily_navigation\(\s*navigation, sizeof\(navigation\), status->next_daily_page\)/);
+assert.doesNotMatch(chatView, /display_interaction_chat_footer\(/, 'Chat may no longer be last after reorder');
+assert.match(refresh, /memcmp\(page_state.daily_pages_order,[\s\S]*app_page_state_set_daily_pages_order\(\s*&page_state, snapshot.settings.daily_pages_order\)/);
+const retryArm = main.split('if (cloud_session_selected && voice_session_state_arm_retry(')[1].split('if (key_pressed_or_debounced')[0];
+assert.match(retryArm, /!cloud_voice_status.running/);
+assert.match(retryArm, /!key_pressed_or_debounced && !boot_pressed_or_debounced/);
+assert.match(retryArm, /key_event = BUTTON_EVENT_NONE;[\s\S]*boot_event = BUTTON_EVENT_NONE;/,
+  'release begun during PLEASE WAIT cannot execute RETRY in the arming iteration');
+const retryAction = main.split('if (cloud_session_selected && voice_session.failure_retained) {')[1].split('} else if (boot_event')[0];
+assert.match(retryAction, /voice_session.retry_ready &&[\s\S]*key_event == BUTTON_EVENT_SHORT_PRESS/);
+assert.match(retryAction, /APP_POWER_STATE_NORMAL[\s\S]*cloud_audio_ready\(&cloud_voice_status\)/);
+assert.match(retryAction, /!cloud_voice_status.running[\s\S]*audio_conversation_dismiss\(\) == ESP_OK[\s\S]*voice_session_state_retry[\s\S]*audio_conversation_start\(generation\)/);
+assert.doesNotMatch(retryAction, /audio_voice_start|audio_conversation_continue|audio_conversation_release_key/,
+  'retry starts new cloud intent, never replays old audio or bypasses capture-release gate');
+console.log('Page ordering and cloud retry: persisted order, explicit input, cleanup and release gating passed.');

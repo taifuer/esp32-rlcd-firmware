@@ -16,6 +16,9 @@ extern "C" {
 /* application/x-www-form-urlencoded can expand every accepted byte to
  * three bytes. This bound also covers the legacy district form field. */
 #define WEATHER_CONFIG_FORM_MAX_LENGTH 1664U
+/* Include percent-encoding of both field names and all accepted values. */
+#define WEATHER_PREFERENCES_FORM_MAX_LENGTH 576U
+#define WEATHER_API_KEY_FORM_MAX_LENGTH 800U
 
 typedef struct {
     uint16_t schema_version;
@@ -41,6 +44,19 @@ typedef struct {
      * this field and stores an empty district. */
     char district[WEATHER_DISTRICT_MAX_LENGTH + 1U];
 } weather_config_update_t;
+
+/* Ordinary settings cannot carry or replace credentials. */
+typedef struct {
+    bool enabled;
+    char api_host[WEATHER_API_HOST_MAX_LENGTH + 1U];
+    uint32_t province_id;
+    uint32_t city_id;
+} weather_preferences_t;
+
+/* Empty means preserve the latest stored key, never clear it. */
+typedef struct {
+    char api_key[WEATHER_API_KEY_MAX_LENGTH + 1U];
+} weather_api_key_update_t;
 
 /* Presentation code never receives the API key. */
 typedef struct {
@@ -85,6 +101,16 @@ weather_config_result_t weather_config_apply_update(
 weather_config_result_t weather_config_parse_form(
     const char *form, size_t form_length,
     weather_config_update_t *update);
+weather_config_result_t weather_config_parse_preferences_form(
+    const char *form, size_t form_length, weather_preferences_t *preferences);
+weather_config_result_t weather_config_apply_preferences(
+    const weather_config_t *current,
+    const weather_preferences_t *preferences, weather_config_t *candidate);
+weather_config_result_t weather_config_parse_api_key_form(
+    const char *form, size_t form_length, weather_api_key_update_t *update);
+weather_config_result_t weather_config_apply_api_key_update(
+    const weather_config_t *current,
+    const weather_api_key_update_t *update, weather_config_t *candidate);
 void weather_config_make_status(
     const weather_config_t *config, uint32_t generation,
     weather_config_status_t *status);

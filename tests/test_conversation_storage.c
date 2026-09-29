@@ -198,11 +198,16 @@ static void seed_record(unsigned slot, uint32_t generation,
     blobs[slot].size = sizeof(blobs[slot].bytes);
     assert(conversation_config_record_encode(
         generation, &config, blobs[slot].bytes, blobs[slot].size));
-    /* Published format 2/schema 2 uses model byte 15. The retired enum ID is
-     * still 0; no newly written config is allowed to encode that ID. */
-    assert(blobs[slot].bytes[4] == 2U && blobs[slot].bytes[12] == 2U);
+    assert(blobs[slot].bytes[4] == 3U && blobs[slot].bytes[12] == 3U);
     assert(blobs[slot].bytes[15] == 1U);
     if (legacy) {
+        /* Reconstruct the released format 2/schema 2 layout. Its first 405
+         * bytes are unchanged; the following four bytes hold its checksum. */
+        blobs[slot].size = CONVERSATION_CONFIG_RECORD_V2_ENCODED_SIZE;
+        blobs[slot].bytes[4] = 2U;
+        blobs[slot].bytes[6] = (uint8_t)blobs[slot].size;
+        blobs[slot].bytes[7] = (uint8_t)(blobs[slot].size >> 8U);
+        blobs[slot].bytes[12] = 2U;
         blobs[slot].bytes[15] = 0U;
         refresh_checksum(&blobs[slot]);
     }
@@ -218,6 +223,7 @@ static void assert_snapshot(const char *key, const char *host, bool enabled,
     assert(snapshot.config.model ==
            CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH);
     assert(snapshot.config.enabled == enabled);
+    assert(snapshot.config.schema_version == CONVERSATION_CONFIG_SCHEMA_VERSION);
     assert(strcmp(snapshot.config.api_key, key) == 0);
     assert(strcmp(snapshot.config.api_host, host) == 0);
     assert(snapshot.generation == generation);
@@ -489,6 +495,330 @@ static void test_storage_read_errors_do_not_mutate_records(void)
                     CONVERSATION_CONFIG_MIGRATION_COMPLETED);
 }
 
+static void test_schema_two_audio_model_upgrade_and_options_persistence(void)
+{
+    for (unsigned fault = 0U; fault < 4U; ++fault) {
+        reset_fixture();
+        seed_record(0U, 80U, true, false, "sk-schema-two", "dashscope-intl.aliyuncs.com");
+        blobs[0].bytes[15] = (uint8_t)CONVERSATION_DEFAULT_MODEL;
+        refresh_checksum(&blobs[0]);
+        const test_blob_t source = blobs[0];
+        fail_set = fault == 1U;
+        fail_commit = fault >= 2U;
+        commit_before_failure = fault == 3U;
+        assert(conversation_config_init() == ESP_OK);
+        assert_snapshot("sk-schema-two", "dashscope-intl.aliyuncs.com", false,
+                        fault == 0U ? 81U : 80U, fault == 0U
+                            ? CONVERSATION_CONFIG_MIGRATION_COMPLETED
+                            : CONVERSATION_CONFIG_MIGRATION_PENDING);
+        assert(s_config.voice == CONVERSATION_DEFAULT_VOICE);
+        assert(s_config.reply_style == CONVERSATION_DEFAULT_REPLY_STYLE);
+        assert(memcmp(&blobs[0], &source, sizeof(source)) == 0);
+        fail_set = fail_commit = commit_before_failure = false;
+        simulate_restart();
+        assert(conversation_config_init() == ESP_OK);
+        assert_snapshot("sk-schema-two", "dashscope-intl.aliyuncs.com", false, 81U,
+                        (fault == 0U || fault == 3U)
+                            ? CONVERSATION_CONFIG_MIGRATION_NONE
+                            : CONVERSATION_CONFIG_MIGRATION_COMPLETED);
+        conversation_config_update_t update = preserving_update(false);
+        update.has_voice = true;
+        update.voice = CONVERSATION_VOICE_LONGANLINGXI;
+        update.has_reply_style = true;
+        update.reply_style = CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE;
+        assert(conversation_config_save(&update) == ESP_OK);
+        update.has_voice = update.has_reply_style = false;
+        update.enabled = true;
+        assert(conversation_config_save(&update) == ESP_OK);
+        simulate_restart();
+        assert(conversation_config_init() == ESP_OK);
+        assert_snapshot("sk-schema-two", "dashscope-intl.aliyuncs.com", true, 83U,
+                        CONVERSATION_CONFIG_MIGRATION_NONE);
+        assert(s_config.voice == CONVERSATION_VOICE_LONGANLINGXI);
+        assert(s_config.reply_style == CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE);
+        conversation_config_status_t status;
+        assert(conversation_config_get_status(&status) == ESP_OK);
+        assert(status.voice == s_config.voice && status.reply_style == s_config.reply_style);
+        assert(conversation_config_clear() == ESP_OK);
+        assert(s_config.voice == CONVERSATION_DEFAULT_VOICE);
+        assert(s_config.reply_style == CONVERSATION_DEFAULT_REPLY_STYLE);
+    }
+}
+
+static void test_invalid_option_record_keeps_older_valid_slot(void)
+{
+    for (size_t offset = 405U; offset <= 406U; ++offset) {
+        reset_fixture();
+        seed_record(0U, 1U, false, true, "sk-valid", "");
+        seed_record(1U, 2U, false, false, "sk-invalid", "");
+        blobs[1].bytes[offset] = 255U;
+        refresh_checksum(&blobs[1]);
+        assert(conversation_config_init() == ESP_OK);
+        assert_snapshot("sk-valid", "", true, 1U, CONVERSATION_CONFIG_MIGRATION_NONE);
+        assert(writes == 0U && commits == 0U);
+    }
+}
+
+static void test_preferences_preserve_latest_credentials(void)
+{
+    reset_fixture();
+    conversation_preferences_t preferences = {
+        .enabled = false,
+        .voice = CONVERSATION_VOICE_LONGANLUFENG,
+        .reply_style = CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE,
+    };
+    assert(conversation_config_save_preferences(&preferences) == ESP_ERR_INVALID_STATE);
+    assert(conversation_config_init() == ESP_OK);
+    assert(conversation_config_save_preferences(&preferences) == ESP_ERR_INVALID_STATE);
+    assert(writes == 0U && commits == 0U);
+
+    conversation_config_update_t update = preserving_update(true);
+    snprintf(update.api_key, sizeof(update.api_key), "%s", "sk-original");
+    assert(conversation_config_save(&update) == ESP_OK);
+    /* Simulate a newer credential save after the preference form loaded. Its
+     * key, host, service and model must not be replaced by a stale snapshot. */
+    snprintf(update.api_key, sizeof(update.api_key), "%s", "sk-newer");
+    snprintf(update.api_host, sizeof(update.api_host), "%s",
+             "latest.cn-beijing.maas.aliyuncs.com");
+    assert(conversation_config_save(&update) == ESP_OK);
+    const conversation_config_record_slot_t original_slot = s_active_slot;
+    const test_blob_t source = blobs[original_slot == CONVERSATION_CONFIG_RECORD_SLOT_A ? 0 : 1];
+    assert(conversation_config_save_preferences(&preferences) == ESP_OK);
+    assert_snapshot("sk-newer", "latest.cn-beijing.maas.aliyuncs.com", false, 3U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(s_config.service == CONVERSATION_SERVICE_ALIYUN_REALTIME);
+    assert(s_config.model == CONVERSATION_DEFAULT_MODEL);
+    assert(s_config.voice == preferences.voice && s_config.reply_style == preferences.reply_style);
+    assert(memcmp(&source, &blobs[original_slot == CONVERSATION_CONFIG_RECORD_SLOT_A ? 0 : 1],
+                  sizeof(source)) == 0);
+    simulate_restart();
+    assert(conversation_config_init() == ESP_OK);
+    assert_snapshot("sk-newer", "latest.cn-beijing.maas.aliyuncs.com", false, 3U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(s_config.voice == preferences.voice && s_config.reply_style == preferences.reply_style);
+    const unsigned previous_writes = writes;
+    preferences.voice = CONVERSATION_VOICE_COUNT;
+    assert(conversation_config_save_preferences(&preferences) == ESP_ERR_INVALID_ARG);
+    assert(conversation_config_save_preferences(NULL) == ESP_ERR_INVALID_ARG);
+    assert(writes == previous_writes);
+    assert_snapshot("sk-newer", "latest.cn-beijing.maas.aliyuncs.com", false, 3U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+}
+
+static void test_preferences_failure_preserves_source_and_pending_migration(void)
+{
+    const conversation_preferences_t preferences = {
+        .enabled = true,
+        .voice = CONVERSATION_VOICE_LONGANLINGXIN,
+        .reply_style = CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE,
+        .model = CONVERSATION_DEFAULT_MODEL,
+        .has_model = true,
+        .has_api_host = true,
+        .api_host = "preferences.cn-beijing.maas.aliyuncs.com",
+    };
+    for (unsigned fault = 0U; fault < 4U; ++fault) {
+        reset_fixture();
+        seed_record(0U, 9U, false, false, "sk-before-fault", "");
+        assert(conversation_config_init() == ESP_OK);
+        const test_blob_t source = blobs[0];
+        fail_open = fault == 0U;
+        fail_set = fault == 1U;
+        fail_commit = fault >= 2U;
+        commit_before_failure = fault == 3U;
+        assert(conversation_config_save_preferences(&preferences) == ESP_FAIL);
+        assert_snapshot("sk-before-fault", "", false, 9U, CONVERSATION_CONFIG_MIGRATION_NONE);
+        assert(s_config.voice == CONVERSATION_DEFAULT_VOICE);
+        assert(s_config.reply_style == CONVERSATION_DEFAULT_REPLY_STYLE);
+        assert(memcmp(&source, &blobs[0], sizeof(source)) == 0);
+        fail_open = fail_set = fail_commit = commit_before_failure = false;
+        simulate_restart();
+        assert(conversation_config_init() == ESP_OK);
+        assert_snapshot("sk-before-fault", fault == 3U ? preferences.api_host : "",
+                        fault == 3U, fault == 3U ? 10U : 9U,
+                        CONVERSATION_CONFIG_MIGRATION_NONE);
+        assert(s_config.voice == (fault == 3U ? preferences.voice : CONVERSATION_DEFAULT_VOICE));
+    }
+    reset_fixture();
+    seed_record(0U, 20U, true, false, "sk-pending-preferences", "");
+    fail_set = true;
+    assert(conversation_config_init() == ESP_OK);
+    assert_snapshot("sk-pending-preferences", "", false, 20U,
+                    CONVERSATION_CONFIG_MIGRATION_PENDING);
+    fail_set = false;
+    assert(conversation_config_save_preferences(&preferences) == ESP_OK);
+    assert_snapshot("sk-pending-preferences", preferences.api_host, true, 21U,
+                    CONVERSATION_CONFIG_MIGRATION_COMPLETED);
+    assert(s_config.voice == preferences.voice && s_config.reply_style == preferences.reply_style);
+}
+
+static void test_credential_save_preserves_latest_preference_save(void)
+{
+    reset_fixture();
+    assert(conversation_config_init() == ESP_OK);
+    static const char form[] = "service=aliyun_realtime&"
+        "model=qwen-audio-3.0-realtime-flash&api_key=sk-credential-form&api_host=";
+    conversation_config_update_t credentials;
+    assert(conversation_config_parse_form(form, strlen(form), &credentials) ==
+           CONVERSATION_CONFIG_RESULT_OK);
+    assert(conversation_config_save(&credentials) == ESP_OK);
+    assert_snapshot("sk-credential-form", "", false, 1U, CONVERSATION_CONFIG_MIGRATION_NONE);
+    /* A credential editor holding an older form cannot undo a newer on/off
+     * or voice save, regardless of the order the two forms were opened. */
+    const conversation_preferences_t preferences = {
+        .enabled = true,
+        .voice = CONVERSATION_VOICE_LONGANXIAOXIN,
+        .reply_style = CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE,
+    };
+    assert(conversation_config_save_preferences(&preferences) == ESP_OK);
+    snprintf(credentials.api_key, sizeof(credentials.api_key), "%s", "sk-rotated");
+    snprintf(credentials.api_host, sizeof(credentials.api_host), "%s",
+             "rotated.ap-southeast-1.maas.aliyuncs.com");
+    assert(conversation_config_save(&credentials) == ESP_OK);
+    assert_snapshot("sk-rotated", "rotated.ap-southeast-1.maas.aliyuncs.com", true, 3U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(s_config.voice == preferences.voice && s_config.reply_style == preferences.reply_style);
+    simulate_restart();
+    assert(conversation_config_init() == ESP_OK);
+    assert_snapshot("sk-rotated", "rotated.ap-southeast-1.maas.aliyuncs.com", true, 3U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(s_config.voice == preferences.voice && s_config.reply_style == preferences.reply_style);
+    conversation_config_clear_sensitive(&credentials, sizeof(credentials));
+}
+
+static void test_independent_api_key_and_preferences_saves(void)
+{
+    reset_fixture();
+    conversation_api_key_update_t key = {0};
+    assert(conversation_config_save_api_key(NULL) == ESP_ERR_INVALID_ARG);
+    assert(conversation_config_save_api_key(&key) == ESP_ERR_INVALID_STATE);
+    assert(conversation_config_init() == ESP_OK);
+    assert(conversation_config_save_api_key(&key) == ESP_ERR_INVALID_STATE);
+    assert(writes == 0U && commits == 0U);
+    snprintf(key.api_key, sizeof(key.api_key), "%s", "sk-key-only-first");
+    assert(conversation_config_save_api_key(&key) == ESP_OK);
+    assert_snapshot("sk-key-only-first", "", false, 1U, CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(s_config.voice == CONVERSATION_DEFAULT_VOICE);
+    assert(s_config.reply_style == CONVERSATION_DEFAULT_REPLY_STYLE);
+
+    /* A key form drafted before a newer preferences save must merge only the
+     * key into that latest state, including its newly changed Host. */
+    snprintf(key.api_key, sizeof(key.api_key), "%s", "sk-key-only-newer");
+    conversation_preferences_t preferences = {
+        .enabled = true,
+        .voice = CONVERSATION_VOICE_LONGANLUFENG,
+        .reply_style = CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE,
+        .model = CONVERSATION_DEFAULT_MODEL,
+        .has_model = true,
+        .has_api_host = true,
+        .api_host = "latest.ap-southeast-1.maas.aliyuncs.com",
+    };
+    assert(conversation_config_save_preferences(&preferences) == ESP_OK);
+    assert_snapshot("sk-key-only-first", preferences.api_host, true, 2U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(conversation_config_save_api_key(&key) == ESP_OK);
+    assert_snapshot("sk-key-only-newer", preferences.api_host, true, 3U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(s_config.voice == preferences.voice && s_config.reply_style == preferences.reply_style);
+
+    /* A new non-secret form may update the Host but never replace a newer
+     * key. A legacy three-field form then preserves that latest Host/model. */
+    snprintf(preferences.api_host, sizeof(preferences.api_host), "%s",
+             "DASHSCOPE-INTL.ALIYUNCS.COM");
+    assert(conversation_config_save_preferences(&preferences) == ESP_OK);
+    assert_snapshot("sk-key-only-newer", "dashscope-intl.aliyuncs.com", true, 4U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    preferences.has_model = false;
+    preferences.has_api_host = false;
+    preferences.model = CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME;
+    snprintf(preferences.api_host, sizeof(preferences.api_host), "%s", "ignored.example");
+    preferences.enabled = false;
+    assert(conversation_config_save_preferences(&preferences) == ESP_OK);
+    assert_snapshot("sk-key-only-newer", "dashscope-intl.aliyuncs.com", false, 5U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    memset(&key, 0, sizeof(key));
+    assert(conversation_config_save_api_key(&key) == ESP_OK);
+    assert_snapshot("sk-key-only-newer", "dashscope-intl.aliyuncs.com", false, 6U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    const unsigned previous_writes = writes;
+    const unsigned previous_commits = commits;
+    const conversation_config_record_slot_t source_slot = s_active_slot;
+    const conversation_config_t current = s_config;
+    memset(key.api_key, 'x', sizeof(key.api_key));
+    assert(conversation_config_save_api_key(&key) == ESP_ERR_INVALID_ARG);
+    snprintf(key.api_key, sizeof(key.api_key), "%s", "sk-invalid key");
+    assert(conversation_config_save_api_key(&key) == ESP_ERR_INVALID_ARG);
+    preferences.has_api_host = true;
+    assert(conversation_config_save_preferences(&preferences) == ESP_ERR_INVALID_ARG);
+    preferences.has_model = true;
+    preferences.model = CONVERSATION_DEFAULT_MODEL;
+    assert(conversation_config_save_preferences(&preferences) == ESP_ERR_INVALID_ARG);
+    assert(writes == previous_writes && commits == previous_commits);
+    assert(s_active_slot == source_slot && memcmp(&current, &s_config, sizeof(current)) == 0);
+    simulate_restart();
+    assert(conversation_config_init() == ESP_OK);
+    assert_snapshot("sk-key-only-newer", "dashscope-intl.aliyuncs.com", false, 6U,
+                    CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(s_config.voice == preferences.voice && s_config.reply_style == preferences.reply_style);
+    conversation_config_clear_sensitive(&key, sizeof(key));
+}
+
+static void test_api_key_failure_preserves_source_and_pending_migration(void)
+{
+    conversation_api_key_update_t key = { .api_key = "sk-replaced-key-only" };
+    for (unsigned fault = 0U; fault < 4U; ++fault) {
+        reset_fixture();
+        seed_record(0U, 19U, false, true, "sk-before-key-fault",
+                    "keep.cn-beijing.maas.aliyuncs.com");
+        assert(conversation_config_init() == ESP_OK);
+        const test_blob_t source = blobs[0];
+        fail_open = fault == 0U;
+        fail_set = fault == 1U;
+        fail_commit = fault >= 2U;
+        commit_before_failure = fault == 3U;
+        assert(conversation_config_save_api_key(&key) == ESP_FAIL);
+        assert_snapshot("sk-before-key-fault", "keep.cn-beijing.maas.aliyuncs.com", true,
+                        19U, CONVERSATION_CONFIG_MIGRATION_NONE);
+        assert(s_active_slot == CONVERSATION_CONFIG_RECORD_SLOT_A);
+        assert(memcmp(&source, &blobs[0], sizeof(source)) == 0);
+        assert(s_config.voice == CONVERSATION_DEFAULT_VOICE);
+        assert(s_config.reply_style == CONVERSATION_DEFAULT_REPLY_STYLE);
+        fail_open = fail_set = fail_commit = commit_before_failure = false;
+        simulate_restart();
+        assert(conversation_config_init() == ESP_OK);
+        assert_snapshot(fault == 3U ? key.api_key : "sk-before-key-fault",
+                        "keep.cn-beijing.maas.aliyuncs.com", true,
+                        fault == 3U ? 20U : 19U, CONVERSATION_CONFIG_MIGRATION_NONE);
+    }
+    reset_fixture();
+    seed_record(0U, 8U, true, false, "sk-before-key-migration", "");
+    fail_set = true;
+    assert(conversation_config_init() == ESP_OK);
+    assert_snapshot("sk-before-key-migration", "", false, 8U,
+                    CONVERSATION_CONFIG_MIGRATION_PENDING);
+    fail_set = false;
+    assert(conversation_config_save_api_key(&key) == ESP_OK);
+    assert_snapshot(key.api_key, "", false, 9U, CONVERSATION_CONFIG_MIGRATION_COMPLETED);
+    assert(s_config.voice == CONVERSATION_DEFAULT_VOICE);
+    assert(s_config.reply_style == CONVERSATION_DEFAULT_REPLY_STYLE);
+    simulate_restart();
+    assert(conversation_config_init() == ESP_OK);
+    assert_snapshot(key.api_key, "", false, 9U, CONVERSATION_CONFIG_MIGRATION_NONE);
+    assert(conversation_config_clear() == ESP_OK);
+    memset(&key, 0, sizeof(key));
+    assert(conversation_config_save_api_key(&key) == ESP_ERR_INVALID_STATE);
+    const conversation_preferences_t preferences = {
+        .enabled = false,
+        .voice = CONVERSATION_DEFAULT_VOICE,
+        .reply_style = CONVERSATION_DEFAULT_REPLY_STYLE,
+        .model = CONVERSATION_DEFAULT_MODEL,
+        .has_model = true,
+        .has_api_host = true,
+    };
+    assert(conversation_config_save_preferences(&preferences) == ESP_ERR_INVALID_STATE);
+    assert(!blobs[0].present && !blobs[1].present);
+    conversation_config_clear_sensitive(&key, sizeof(key));
+}
+
 int main(void)
 {
     test_new_install_and_current_model_are_not_rewritten();
@@ -500,6 +830,13 @@ int main(void)
     test_pending_migration_save_and_clear();
     test_clear_save_uses_a_new_configuration_identity();
     test_storage_read_errors_do_not_mutate_records();
+    test_schema_two_audio_model_upgrade_and_options_persistence();
+    test_invalid_option_record_keeps_older_valid_slot();
+    test_preferences_preserve_latest_credentials();
+    test_preferences_failure_preserves_source_and_pending_migration();
+    test_credential_save_preserves_latest_preference_save();
+    test_independent_api_key_and_preferences_saves();
+    test_api_key_failure_preserves_source_and_pending_migration();
     puts("conversation storage migration tests passed");
     return 0;
 }

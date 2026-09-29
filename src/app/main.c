@@ -518,6 +518,8 @@ static bool conversation_config_status_equal(
     return left != NULL && right != NULL &&
            left->service == right->service &&
            left->model == right->model &&
+           left->voice == right->voice &&
+           left->reply_style == right->reply_style &&
            left->enabled == right->enabled &&
            left->configured == right->configured &&
            left->shared_endpoint == right->shared_endpoint &&
@@ -577,8 +579,10 @@ static bool accept_cloud_conversation_status(
         *session_error = status->last_error != ESP_OK
                              ? status->last_error
                              : ESP_FAIL;
-        return voice_session_state_report_failure(
+        const bool changed = voice_session_state_report_failure(
             session, status->generation);
+        voice_session_state_retain_failure(session);
+        return changed;
     }
     if (status->state == AUDIO_CONVERSATION_STATE_COMPLETED) {
         *session_error = ESP_OK;
@@ -1497,6 +1501,7 @@ void app_main(void)
     app_page_state_t page_state;
     app_page_state_init(&page_state);
     app_page_state_set_daily_pages_mask(&page_state, settings.daily_pages_mask);
+    (void)app_page_state_set_daily_pages_order(&page_state, settings.daily_pages_order);
     app_page_state_set_recovery_mode(&page_state, recovery_mode);
     quick_settings_t quick_settings = {0};
     bool volume_preview_active = false;
@@ -2082,6 +2087,13 @@ void app_main(void)
                  * preference still waits for a running transaction. Modal
                  * overlays keep this state, so return cannot revive a page
                  * hidden while the portal or alarm covered it. */
+                if (memcmp(page_state.daily_pages_order,
+                           snapshot.settings.daily_pages_order,
+                           sizeof(page_state.daily_pages_order)) != 0) {
+                    (void)app_page_state_set_daily_pages_order(
+                        &page_state, snapshot.settings.daily_pages_order);
+                    render_requested = true;
+                }
                 if (page_state.daily_pages_mask !=
                     snapshot.settings.daily_pages_mask) {
                     app_page_state_set_daily_pages_mask(
@@ -2298,6 +2310,15 @@ void app_main(void)
             key_pressed || key_debounced_pressed;
         const bool boot_pressed_or_debounced =
             boot_pressed || boot_debounced_pressed;
+        if (cloud_session_selected && voice_session_state_arm_retry(
+                &voice_session, !cloud_voice_status.running,
+                !key_pressed_or_debounced && !boot_pressed_or_debounced)) {
+            /* Release of a press begun during cleanup only arms this screen;
+             * it must not also retry or leave before the new prompt renders. */
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
+            render_requested = true;
+        }
         if (key_pressed_or_debounced &&
             boot_pressed_or_debounced) {
             dual_button_release_gate = true;
@@ -2509,7 +2530,43 @@ void app_main(void)
                 audio_conversation_get_status(&cloud_voice_status);
                 cloud_input_state = cloud_voice_status.state;
             }
-            if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
+            if (cloud_session_selected && voice_session.failure_retained) {
+                if (voice_session.retry_ready &&
+                    boot_event == BUTTON_EVENT_SHORT_PRESS &&
+                    voice_session_state_leave_failure(&voice_session)) {
+                    (void)audio_conversation_dismiss();
+                    cloud_session_selected = false;
+                    pending_voice_action = VOICE_COMMAND_ACTION_NONE;
+                    voice_session_error = ESP_OK;
+                    voice_button_release_gate = true;
+                    render_requested = true;
+                } else if (voice_session.retry_ready &&
+                           key_event == BUTTON_EVENT_SHORT_PRESS &&
+                           power_runtime.effective_state == APP_POWER_STATE_NORMAL &&
+                           cloud_config_status.configured && cloud_config_status.enabled &&
+                           cloud_audio_ready(&cloud_voice_status) &&
+                           !cloud_voice_status.running &&
+                           (cloud_voice_status.state == AUDIO_CONVERSATION_STATE_IDLE ||
+                            audio_conversation_dismiss() == ESP_OK)) {
+                    uint32_t generation = 0U;
+                    if (voice_session_state_retry(&voice_session, &generation)) {
+                        /* Explicit new cloud session, not an audio replay or
+                         * an automatic switch to offline commands. */
+                        const esp_err_t retry_error = audio_conversation_start(generation);
+                        voice_session_error = retry_error;
+                        pending_voice_action = VOICE_COMMAND_ACTION_NONE;
+                        if (retry_error != ESP_OK) {
+                            (void)voice_session_state_report_failure(&voice_session, generation);
+                            voice_session_state_retain_failure(&voice_session);
+                        }
+                        audio_conversation_get_status(&cloud_voice_status);
+                        previous_cloud_voice_revision = cloud_voice_status.revision;
+                        previous_cloud_voice_state = cloud_voice_status.state;
+                        last_cloud_voice_ui_update = now;
+                        render_requested = true;
+                    }
+                }
+            } else if (boot_event == BUTTON_EVENT_SHORT_PRESS) {
                 bool cancel_session =
                     !cloud_session_selected ||
                     cloud_input_state !=
@@ -3297,6 +3354,10 @@ void app_main(void)
         }
         const voice_session_phase_t voice_phase_before_tick =
             voice_session_state_phase(&voice_session);
+        if (cloud_session_selected &&
+            voice_phase_before_tick == VOICE_SESSION_PHASE_FAILED) {
+            voice_session_state_retain_failure(&voice_session);
+        }
         if (!alarm_modal_active &&
             voice_phase_before_tick !=
                 VOICE_SESSION_PHASE_LISTENING &&
@@ -4241,6 +4302,12 @@ void app_main(void)
                         .session_active =
                             voice_session_state_is_active(
                                 &voice_session),
+                        .retry_ready = voice_session.retry_ready,
+                        .next_daily_page = next_daily_page,
+                        .retry_available =
+                            power_runtime.effective_state == APP_POWER_STATE_NORMAL &&
+                            cloud_audio_ready(&cloud_voice_status) &&
+                            cloud_config_status.configured && cloud_config_status.enabled,
                         .turn_number =
                             cloud_session_selected
                                 ? cloud_voice_status.turn_number

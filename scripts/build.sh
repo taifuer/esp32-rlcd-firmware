@@ -75,6 +75,26 @@ if LC_ALL=C strings "$ws_transport_object" | grep -F 'Error write Upgrade header
 fi
 echo 'WebSocket 认证请求头日志保护: OK'
 
+# An AI endpoint must not move the authenticated WebSocket handshake to a
+# server selected through an HTTP Location response. Verify the compiled
+# object, not only the generated source, so build-system regressions fail shut.
+ws_client_object="build/esp-idf/esp_websocket_client/CMakeFiles/__idf_esp_websocket_client.dir/esp_websocket_client.c.obj"
+if [[ ! -f "$ws_client_object" ]]; then
+  echo '未找到 ESP WebSocket Client 对象，无法验证重定向保护。' >&2
+  exit 1
+fi
+if LC_ALL=C strings "$ws_client_object" |
+   grep -F -e 'Redirecting to %s' -e 'esp_transport_ws_get_redir_uri' >/dev/null; then
+  echo 'ESP WebSocket Client 仍包含 HTTP 重定向路径，拒绝发布。' >&2
+  exit 1
+fi
+if ! LC_ALL=C strings "$ws_client_object" |
+     grep -F 'WebSocket redirect refused, status=%d' >/dev/null; then
+  echo 'ESP WebSocket Client 未包含 3xx 拒绝路径，拒绝发布。' >&2
+  exit 1
+fi
+echo 'ESP WebSocket HTTP 重定向保护: OK'
+
 if ! grep -Fxq 'CONFIG_FATFS_API_ENCODING_UTF_8=y' sdkconfig || \
    ! grep -Fxq 'CONFIG_FATFS_MAX_LFN=127' sdkconfig; then
   echo '音乐文件名需要 FatFs UTF-8 和 127 字符 LFN；请按 docs/development.md 更新本机 sdkconfig。' >&2

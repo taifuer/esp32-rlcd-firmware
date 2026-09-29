@@ -189,7 +189,7 @@ static void assert_migrated(void)
 {
     app_settings_t settings;
     assert(app_settings_get(&settings) == ESP_OK);
-    assert(settings.schema_version == 10U && persisted_schema == 10U);
+    assert(settings.schema_version == APP_SETTINGS_SCHEMA_VERSION && persisted_schema == APP_SETTINGS_SCHEMA_VERSION);
     assert(settings.audio_playback_volume == 40U);
     assert(settings.alarm_volume == 40U);
     assert(settings.daily_pages_mask == APP_DAILY_PAGES_ALL_MASK);
@@ -252,11 +252,11 @@ static void test_scoped_save_failure_noop_and_restart(void)
     assert(app_settings_save_field((app_setting_field_t)2, 1U) == ESP_ERR_INVALID_ARG);
     assert(commits == previous_commits);
 
-    persisted_schema = 11U;
+    persisted_schema = 12U;
     simulate_restart();
     assert(app_settings_init() == ESP_ERR_NOT_SUPPORTED);
     assert(app_settings_save_field(APP_SETTING_VOLUME, 90U) == ESP_ERR_NOT_SUPPORTED);
-    assert(commits == previous_commits && persisted_schema == 11U);
+    assert(commits == previous_commits && persisted_schema == 12U);
 }
 
 static void test_dev1_display_is_ignored_without_reset_or_startup_writes(void)
@@ -266,8 +266,8 @@ static void test_dev1_display_is_ignored_without_reset_or_startup_writes(void)
         assert(app_settings_init() == ESP_OK);
         app_settings_snapshot_t before, after;
         assert(app_settings_get_snapshot(&before) == ESP_OK);
-        test_blob_t *slot_a = find_blob("cfg10_a", false);
-        test_blob_t *slot_b = find_blob("cfg10_b", false);
+        test_blob_t *slot_a = find_blob("cfg11_a", false);
+        test_blob_t *slot_b = find_blob("cfg11_b", false);
         assert(slot_a != NULL && slot_b != NULL);
         slot_a->bytes[25] = old_display;
         slot_b->bytes[25] = old_display;
@@ -278,7 +278,7 @@ static void test_dev1_display_is_ignored_without_reset_or_startup_writes(void)
         simulate_restart();
         assert(app_settings_init() == ESP_OK);
         assert(app_settings_get_snapshot(&after) == ESP_OK);
-        assert(commits == previous_commits && persisted_schema == 10U);
+        assert(commits == previous_commits && persisted_schema == APP_SETTINGS_SCHEMA_VERSION);
         assert(after.generation == before.generation);
         assert(settings_equal(&before.settings, &after.settings));
         assert(slot_a->bytes[25] == old_display && slot_b->bytes[25] == old_display);
@@ -366,7 +366,7 @@ static void assert_schema8_preferences(uint8_t volume, uint8_t alarm_volume)
 {
     app_settings_t current;
     assert(app_settings_get(&current) == ESP_OK);
-    assert(current.schema_version == 10U && persisted_schema == 10U);
+    assert(current.schema_version == APP_SETTINGS_SCHEMA_VERSION && persisted_schema == APP_SETTINGS_SCHEMA_VERSION);
     assert(current.audio_playback_volume == volume && current.alarm_volume == alarm_volume);
     assert(current.manual_saving_requested && current.utc_offset_minutes == 345);
     assert(current.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT);
@@ -440,7 +440,7 @@ static void assert_schema9_preferences(uint8_t volume, uint8_t alarm_volume,
 {
     app_settings_t current;
     assert(app_settings_get(&current) == ESP_OK);
-    assert(current.schema_version == 10U && persisted_schema == 10U);
+    assert(current.schema_version == APP_SETTINGS_SCHEMA_VERSION && persisted_schema == APP_SETTINGS_SCHEMA_VERSION);
     assert(current.audio_playback_volume == volume && current.alarm_volume == alarm_volume);
     assert(current.manual_saving_requested && current.utc_offset_minutes == 345);
     assert(current.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT);
@@ -504,14 +504,14 @@ static void test_schema9_migration_and_commit_failures(void)
 
     seed_schema9();
     assert(app_settings_init() == ESP_OK);
-    find_blob("cfg10_a", false)->bytes[18] ^= 1U;
-    find_blob("cfg10_b", false)->bytes[18] ^= 1U;
+    find_blob("cfg11_a", false)->bytes[18] ^= 1U;
+    find_blob("cfg11_b", false)->bytes[18] ^= 1U;
     simulate_restart();
     assert(app_settings_init() == ESP_OK); /* Current marker with both slots corrupt. */
     assert_schema9_preferences(17U, 75U, APP_DAILY_PAGE_MUSIC | APP_DAILY_PAGE_CHAT);
 
     /* Interrupted migration does not outrank newer edits made by old firmware
-     * while its shared marker is still v9. Both partial v10 copies are repaired. */
+     * while its shared marker is still v9. Both partial v11 copies are repaired. */
     seed_schema9();
     fail_commit = 3U;
     assert(app_settings_init() == ESP_FAIL);
@@ -524,13 +524,183 @@ static void test_schema9_migration_and_commit_failures(void)
     assert(app_settings_init() == ESP_OK);
     assert_schema9_preferences(36U, 75U, APP_DAILY_PAGE_WEATHER);
     for (unsigned index = 0U; index < 2U; ++index) {
-        test_blob_t *blob = find_blob(index == 0U ? "cfg10_a" : "cfg10_b", false);
+        test_blob_t *blob = find_blob(index == 0U ? "cfg11_a" : "cfg11_b", false);
         settings_record_t decoded;
-        assert(blob != NULL && blob->size == 36U);
+        assert(blob != NULL && blob->size == SETTINGS_RECORD_ENCODED_SIZE);
         assert(settings_record_decode(blob->bytes, blob->size, &decoded));
         assert(decoded.settings.audio_playback_volume == 36U);
         assert(decoded.settings.daily_pages_mask == APP_DAILY_PAGE_WEATHER);
     }
+}
+
+static void seed_schema10(void)
+{
+    seed_schema9();
+    persisted_schema = 10U;
+    for (unsigned index = 0U; index < 2U; ++index) {
+        test_blob_t *blob = find_blob(index == 0U ? "cfg10_a" : "cfg10_b", true);
+        *blob = *find_blob(index == 0U ? "cfg9_a" : "cfg9_b", false);
+        snprintf(blob->key, sizeof(blob->key), "%s", index == 0U ? "cfg10_a" : "cfg10_b");
+        blob->size = SETTINGS_RECORD_SCHEMA10_ENCODED_SIZE;
+        blob->bytes[4] = 9U;
+        blob->bytes[6] = (uint8_t)blob->size;
+        blob->bytes[12] = 10U;
+        blob->bytes[28] = index == 0U ? APP_MUSIC_MODE_REPEAT_ONE : APP_MUSIC_MODE_REPEAT_ALL;
+        memset(blob->bytes + 29U, 0, 3U);
+        update_test_checksum(blob);
+    }
+}
+
+static void assert_schema10_preferences(const char *key)
+{
+    const test_blob_t *old = find_blob(key, false);
+    settings_record_t expected;
+    assert(settings_record_decode_schema10(old->bytes, old->size, &expected));
+    app_settings_t current;
+    assert(app_settings_get(&current) == ESP_OK);
+    assert(persisted_schema == APP_SETTINGS_SCHEMA_VERSION);
+    assert(settings_equal(&current, &expected.settings));
+    const uint8_t defaults[] = APP_DAILY_PAGES_DEFAULT_ORDER;
+    assert(memcmp(current.daily_pages_order, defaults, sizeof(defaults)) == 0);
+}
+
+static void test_schema10_migration_and_commit_failures(void)
+{
+    for (unsigned failure = 0U; failure <= 3U; ++failure) {
+        seed_schema10();
+        const test_blob_t old_a = *find_blob("cfg10_a", false);
+        const test_blob_t old_b = *find_blob("cfg10_b", false);
+        fail_commit = failure;
+        assert(app_settings_init() == (failure == 0U ? ESP_OK : ESP_FAIL));
+        if (failure != 0U) {
+            assert(!s_initialized && persisted_schema == 10U);
+            simulate_restart();
+            fail_commit = 0U;
+            assert(app_settings_init() == ESP_OK);
+        }
+        assert_schema10_preferences("cfg10_b");
+        assert(memcmp(&old_a, find_blob("cfg10_a", false), sizeof(old_a)) == 0);
+        assert(memcmp(&old_b, find_blob("cfg10_b", false), sizeof(old_b)) == 0);
+        const unsigned previous_commits = commits;
+        simulate_restart();
+        assert(app_settings_init() == ESP_OK);
+        assert_schema10_preferences("cfg10_b");
+        assert(commits == previous_commits);
+    }
+    seed_schema10();
+    persisted_schema = 0U;
+    assert(app_settings_init() == ESP_OK);
+    assert_schema10_preferences("cfg10_b");
+
+    seed_schema10();
+    find_blob("cfg10_b", false)->bytes[28] ^= 1U;
+    assert(app_settings_init() == ESP_OK);
+    assert_schema10_preferences("cfg10_a");
+
+    seed_schema10();
+    find_blob("cfg10_a", false)->bytes[28] ^= 1U;
+    find_blob("cfg10_b", false)->bytes[28] ^= 1U;
+    assert(app_settings_init() == ESP_OK);
+    assert_schema9_preferences(17U, 75U, APP_DAILY_PAGE_MUSIC | APP_DAILY_PAGE_CHAT);
+
+    seed_schema10();
+    assert(app_settings_init() == ESP_OK);
+    find_blob("cfg11_a", false)->bytes[29] ^= 1U;
+    find_blob("cfg11_b", false)->bytes[29] ^= 1U;
+    simulate_restart();
+    assert(app_settings_init() == ESP_OK);
+    assert_schema10_preferences("cfg10_b");
+
+    /* A failed marker commit cannot override edits made by old firmware. */
+    seed_schema10();
+    fail_commit = 3U;
+    assert(app_settings_init() == ESP_FAIL);
+    test_blob_t *old = find_blob("cfg10_b", false);
+    old->bytes[18] = 41U;
+    old->bytes[27] = 0U;
+    old->bytes[28] = APP_MUSIC_MODE_SEQUENTIAL;
+    update_test_checksum(old);
+    simulate_restart();
+    fail_commit = 0U;
+    assert(app_settings_init() == ESP_OK);
+    assert_schema10_preferences("cfg10_b");
+    for (unsigned index = 0U; index < 2U; ++index) {
+        const test_blob_t *current = find_blob(index == 0U ? "cfg11_a" : "cfg11_b", false);
+        settings_record_t decoded;
+        assert(current != NULL && current->size == SETTINGS_RECORD_ENCODED_SIZE);
+        assert(settings_record_decode(current->bytes, current->size, &decoded));
+        assert(decoded.settings.audio_playback_volume == 41U);
+        assert(decoded.settings.daily_pages_mask == 0U);
+        assert(decoded.settings.music_mode == APP_MUSIC_MODE_SEQUENTIAL);
+    }
+}
+
+static void test_page_order_persistence_noop_failure_and_defaults(void)
+{
+    seed_schema10();
+    assert(app_settings_init() == ESP_OK);
+    const test_blob_t old_a = *find_blob("cfg10_a", false);
+    const test_blob_t old_b = *find_blob("cfg10_b", false);
+    app_settings_snapshot_t before, after;
+    assert(app_settings_get_snapshot(&before) == ESP_OK);
+    const uint8_t reverse[] = {32U, 16U, 8U, 4U, 2U, 1U};
+    app_settings_t candidate = before.settings;
+    memcpy(candidate.daily_pages_order, reverse, sizeof(reverse));
+    fail_commit = commits + 1U;
+    assert(app_settings_save(&candidate) == ESP_FAIL);
+    assert(app_settings_get_snapshot(&after) == ESP_OK);
+    assert(after.generation == before.generation);
+    assert(settings_equal(&before.settings, &after.settings));
+    fail_commit = 0U;
+    assert(app_settings_save(&candidate) == ESP_OK);
+    assert(app_settings_get_snapshot(&after) == ESP_OK);
+    assert(after.generation == before.generation + 1U);
+    assert(settings_equal(&candidate, &after.settings));
+    const unsigned before_noop = commits;
+    assert(app_settings_save(&candidate) == ESP_OK);
+    assert(commits == before_noop);
+    simulate_restart();
+    assert(app_settings_init() == ESP_OK);
+    assert(app_settings_get(&candidate) == ESP_OK);
+    assert(memcmp(candidate.daily_pages_order, reverse, sizeof(reverse)) == 0);
+    assert(candidate.music_mode == APP_MUSIC_MODE_REPEAT_ALL);
+    assert(candidate.daily_pages_mask == (APP_DAILY_PAGE_MUSIC | APP_DAILY_PAGE_CHAT));
+    assert(app_settings_save_field(APP_SETTING_VOLUME, 51U) == ESP_OK);
+    assert(app_settings_get(&candidate) == ESP_OK);
+    assert(memcmp(candidate.daily_pages_order, reverse, sizeof(reverse)) == 0);
+    const uint8_t rotated[] = {2U, 4U, 8U, 16U, 32U, 1U};
+    memcpy(candidate.daily_pages_order, rotated, sizeof(rotated));
+    assert(app_settings_save(&candidate) == ESP_OK);
+    test_blob_t *latest = find_blob(record_slot_key(s_active_slot), false);
+    latest->bytes[29] ^= 1U;
+    simulate_restart();
+    assert(app_settings_init() == ESP_OK);
+    assert(app_settings_get(&candidate) == ESP_OK);
+    assert(memcmp(candidate.daily_pages_order, reverse, sizeof(reverse)) == 0);
+    assert(candidate.audio_playback_volume == 51U);
+    memcpy(candidate.daily_pages_order, rotated, sizeof(rotated));
+    assert(app_settings_save(&candidate) == ESP_OK);
+    persisted_schema = 0U;
+    simulate_restart();
+    assert(app_settings_init() == ESP_OK);
+    assert(app_settings_get(&candidate) == ESP_OK);
+    assert(memcmp(candidate.daily_pages_order, rotated, sizeof(rotated)) == 0);
+    const app_settings_t valid = candidate;
+    candidate.daily_pages_order[0] = 0U;
+    const unsigned before_invalid = commits;
+    assert(app_settings_save(&candidate) == ESP_ERR_INVALID_ARG);
+    assert(commits == before_invalid);
+    assert(app_settings_get(&candidate) == ESP_OK);
+    assert(settings_equal(&candidate, &valid));
+    assert(memcmp(&old_a, find_blob("cfg10_a", false), sizeof(old_a)) == 0);
+    assert(memcmp(&old_b, find_blob("cfg10_b", false), sizeof(old_b)) == 0);
+    assert(app_settings_restore_defaults() == ESP_OK);
+    simulate_restart();
+    assert(app_settings_init() == ESP_OK);
+    assert(app_settings_get(&candidate) == ESP_OK);
+    app_settings_t defaults;
+    app_settings_defaults(&defaults);
+    assert(settings_equal(&candidate, &defaults));
 }
 
 static void test_music_persistence_noop_failure_and_defaults(void)
@@ -558,7 +728,7 @@ static void test_music_persistence_noop_failure_and_defaults(void)
     assert(commits == previous_commits && before.generation == after.generation);
     assert(app_settings_save_field(APP_SETTING_VOLUME, 43U) == ESP_OK);
     assert(app_settings_get(&candidate) == ESP_OK);
-    const char *pages = "section=pages&daily_pages_mask=0";
+    const char *pages = "section=pages&daily_pages_mask=0&daily_pages_order=1,2,4,8,16,32";
     assert(app_settings_parse_form(pages, strlen(pages), &candidate, &candidate));
     assert(app_settings_save(&candidate) == ESP_OK);
     simulate_restart();
@@ -579,7 +749,7 @@ static void test_music_persistence_noop_failure_and_defaults(void)
     assert(candidate.music_mode == APP_MUSIC_MODE_REPEAT_ONE);
     candidate.music_mode = APP_MUSIC_MODE_REPEAT_ALL;
     assert(app_settings_save(&candidate) == ESP_OK);
-    persisted_schema = 0U; /* Current v10 keeps music even with retained v9. */
+    persisted_schema = 0U; /* Current v11 keeps music even with retained v9. */
     simulate_restart();
     assert(app_settings_init() == ESP_OK);
     assert(app_settings_get(&candidate) == ESP_OK);
@@ -641,7 +811,7 @@ static void test_daily_pages_persistence_corruption_and_defaults(void)
     assert(app_settings_save(&candidate) == ESP_OK);
     persisted_schema = 0U;
     simulate_restart();
-    assert(app_settings_init() == ESP_OK); /* Valid v10 beats retained v8 slots. */
+    assert(app_settings_init() == ESP_OK); /* Valid v11 beats retained v8 slots. */
     assert(app_settings_get_snapshot(&after) == ESP_OK);
     assert(after.settings.daily_pages_mask == APP_DAILY_PAGE_MUSIC);
     assert(after.settings.audio_playback_volume == 40U);
@@ -658,7 +828,7 @@ static void test_future_schema_preserves_all_storage(void)
 {
     seed_schema8();
     assert(app_settings_init() == ESP_OK);
-    persisted_schema = 11U;
+    persisted_schema = 12U;
     const unsigned before_commits = commits;
     test_blob_t saved_blobs[12];
     memcpy(saved_blobs, blobs, sizeof(blobs));
@@ -675,12 +845,14 @@ static void test_future_schema_preserves_all_storage(void)
     bool manual = false;
     assert(app_settings_toggle_manual_saving(&manual) == ESP_ERR_NOT_SUPPORTED);
     assert(app_settings_restore_defaults() == ESP_ERR_NOT_SUPPORTED);
-    assert(commits == before_commits && persisted_schema == 11U);
+    assert(commits == before_commits && persisted_schema == 12U);
     assert(memcmp(saved_blobs, blobs, sizeof(blobs)) == 0);
 }
 
 int main(void)
 {
+    test_schema10_migration_and_commit_failures();
+    test_page_order_persistence_noop_failure_and_defaults();
     test_schema9_migration_and_commit_failures();
     test_music_persistence_noop_failure_and_defaults();
     test_schema8_migration_and_commit_failures();

@@ -56,7 +56,8 @@ typedef struct {
  * fields cannot be mixed across incompatible model families. */
 bool conversation_protocol_build_session_update(
     char *output, size_t capacity, const char *event_id,
-    conversation_model_t model, size_t *written);
+    conversation_model_t model, conversation_voice_t voice,
+    conversation_reply_style_t reply_style, size_t *written);
 bool conversation_protocol_build_audio_append(
     char *output, size_t capacity, const char *event_id,
     const uint8_t *pcm, size_t pcm_length, size_t *written);

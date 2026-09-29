@@ -145,30 +145,30 @@ Bootloader 时使用。v0.18.0 新增的模型区域位于旧布局原本未分�
 使用发布目录时可分别通过 `--firmware` 与 `--model` 指定已列入同一 `SHA256SUMS` 的文件。
 此流程仍需手动进入 ROM 下载模式。
 
-仓库中的 v0.31.0 正式发布目录可以直接使用：
+仓库中的 v0.32.0 正式发布目录可以直接使用：
 
 ```bash
 ./scripts/update-app.sh \
   --port COM5 \
-  --firmware dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-ota.bin \
-  --model dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-model.bin \
+  --firmware dist/v0.32.0/esp32-rlcd-firmware-v0.32.0-ota.bin \
+  --model dist/v0.32.0/esp32-rlcd-firmware-v0.32.0-model.bin \
   --confirm
 ```
 
 发布目录中的 `SHA256SUMS` 同时覆盖 Factory、OTA 和模型；如果同版本的 `-model.bin` 与
 `-ota.bin` 位于同一目录，脚本也能自动找到模型，可省略 `--model`。
 
-旧设备迁移到 v0.31.0 且首次启用自 v0.18.0 起提供的离线语音时，需要执行一次本流程来
+旧设备迁移到 v0.32.0 且首次启用自 v0.18.0 起提供的离线语音时，需要执行一次本流程来
 安装模型；在线更新和设置门户本地 OTA 仍只更新应用。模型已经安装后，普通用户和日常
 开发继续优先使用设备内更新，无需数据线和 ROM 下载模式。完整步骤见
 [固件安装与更新](firmware-update.md)。
 
 ### 构建版本与在线通道
 
-仓库默认生成 `0.31.0`。构建后续预发布候选时使用环境变量，例如：
+仓库默认生成 `0.32.0`。构建后续预发布候选时使用环境变量，例如：
 
 ```bash
-RLCD_PROJECT_VERSION=0.32.0-dev.1 ./scripts/build.sh
+RLCD_PROJECT_VERSION=0.33.0-dev.1 ./scripts/build.sh
 ```
 
 所有版本默认读取 `stable.json`，只有在设备设置中显式开启 Beta 更新后才读取
@@ -232,8 +232,8 @@ RTC 写后回读和错误密码恢复；验证 `BOOT` 的日常页面路径，�
 
 在线更新还需用两个递增的预发布版本验证完整路径：第一次通过设置门户本地 OTA 或串行
 方式安装，
-第二次由 `testing.json` 提供。确认按住 `KEY` 2 秒检查、发现版本后再次按住 2 秒进入
-`REVIEW`、确认页按住 3 秒安装；自动联网只能检查，不能静默安装。至少覆盖断网、同版本、
+第二次由 `testing.json` 提供。确认按住 `KEY` 2 秒检查，有新版时直接显示安装确认；
+松开后再按住 3 秒安装。自动联网只能检查，不能静默安装。至少覆盖断网、同版本、
 降级、错误项目或硬件、错误 URL 主机、大小/SHA-256 不匹配、下载中断、写入进度、重启
 确认和回滚。任何失败都不得改变当前可启动槽，设置门户本地 OTA 在无互联网时仍可用。
 

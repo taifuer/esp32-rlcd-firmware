@@ -21,6 +21,8 @@ static void set_phase(voice_session_state_t *state,
 {
     state->phase = phase;
     state->elapsed_ms = 0U;
+    state->failure_retained = false;
+    state->retry_ready = false;
 }
 
 static void invalidate_generation(voice_session_state_t *state)
@@ -219,6 +221,50 @@ bool voice_session_state_report_failure(voice_session_state_t *state,
     return true;
 }
 
+void voice_session_state_retain_failure(voice_session_state_t *state)
+{
+    if (state != NULL && state->phase == VOICE_SESSION_PHASE_FAILED) {
+        state->failure_retained = true;
+    }
+}
+
+bool voice_session_state_arm_retry(voice_session_state_t *state,
+                                  bool backend_idle, bool buttons_released)
+{
+    if (state == NULL || !state->failure_retained || state->retry_ready ||
+        state->phase != VOICE_SESSION_PHASE_FAILED || !backend_idle ||
+        !buttons_released ||
+        state->elapsed_ms < VOICE_SESSION_FEEDBACK_HOLD_MS) {
+        return false;
+    }
+    state->retry_ready = true;
+    return true;
+}
+
+bool voice_session_state_retry(voice_session_state_t *state,
+                               uint32_t *generation)
+{
+    if (generation != NULL) *generation = 0U;
+    if (state == NULL || state->phase != VOICE_SESSION_PHASE_FAILED ||
+        !state->failure_retained || !state->retry_ready) {
+        return false;
+    }
+    set_phase(state, VOICE_SESSION_PHASE_READY);
+    return voice_session_state_begin(state, true, generation);
+}
+
+bool voice_session_state_leave_failure(voice_session_state_t *state)
+{
+    if (state == NULL || state->phase != VOICE_SESSION_PHASE_FAILED ||
+        !state->failure_retained || !state->retry_ready) {
+        return false;
+    }
+    invalidate_generation(state);
+    state->speech_detected = false;
+    set_phase(state, VOICE_SESSION_PHASE_READY);
+    return true;
+}
+
 voice_session_action_t voice_session_state_tick(
     voice_session_state_t *state, uint32_t elapsed_ms)
 {
@@ -254,6 +300,9 @@ voice_session_action_t voice_session_state_tick(
     case VOICE_SESSION_PHASE_ENGINE_UNAVAILABLE:
     case VOICE_SESSION_PHASE_CANCELLED:
     case VOICE_SESSION_PHASE_FAILED:
+        if (state->failure_retained) {
+            return VOICE_SESSION_ACTION_NONE;
+        }
         if (state->elapsed_ms >= VOICE_SESSION_FEEDBACK_HOLD_MS) {
             voice_session_action_t action =
                 state->phase == VOICE_SESSION_PHASE_SUCCEEDED

@@ -2,6 +2,28 @@
 
 本文记录 AI 对话模型的选型与迁移。上游能力、价格或协议变化后需要重新核对。
 
+## 2026-09-29：音色与回答风格（v0.32.0 开发版）
+
+本版保持 Audio 3.0 Flash 和现有 PTT 半双工流程，不增加第二家服务商。
+核对[客户端事件](https://help.aliyun.com/zh/model-studio/fun-audiochat-client-events)与
+[音色配置](https://help.aliyun.com/zh/model-studio/qwen-audio-realtime-user-guides)后，
+门户提供五个受控音色：`longanqian`、`longanlingxin`、`longanlingxi`、`longanxiaoxin`、
+`longanlufeng`。官方实时语音文档仅列这些音色 ID，因此不根据拼音编造中文名称。
+
+默认音色仍为 `longanqian`，默认提示保持原样。新增“英语练习”预设通过 `instructions`
+要求简短英语交流、按需中文说明与少量纠错，不声称支持发音评分或硬性回答长度控制。
+只在首次 `session.update` 发送选定音色，不发送 3.1 专属的输入/输出语言字段，不增加
+`max_tokens`、工具调用、联网搜索或自定义提示词。
+
+NVS 配置与记录升级到 schema/format 3，记录从 409 字节增至 411 字节。解码器继续校验
+schema/format 2 的原布局与 CRC，选出最新有效槽后补上原默认选项，再写另一槽；API Key、
+Host 和启用状态不变。写入或提交失败保留来源槽并在 RAM 中使用已迁移配置，下次保存或
+启动重试。旧界面未提交新字段时保留当前选项，不会意外重置音色和回答风格。
+
+主机验证覆盖五种音色和两种风格的协议 JSON、无效枚举拒绝、局部更新、密钥不回显、旧
+schema 的读写/提交失败、重启恢复，以及真实 client 的首个会话设置发送路径。均为本地
+测试，没有联网或录音；音色实际听感、英语练习效果和目标板连续会话仍需用户主动验收。
+
 ## 2026-09-28：旧模型下线与 v0.31.0 迁移
 
 官方[下线通知](https://platform.qianwenai.com/docs/changelog/model-deprecations/old-models)

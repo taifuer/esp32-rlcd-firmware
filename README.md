@@ -6,14 +6,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.31.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.32.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
-v0.31.0 将 AI 默认模型更新为 Qwen Audio 3.0 Realtime Flash，自动迁移旧配置，并完善
-连接失败提示与最近对话结果。具体变化见[版本说明](dist/v0.31.0/README.md)。
-升级保留 API Key，但新模型仍需在百炼对应业务空间授权，步骤见[AI 对话配置](docs/cloud-voice.md#准备和配置)。
+v0.32.0 支持功能页排序、AI 音色与回答风格、失败后按键重试和音乐上传队列恢复。
+天气与 AI 的普通设置可直接通过同 Wi-Fi 网页修改，只有录入、更换 API Key 需要设备热点。
+具体变化见[版本说明](dist/v0.32.0/README.md)。
 
 ## 效果预览
 
@@ -37,9 +37,9 @@ v0.31.0 将 AI 默认模型更新为 Qwen Audio 3.0 Realtime Flash，自动迁�
 
 ## 当前功能
 
-以下对应 v0.31.0。
+以下对应 v0.32.0。
 
-- 三段式首屏显示公历、农历、星期、温湿度、三态环境舒适度、电量和网络结果；`NORMAL`
+- 三段式首屏显示公历、农历、星期、温湿度、三态环境舒适度、电量和 Wi-Fi 连接状态；`NORMAL`
   等大显示 `HH:MM:SS`，`SAVING` 显示 `HH:MM`；
 - PCF85063 RTC、SHTC3、GPIO4 电池采样和 8 MB Octal PSRAM；
 - 首次启动使用临时 WPA2 热点配网，凭据保存在 NVS，随后自动 SNTP 校时；
@@ -65,15 +65,17 @@ v0.31.0 将 AI 默认模型更新为 Qwen Audio 3.0 Realtime Flash，自动迁�
   明确开始，续问等待 30 秒，新一轮可在会话开始后的 5 分钟内发起；已经开始的回答会
   完整结束。回答默认简短，回复文字会跟随本地播放进度滚动显示最新 4 行。停用、离线、
   省电或未配置时自动使用本地 MultiNet；默认模型为 `qwen-audio-3.0-realtime-flash`，无需创建百炼应用或填写
-  Workspace ID、App ID，也不使用唤醒词或后台监听；
+  Workspace ID、App ID，也不使用唤醒词或后台监听。可选五种官方音色及“日常简洁 / 英语练习”；
+  失败后可按屏幕提示重试，不自动重连或重复上传录音；
 - Chat 属于日常功能；系统页只留设置、在线更新和状态，页脚明确写出按键目的地；
 - 日常页与系统页停留在用户选中的页面，不自动返回；正常开机仍进入时钟；
-- 网页可独立选择显示天气、市场、月历、图片、音乐和对话，顺序固定；时钟和维护入口始终保留，
+- 网页可选择显示天气、市场、月历、图片、音乐和对话，并调整顺序；时钟固定第一位，维护入口始终保留，
   隐藏页面不删除内容，也不停止后台服务；
 - microSD 音乐：歌曲放入卡内的 rlcd/music/ 目录，支持 MP3 和
   16 位 PCM WAV；可播放、暂停、切歌及直接调音量，返回时钟后继续播放。
   设置门户可多选并依次上传歌曲、查看列表、在设备播放和确认删除，无需反复取卡或重启。
-  支持顺序播放、单曲循环、列表循环，以及 15／30／60／90 分钟定时停止；
+  上传失败后可在当前网页重试或继续剩余歌曲，断线结果先核对；支持顺序播放、单曲循环、列表循环，
+  以及 15／30／60／90 分钟定时停止；
 - “设置”页保留手动提前省电，按住 KEY 2 秒直接打开[网页设置](docs/device-settings.md)，
   无需二级菜单；网页按常用、联网、媒体、维护分区，支持时区、温度单位、播放音量、单个每周闹钟、
   更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、天气、市场看板、microSD 图片管理
@@ -113,7 +115,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.31.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.32.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -121,11 +123,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.31.0
+cd dist/v0.32.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-factory.bin \
+  --firmware dist/v0.32.0/esp32-rlcd-firmware-v0.32.0-factory.bin \
   --confirm
 ```
 

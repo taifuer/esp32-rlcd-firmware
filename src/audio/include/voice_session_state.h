@@ -54,6 +54,8 @@ typedef struct {
     uint32_t elapsed_ms;
     uint32_t generation;
     bool speech_detected;
+    bool failure_retained;
+    bool retry_ready;
 } voice_session_state_t;
 
 void voice_session_state_init(voice_session_state_t *state);
@@ -90,6 +92,14 @@ bool voice_session_state_report_result(voice_session_state_t *state,
  * was detected. */
 bool voice_session_state_report_failure(voice_session_state_t *state,
                                         uint32_t generation);
+/* Cloud failure stays visible, without holding backend resources. Only a
+ * fresh, released button input may retry after cleanup and the result hold. */
+void voice_session_state_retain_failure(voice_session_state_t *state);
+bool voice_session_state_arm_retry(voice_session_state_t *state,
+                                  bool backend_idle, bool buttons_released);
+bool voice_session_state_retry(voice_session_state_t *state,
+                               uint32_t *generation);
+bool voice_session_state_leave_failure(voice_session_state_t *state);
 voice_session_action_t voice_session_state_tick(
     voice_session_state_t *state, uint32_t elapsed_ms);
 const char *voice_session_state_name(voice_session_phase_t phase);

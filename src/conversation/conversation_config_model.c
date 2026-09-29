@@ -156,6 +156,8 @@ void conversation_config_defaults(conversation_config_t *config)
     config->schema_version = CONVERSATION_CONFIG_SCHEMA_VERSION;
     config->service = CONVERSATION_SERVICE_ALIYUN_REALTIME;
     config->model = CONVERSATION_DEFAULT_MODEL;
+    config->voice = CONVERSATION_DEFAULT_VOICE;
+    config->reply_style = CONVERSATION_DEFAULT_REPLY_STYLE;
     config->enabled = false;
 }
 
@@ -204,6 +206,58 @@ bool conversation_model_from_name(const char *name,
         if (conversation_model_is_supported(candidate) &&
             candidate_name != NULL && strcmp(name, candidate_name) == 0) {
             *model = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char *conversation_voice_name(conversation_voice_t voice)
+{
+    static const char *const names[] = {
+        "longanqian", "longanlingxin", "longanlingxi", "longanxiaoxin",
+        "longanlufeng",
+    };
+    _Static_assert(sizeof(names) / sizeof(names[0]) == CONVERSATION_VOICE_COUNT,
+                   "voice preset names must match persisted IDs");
+    return (unsigned)voice < CONVERSATION_VOICE_COUNT ? names[voice] : NULL;
+}
+
+bool conversation_voice_from_name(const char *name,
+                                  conversation_voice_t *voice)
+{
+    if (name == NULL || voice == NULL) {
+        return false;
+    }
+    for (unsigned value = 0U; value < CONVERSATION_VOICE_COUNT; ++value) {
+        if (strcmp(name, conversation_voice_name(
+                             (conversation_voice_t)value)) == 0) {
+            *voice = (conversation_voice_t)value;
+            return true;
+        }
+    }
+    return false;
+}
+
+const char *conversation_reply_style_name(conversation_reply_style_t style)
+{
+    switch (style) {
+    case CONVERSATION_REPLY_STYLE_CONCISE: return "concise";
+    case CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE: return "english_practice";
+    default: return NULL;
+    }
+}
+
+bool conversation_reply_style_from_name(const char *name,
+                                        conversation_reply_style_t *style)
+{
+    if (name == NULL || style == NULL) {
+        return false;
+    }
+    for (unsigned value = 0U; value < CONVERSATION_REPLY_STYLE_COUNT; ++value) {
+        if (strcmp(name, conversation_reply_style_name(
+                             (conversation_reply_style_t)value)) == 0) {
+            *style = (conversation_reply_style_t)value;
             return true;
         }
     }
@@ -315,6 +369,12 @@ conversation_config_result_t conversation_config_validate(
     if (!conversation_model_is_supported(config->model)) {
         return CONVERSATION_CONFIG_RESULT_INVALID_MODEL;
     }
+    if (conversation_voice_name(config->voice) == NULL) {
+        return CONVERSATION_CONFIG_RESULT_INVALID_VOICE;
+    }
+    if (conversation_reply_style_name(config->reply_style) == NULL) {
+        return CONVERSATION_CONFIG_RESULT_INVALID_REPLY_STYLE;
+    }
     if (!conversation_api_host_is_allowed(config->api_host)) {
         return CONVERSATION_CONFIG_RESULT_INVALID_API_HOST;
     }
@@ -368,7 +428,14 @@ conversation_config_result_t conversation_config_apply_update(
     if (result == CONVERSATION_CONFIG_RESULT_OK) {
         resolved.service = update->service;
         resolved.model = update->model;
-        resolved.enabled = update->enabled;
+        resolved.voice = update->has_voice
+            ? update->voice
+            : (current != NULL ? current->voice : CONVERSATION_DEFAULT_VOICE);
+        resolved.reply_style = update->has_reply_style
+            ? update->reply_style
+            : (current != NULL ? current->reply_style : CONVERSATION_DEFAULT_REPLY_STYLE);
+        resolved.enabled = update->preserve_enabled
+            ? (current != NULL && current->enabled) : update->enabled;
         if (!conversation_api_host_is_allowed(update->api_host)) {
             result = CONVERSATION_CONFIG_RESULT_INVALID_API_HOST;
         } else if (!copy_bounded_string(resolved.api_key,
@@ -478,6 +545,32 @@ conversation_config_result_t conversation_config_parse_form(
                     result = CONVERSATION_CONFIG_RESULT_INVALID_MODEL;
                 }
             }
+        } else if (strcmp(key, "voice") == 0) {
+            if (parsed.has_voice) {
+                result = CONVERSATION_CONFIG_RESULT_DUPLICATE_FIELD;
+            } else {
+                parsed.has_voice = true;
+                decode = decode_form_component(encoded_value, encoded_value_length,
+                                                small_value, sizeof(small_value));
+                if (decode == FORM_DECODE_TOO_LONG ||
+                    (decode == FORM_DECODE_OK &&
+                     !conversation_voice_from_name(small_value, &parsed.voice))) {
+                    result = CONVERSATION_CONFIG_RESULT_INVALID_VOICE;
+                }
+            }
+        } else if (strcmp(key, "reply_style") == 0) {
+            if (parsed.has_reply_style) {
+                result = CONVERSATION_CONFIG_RESULT_DUPLICATE_FIELD;
+            } else {
+                parsed.has_reply_style = true;
+                decode = decode_form_component(encoded_value, encoded_value_length,
+                                                small_value, sizeof(small_value));
+                if (decode == FORM_DECODE_TOO_LONG ||
+                    (decode == FORM_DECODE_OK && !conversation_reply_style_from_name(
+                         small_value, &parsed.reply_style))) {
+                    result = CONVERSATION_CONFIG_RESULT_INVALID_REPLY_STYLE;
+                }
+            }
         } else if (strcmp(key, "enabled") == 0) {
             if (enabled_seen) {
                 result = CONVERSATION_CONFIG_RESULT_DUPLICATE_FIELD;
@@ -538,7 +631,7 @@ conversation_config_result_t conversation_config_parse_form(
     }
 
     if (result == CONVERSATION_CONFIG_RESULT_OK &&
-        (!service_seen || !model_seen || !enabled_seen || !api_key_seen ||
+        (!service_seen || !model_seen || !api_key_seen ||
          !api_host_seen)) {
         result = CONVERSATION_CONFIG_RESULT_MISSING_FIELD;
     }
@@ -550,12 +643,203 @@ conversation_config_result_t conversation_config_parse_form(
     }
 
     if (result == CONVERSATION_CONFIG_RESULT_OK) {
+        parsed.preserve_enabled = !enabled_seen;
         *update = parsed;
     } else {
         conversation_config_clear_sensitive(update, sizeof(*update));
     }
     conversation_config_clear_sensitive(&parsed, sizeof(parsed));
     return result;
+}
+
+conversation_config_result_t conversation_config_parse_preferences_form(
+    const char *form, size_t form_length,
+    conversation_preferences_t *preferences)
+{
+    if (preferences == NULL) {
+        return CONVERSATION_CONFIG_RESULT_INVALID_ARGUMENT;
+    }
+    memset(preferences, 0, sizeof(*preferences));
+    if (form == NULL || form_length == 0U ||
+        form_length > CONVERSATION_PREFERENCES_FORM_MAX_LENGTH ||
+        form[form_length - 1U] == '&') {
+        return CONVERSATION_CONFIG_RESULT_INVALID_FORM;
+    }
+
+    conversation_preferences_t parsed = {0};
+    unsigned seen = 0U;
+    size_t position = 0U;
+    while (position < form_length) {
+        size_t end = position;
+        while (end < form_length && form[end] != '&') ++end;
+        size_t equals = position;
+        while (equals < end && form[equals] != '=') ++equals;
+        if (equals == position || equals == end) {
+            return CONVERSATION_CONFIG_RESULT_INVALID_FORM;
+        }
+        char field[16] = {0};
+        char value[CONVERSATION_API_HOST_MAX_LENGTH + 1U] = {0};
+        const form_decode_result_t field_result = decode_form_component(
+            form + position, equals - position, field, sizeof(field));
+        if (field_result != FORM_DECODE_OK) {
+            return field_result == FORM_DECODE_INVALID
+                ? CONVERSATION_CONFIG_RESULT_INVALID_ENCODING
+                : CONVERSATION_CONFIG_RESULT_UNEXPECTED_FIELD;
+        }
+        /* Reject credentials and every other extra field before decoding its
+         * value. A disabled input or an empty secret is not authorization. */
+        const unsigned bit = strcmp(field, "enabled") == 0 ? 1U
+            : strcmp(field, "voice") == 0 ? 2U
+            : strcmp(field, "reply_style") == 0 ? 4U
+            : strcmp(field, "model") == 0 ? 8U
+            : strcmp(field, "api_host") == 0 ? 16U : 0U;
+        if (bit == 0U) return CONVERSATION_CONFIG_RESULT_UNEXPECTED_FIELD;
+        if ((seen & bit) != 0U) return CONVERSATION_CONFIG_RESULT_DUPLICATE_FIELD;
+        seen |= bit;
+        const form_decode_result_t value_result = decode_form_component(
+            form + equals + 1U, end - equals - 1U, value, sizeof(value));
+        if (value_result == FORM_DECODE_INVALID) {
+            return CONVERSATION_CONFIG_RESULT_INVALID_ENCODING;
+        }
+        if (bit == 1U) {
+            if (value_result != FORM_DECODE_OK ||
+                (strcmp(value, "on") != 0 && strcmp(value, "off") != 0)) {
+                return CONVERSATION_CONFIG_RESULT_INVALID_FORM;
+            }
+            parsed.enabled = strcmp(value, "on") == 0;
+        } else if (bit == 2U) {
+            if (value_result != FORM_DECODE_OK ||
+                !conversation_voice_from_name(value, &parsed.voice)) {
+                return CONVERSATION_CONFIG_RESULT_INVALID_VOICE;
+            }
+        } else if (bit == 4U) {
+            if (value_result != FORM_DECODE_OK ||
+                !conversation_reply_style_from_name(value, &parsed.reply_style)) {
+                return CONVERSATION_CONFIG_RESULT_INVALID_REPLY_STYLE;
+            }
+        } else if (bit == 8U) {
+            if (value_result != FORM_DECODE_OK ||
+                !conversation_model_from_name(value, &parsed.model)) {
+                return CONVERSATION_CONFIG_RESULT_INVALID_MODEL;
+            }
+            parsed.has_model = true;
+        } else {
+            if (value_result != FORM_DECODE_OK ||
+                !conversation_api_host_is_allowed(value)) {
+                return CONVERSATION_CONFIG_RESULT_INVALID_API_HOST;
+            }
+            parsed.has_api_host = true;
+            (void)copy_lower_ascii(parsed.api_host, sizeof(parsed.api_host), value);
+        }
+        position = end + 1U;
+    }
+    if (seen != 7U && seen != 31U) {
+        return CONVERSATION_CONFIG_RESULT_MISSING_FIELD;
+    }
+    *preferences = parsed;
+    return CONVERSATION_CONFIG_RESULT_OK;
+}
+
+conversation_config_result_t conversation_config_parse_api_key_form(
+    const char *form, size_t form_length,
+    conversation_api_key_update_t *update)
+{
+    if (update == NULL) {
+        return CONVERSATION_CONFIG_RESULT_INVALID_ARGUMENT;
+    }
+    conversation_config_clear_sensitive(update, sizeof(*update));
+    if (form == NULL || form_length == 0U ||
+        form_length > CONVERSATION_API_KEY_FORM_MAX_LENGTH ||
+        form[form_length - 1U] == '&') {
+        return CONVERSATION_CONFIG_RESULT_INVALID_FORM;
+    }
+
+    conversation_api_key_update_t parsed = {0};
+    conversation_config_result_t result = CONVERSATION_CONFIG_RESULT_OK;
+    bool seen = false;
+    size_t position = 0U;
+    while (position < form_length && result == CONVERSATION_CONFIG_RESULT_OK) {
+        size_t end = position;
+        while (end < form_length && form[end] != '&') ++end;
+        size_t equals = position;
+        while (equals < end && form[equals] != '=') ++equals;
+        if (equals == position || equals == end) {
+            result = CONVERSATION_CONFIG_RESULT_INVALID_FORM;
+            break;
+        }
+        char field[16] = {0};
+        const form_decode_result_t field_result = decode_form_component(
+            form + position, equals - position, field, sizeof(field));
+        if (field_result != FORM_DECODE_OK) {
+            result = field_result == FORM_DECODE_INVALID
+                ? CONVERSATION_CONFIG_RESULT_INVALID_ENCODING
+                : CONVERSATION_CONFIG_RESULT_UNEXPECTED_FIELD;
+        } else if (strcmp(field, "api_key") != 0) {
+            result = CONVERSATION_CONFIG_RESULT_UNEXPECTED_FIELD;
+        } else if (seen) {
+            result = CONVERSATION_CONFIG_RESULT_DUPLICATE_FIELD;
+        } else {
+            seen = true;
+            const form_decode_result_t decoded = decode_form_component(
+                form + equals + 1U, end - equals - 1U,
+                parsed.api_key, sizeof(parsed.api_key));
+            if (decoded == FORM_DECODE_INVALID) {
+                result = CONVERSATION_CONFIG_RESULT_INVALID_ENCODING;
+            } else if (decoded != FORM_DECODE_OK ||
+                       (parsed.api_key[0] != '\0' &&
+                        !visible_ascii_string(parsed.api_key,
+                                              CONVERSATION_API_KEY_MAX_LENGTH))) {
+                result = CONVERSATION_CONFIG_RESULT_INVALID_API_KEY;
+            }
+        }
+        position = end + 1U;
+    }
+    if (result == CONVERSATION_CONFIG_RESULT_OK) {
+        *update = parsed;
+    }
+    conversation_config_clear_sensitive(&parsed, sizeof(parsed));
+    return result;
+}
+
+conversation_config_result_t conversation_config_apply_preferences(
+    const conversation_config_t *current,
+    const conversation_preferences_t *preferences,
+    conversation_config_t *candidate)
+{
+    conversation_config_result_t result = CONVERSATION_CONFIG_RESULT_OK;
+    if (current == NULL || preferences == NULL || candidate == NULL) {
+        result = CONVERSATION_CONFIG_RESULT_INVALID_ARGUMENT;
+    } else if (preferences->has_model != preferences->has_api_host) {
+        result = CONVERSATION_CONFIG_RESULT_MISSING_FIELD;
+    } else if (preferences->has_model &&
+               !conversation_model_is_supported(preferences->model)) {
+        result = CONVERSATION_CONFIG_RESULT_INVALID_MODEL;
+    } else if (preferences->has_api_host &&
+               !conversation_api_host_is_allowed(preferences->api_host)) {
+        result = CONVERSATION_CONFIG_RESULT_INVALID_API_HOST;
+    } else if (conversation_voice_name(preferences->voice) == NULL) {
+        result = CONVERSATION_CONFIG_RESULT_INVALID_VOICE;
+    } else if (conversation_reply_style_name(preferences->reply_style) == NULL) {
+        result = CONVERSATION_CONFIG_RESULT_INVALID_REPLY_STYLE;
+    } else {
+        result = conversation_config_validate(current);
+    }
+    if (result != CONVERSATION_CONFIG_RESULT_OK) {
+        if (candidate != NULL && candidate != current) {
+            conversation_config_reset(candidate);
+        }
+        return result;
+    }
+    *candidate = *current;
+    candidate->enabled = preferences->enabled;
+    candidate->voice = preferences->voice;
+    candidate->reply_style = preferences->reply_style;
+    if (preferences->has_model) {
+        candidate->model = preferences->model;
+        (void)copy_lower_ascii(candidate->api_host, sizeof(candidate->api_host),
+                              preferences->api_host);
+    }
+    return CONVERSATION_CONFIG_RESULT_OK;
 }
 
 void conversation_config_make_status(
@@ -568,6 +852,8 @@ void conversation_config_make_status(
     memset(status, 0, sizeof(*status));
     status->service = CONVERSATION_SERVICE_ALIYUN_REALTIME;
     status->model = CONVERSATION_DEFAULT_MODEL;
+    status->voice = CONVERSATION_DEFAULT_VOICE;
+    status->reply_style = CONVERSATION_DEFAULT_REPLY_STYLE;
     (void)copy_bounded_string(status->api_host,
                               sizeof(status->api_host),
                               CONVERSATION_DEFAULT_API_HOST);
@@ -580,6 +866,12 @@ void conversation_config_make_status(
     }
     if (conversation_model_is_supported(config->model)) {
         status->model = config->model;
+    }
+    if (conversation_voice_name(config->voice) != NULL) {
+        status->voice = config->voice;
+    }
+    if (conversation_reply_style_name(config->reply_style) != NULL) {
+        status->reply_style = config->reply_style;
     }
     status->enabled = config->enabled;
     status->configured = conversation_config_validate(config) ==
@@ -625,6 +917,10 @@ const char *conversation_config_result_name(
         return "duplicate field";
     case CONVERSATION_CONFIG_RESULT_UNEXPECTED_FIELD:
         return "unexpected field";
+    case CONVERSATION_CONFIG_RESULT_INVALID_VOICE:
+        return "invalid voice";
+    case CONVERSATION_CONFIG_RESULT_INVALID_REPLY_STYLE:
+        return "invalid reply style";
     default:
         return "unknown error";
     }

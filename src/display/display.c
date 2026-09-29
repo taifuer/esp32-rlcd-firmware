@@ -1516,6 +1516,9 @@ void display_show_voice(const display_voice_status_t *status)
     }
 
     char value[48];
+    char navigation[64];
+    (void)display_interaction_format_daily_navigation(
+        navigation, sizeof(navigation), status->next_daily_page);
     const char *detail = status->detail != NULL ? status->detail : "";
     draw_system_header("CHAT", 0U);
     u8g2_SetFont(s_u8g2, u8g2_font_helvB24_tf);
@@ -1538,7 +1541,7 @@ void display_show_voice(const display_voice_status_t *status)
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(170, "Starting offline recognition");
         draw_centered(210, "No network or cloud service");
-        draw_system_footer("BOOT: CANCEL");
+        draw_system_footer(status->session_active ? "BOOT: CANCEL" : navigation);
         break;
     case DISPLAY_VOICE_STATE_LISTENING:
         snprintf(value, sizeof(value), "LISTENING %u/%us",
@@ -1639,7 +1642,7 @@ void display_show_voice(const display_voice_status_t *status)
         draw_centered(210, "Clock and other pages still work");
         draw_system_footer(status->session_active
                                ? voice_display_feedback_footer()
-                               : display_interaction_chat_footer());
+                               : navigation);
         break;
     case DISPLAY_VOICE_STATE_CANCELLED:
         draw_centered(112, "CANCELLED");
@@ -1651,7 +1654,9 @@ void display_show_voice(const display_voice_status_t *status)
         draw_centered(112, "CHAT FAILED");
         u8g2_SetFont(s_u8g2, u8g2_font_helvB14_tf);
         draw_centered(174, detail);
-        draw_system_footer(voice_display_feedback_footer());
+        draw_system_footer(status->cloud_mode
+            ? voice_display_failure_footer(status->retry_ready, status->retry_available)
+            : voice_display_feedback_footer());
         break;
     case DISPLAY_VOICE_STATE_READY:
     default:
@@ -1679,7 +1684,7 @@ void display_show_voice(const display_voice_status_t *status)
                 0, BOARD_DISPLAY_WIDTH, 218,
                 "打开图片  打开设置  取消");
         }
-        draw_system_footer(display_interaction_chat_footer());
+        draw_system_footer(navigation);
         break;
     }
     u8g2_SendBuffer(s_u8g2);

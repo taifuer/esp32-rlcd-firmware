@@ -16,6 +16,7 @@ enum {
     FORM_FIELD_ALARM_VOLUME = 1U << 8,
     FORM_FIELD_DAILY_PAGES = 1U << 9,
     FORM_FIELD_MUSIC_MODE = 1U << 10,
+    FORM_FIELD_DAILY_ORDER = 1U << 11,
     FORM_FIELD_ALL = FORM_FIELD_TIMEZONE | FORM_FIELD_UNIT |
                      FORM_FIELD_VOLUME |
                      FORM_FIELD_UPDATES | FORM_FIELD_ALARM |
@@ -44,6 +45,7 @@ void app_settings_defaults(app_settings_t *settings)
         .alarm_minute = APP_SETTINGS_DEFAULT_ALARM_MINUTE,
         .alarm_weekdays = APP_SETTINGS_ALARM_WEEKDAYS_MASK,
         .daily_pages_mask = APP_DAILY_PAGES_ALL_MASK,
+        .daily_pages_order = APP_DAILY_PAGES_DEFAULT_ORDER,
         .music_mode = APP_MUSIC_MODE_SEQUENTIAL,
     };
 }
@@ -74,6 +76,7 @@ bool app_settings_validate(const app_settings_t *settings)
             (uint8_t)~APP_SETTINGS_ALARM_ALL_DAYS_MASK) == 0U &&
            (settings->daily_pages_mask &
             (uint8_t)~APP_DAILY_PAGES_ALL_MASK) == 0U &&
+           app_daily_pages_order_valid(settings->daily_pages_order) &&
            (settings->music_mode == APP_MUSIC_MODE_SEQUENTIAL ||
             settings->music_mode == APP_MUSIC_MODE_REPEAT_ONE ||
             settings->music_mode == APP_MUSIC_MODE_REPEAT_ALL);
@@ -238,6 +241,28 @@ static bool parse_decimal(const char *text, int minimum, int maximum,
     return true;
 }
 
+static bool parse_daily_pages_order(const char *value, uint8_t *order)
+{
+    uint8_t parsed[APP_DAILY_PAGE_COUNT];
+    const char *cursor = value;
+    for (size_t index = 0U; index < APP_DAILY_PAGE_COUNT; ++index) {
+        if (*cursor < '1' || *cursor > '9') return false;
+        unsigned id = (unsigned)(*cursor++ - '0');
+        if (*cursor >= '0' && *cursor <= '9') {
+            id = id * 10U + (unsigned)(*cursor++ - '0');
+        }
+        parsed[index] = (uint8_t)id;
+        if (index + 1U < APP_DAILY_PAGE_COUNT) {
+            if (*cursor++ != ',') return false;
+        } else if (*cursor != '\0') {
+            return false;
+        }
+    }
+    if (!app_daily_pages_order_valid(parsed)) return false;
+    memcpy(order, parsed, sizeof(parsed));
+    return true;
+}
+
 static bool assign_form_field(const char *key, const char *value,
                               app_settings_t *settings,
                               unsigned *seen_fields)
@@ -322,6 +347,11 @@ static bool assign_form_field(const char *key, const char *value,
             return false;
         }
         settings->daily_pages_mask = (uint8_t)mask;
+    } else if (strcmp(key, "daily_pages_order") == 0) {
+        field = FORM_FIELD_DAILY_ORDER;
+        if (!parse_daily_pages_order(value, settings->daily_pages_order)) {
+            return false;
+        }
     } else if (strcmp(key, "music_mode") == 0) {
         field = FORM_FIELD_MUSIC_MODE;
         if (strcmp(value, "sequential") == 0) {
@@ -400,7 +430,7 @@ bool app_settings_parse_form(const char *body, size_t length,
             } else if (strcmp(value, "updates") == 0) {
                 section_fields = FORM_FIELD_UPDATES;
             } else if (strcmp(value, "pages") == 0) {
-                section_fields = FORM_FIELD_DAILY_PAGES;
+                section_fields = FORM_FIELD_DAILY_PAGES | FORM_FIELD_DAILY_ORDER;
             } else if (strcmp(value, "music") == 0) {
                 section_fields = FORM_FIELD_MUSIC_MODE;
             } else {

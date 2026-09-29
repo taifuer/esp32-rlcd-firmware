@@ -161,6 +161,9 @@ typedef struct {
     bool engine_available;
     bool cloud_mode;
     bool session_active;
+    bool retry_ready;
+    bool retry_available;
+    const char *next_daily_page;
     uint8_t turn_number;
     uint8_t max_turns;
     uint32_t elapsed_ms;

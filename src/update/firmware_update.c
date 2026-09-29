@@ -162,6 +162,7 @@ static const char SETTINGS_PAGE[] =
     ".source-link{color:#255da8;text-decoration:none}.source-link:hover{text-decoration:underline}"
     ".section-toggle{cursor:pointer;font-size:1.15rem;font-weight:650;line-height:1.5}.section-toggle span{float:right;margin-left:.75rem;font-size:.88rem;font-weight:400;color:#676b70}"
     ".market-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.15rem .65rem;margin:.5rem 0}.market-choices label{margin:0;min-height:44px;font-size:.92rem;font-weight:500}.market-order{list-style:none;padding:0;margin:.5rem 0}.market-order li{display:grid;grid-template-columns:minmax(0,1fr) 44px 44px;gap:.4rem;align-items:center;margin:.3rem 0}.market-order button{margin:0;padding:.35rem;font-size:1.05rem}.market-order span{font-size:.92rem}"
+    ".page-order>div{display:grid;grid-template-columns:minmax(0,1fr) 44px 44px;gap:.4rem;align-items:center;margin:.3rem 0}.page-order label{margin:0;min-height:44px;font-size:.95rem}.page-order button{margin:0;padding:.35rem;min-height:44px}"
     "details[open]>.section-toggle{margin-bottom:.9rem}.section-note{margin-top:.75rem}footer{text-align:center;margin-top:1.5rem;font-size:.85rem;color:#676b70}"
     "footer a{color:inherit;text-decoration:none}footer a:hover{text-decoration:underline}"
     "@media(max-width:26rem){.wifi-summary{align-items:flex-start;flex-direction:column;gap:.25rem}.wifi-summary strong{text-align:left}}"
@@ -173,7 +174,7 @@ static const char SETTINGS_PAGE[] =
     "<form id=\"pairForm\"><label for=\"pairCode\">访问码</label><input id=\"pairCode\" maxlength=\"8\" minlength=\"8\" required autocomplete=\"off\" autocapitalize=\"characters\">"
     "<button id=\"pairButton\" type=\"submit\">连接设备</button></form><p id=\"pairMessage\" role=\"status\"></p></section>"
     "<section id=\"lanPanel\" hidden><h2>同 Wi-Fi 访问</h2><p>仅在可信局域网使用。当前连接为 HTTP，歌曲和普通设置可直接管理；"
-    "修改 Wi-Fi、天气或 AI 凭据，以及本地升级，请切换到设备热点。</p>"
+    "天气和 AI 设置也可直接修改；填写或更换 API Key、修改 Wi-Fi 及本地升级，请切换到设备热点。</p>"
     "<button id=\"useHotspot\" type=\"button\" class=\"secondary\">切换到设备热点</button><p id=\"hotspotMessage\" role=\"status\"></p></section>"
     "<nav class=\"settings-nav\" aria-label=\"设置分区\"><button id=\"navGeneral\" type=\"button\" aria-pressed=\"true\" aria-controls=\"panelGeneral\">常用</button><button id=\"navNetwork\" type=\"button\" aria-pressed=\"false\" aria-controls=\"panelNetwork\">联网</button><button id=\"navMedia\" type=\"button\" aria-pressed=\"false\" aria-controls=\"panelMedia\">媒体</button><button id=\"navMaintenance\" type=\"button\" aria-pressed=\"false\" aria-controls=\"panelMaintenance\">维护</button></nav>"
     "<div id=\"panelGeneral\" aria-labelledby=\"navGeneral\">"
@@ -187,16 +188,17 @@ static const char SETTINGS_PAGE[] =
     "<p class=\"note\">用于音乐和对话；0% 静音，不影响独立闹钟音量。</p>"
     "<button type=\"submit\">保存常用设置</button></form><p id=\"settingsMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
     "<section><details><summary class=\"section-toggle\">显示页面</summary><form id=\"pagesForm\"><input type=\"hidden\" name=\"section\" value=\"pages\">"
-    "<p class=\"note\">选择短按 BOOT 时经过的页面；时钟始终保留，页面顺序不变。</p>"
-    "<div class=\"market-choices\" role=\"group\" aria-label=\"显示页面\">"
-    "<label class=\"check\"><input id=\"pageWeather\" type=\"checkbox\">天气</label>"
-    "<label class=\"check\"><input id=\"pageMarket\" type=\"checkbox\">市场看板</label>"
-    "<label class=\"check\"><input id=\"pageCalendar\" type=\"checkbox\">日历</label>"
-    "<label class=\"check\"><input id=\"pageImage\" type=\"checkbox\">图片</label>"
-    "<label class=\"check\"><input id=\"pageMusic\" type=\"checkbox\">音乐</label>"
-    "<label class=\"check\"><input id=\"pageChat\" type=\"checkbox\">对话</label></div>"
+    "<p class=\"note\">时钟固定在第一位。勾选要显示的功能，用 ↑ ↓ 调整短按 BOOT 的切换顺序。</p>"
+    "<div id=\"pageOrder\" class=\"page-order\" role=\"group\" aria-label=\"功能页面顺序\">"
+    "<div id=\"pageWeatherRow\"><label class=\"check\"><input id=\"pageWeather\" type=\"checkbox\">天气</label><button id=\"pageWeatherUp\" type=\"button\" class=\"secondary\" aria-label=\"天气上移\">↑</button><button id=\"pageWeatherDown\" type=\"button\" class=\"secondary\" aria-label=\"天气下移\">↓</button></div>"
+    "<div id=\"pageMarketRow\"><label class=\"check\"><input id=\"pageMarket\" type=\"checkbox\">市场看板</label><button id=\"pageMarketUp\" type=\"button\" class=\"secondary\" aria-label=\"市场看板上移\">↑</button><button id=\"pageMarketDown\" type=\"button\" class=\"secondary\" aria-label=\"市场看板下移\">↓</button></div>"
+    "<div id=\"pageCalendarRow\"><label class=\"check\"><input id=\"pageCalendar\" type=\"checkbox\">日历</label><button id=\"pageCalendarUp\" type=\"button\" class=\"secondary\" aria-label=\"日历上移\">↑</button><button id=\"pageCalendarDown\" type=\"button\" class=\"secondary\" aria-label=\"日历下移\">↓</button></div>"
+    "<div id=\"pageImageRow\"><label class=\"check\"><input id=\"pageImage\" type=\"checkbox\">图片</label><button id=\"pageImageUp\" type=\"button\" class=\"secondary\" aria-label=\"图片上移\">↑</button><button id=\"pageImageDown\" type=\"button\" class=\"secondary\" aria-label=\"图片下移\">↓</button></div>"
+    "<div id=\"pageMusicRow\"><label class=\"check\"><input id=\"pageMusic\" type=\"checkbox\">音乐</label><button id=\"pageMusicUp\" type=\"button\" class=\"secondary\" aria-label=\"音乐上移\">↑</button><button id=\"pageMusicDown\" type=\"button\" class=\"secondary\" aria-label=\"音乐下移\">↓</button></div>"
+    "<div id=\"pageChatRow\"><label class=\"check\"><input id=\"pageChat\" type=\"checkbox\">对话</label><button id=\"pageChatUp\" type=\"button\" class=\"secondary\" aria-label=\"对话上移\">↑</button><button id=\"pageChatDown\" type=\"button\" class=\"secondary\" aria-label=\"对话下移\">↓</button></div></div>"
     "<p class=\"note\">隐藏只跳过页面，不停用功能，也不删除配置或文件。天气与市场仍需启用，图片与音乐仍需有可用内容。</p>"
     "<input id=\"dailyPagesMask\" name=\"daily_pages_mask\" type=\"hidden\" value=\"63\">"
+    "<input id=\"dailyPagesOrder\" name=\"daily_pages_order\" type=\"hidden\" value=\"1,2,4,8,16,32\">"
     "<button id=\"pagesSave\" type=\"submit\">保存显示页面</button></form><p id=\"pagesMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section>"
     "<section><h2>日期与时间</h2><p>使用手机或电脑的时间校准 RTC。</p>"
     "<button id=\"setTime\" type=\"button\" class=\"secondary\">校准设备时间</button>"
@@ -249,9 +251,6 @@ static const char SETTINGS_PAGE[] =
     "<input id=\"weatherApiHost\" name=\"api_host\" maxlength=\"127\" placeholder=\"abcxyz.qweatherapi.com\" "
     "autocomplete=\"off\" autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\">"
     "<p class=\"note\">填写 QWeather 控制台分配的专属 Host，不含 https://、路径或端口。</p>"
-    "<label for=\"weatherKey\">API Key</label><input id=\"weatherKey\" name=\"api_key\" type=\"text\" "
-    "maxlength=\"256\" autocomplete=\"off\" autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\">"
-    "<p class=\"note\">请直接粘贴；保存后立即清空且不会再次显示或预填。已有配置时留空将保留当前 API Key。</p>"
     "<label for=\"weatherProvince\">省份</label><select id=\"weatherProvince\" name=\"province\"></select>"
     "<label for=\"weatherCity\">城市</label><select id=\"weatherCity\" name=\"city\"></select>"
     "<p class=\"note\">先选省份，再选择所在城市。</p>"
@@ -261,6 +260,14 @@ static const char SETTINGS_PAGE[] =
     "<p class=\"note\">保存后可继续修改其他设置；按设备 BOOT 退出网页设置后获取一次天气，不切换当前页面。</p>"
     "<button id=\"weatherSave\" type=\"submit\">保存天气设置</button></form>"
     "<p id=\"weatherMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
+    "<details id=\"weatherCredentials\" class=\"advanced\"><summary>API Key</summary>"
+    "<p id=\"weatherKeyStatus\" class=\"note\"></p>"
+    "<p id=\"weatherKeyHint\" class=\"note\" hidden>填写或更换 API Key，请使用页面顶部的“切换到设备热点”。其他天气设置可直接保存。</p>"
+    "<form id=\"weatherKeyForm\" autocomplete=\"off\"><label for=\"weatherKey\">API Key</label>"
+    "<input id=\"weatherKey\" name=\"api_key\" type=\"text\" maxlength=\"256\" autocomplete=\"off\" autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\">"
+    "<p class=\"note\">请直接粘贴；保存后清空且不会回显。留空保留已保存的 Key，不修改其他天气设置。</p>"
+    "<button id=\"weatherKeySave\" type=\"submit\">保存 API Key</button></form>"
+    "<p id=\"weatherKeyMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details>"
     "<details class=\"advanced\"><summary>清除天气配置</summary>"
     "<p class=\"note\">清除 API Host、API Key、位置和本地天气缓存；其他设置不会改变，设备无需重启。</p>"
     "<button id=\"weatherClear\" type=\"button\" class=\"danger\">确认清除天气配置</button></details></details></section>"
@@ -278,15 +285,15 @@ static const char SETTINGS_PAGE[] =
     "<p id=\"conversationLastResult\" class=\"note\" role=\"status\" aria-live=\"polite\">最近对话：尚未测试</p>"
     "<details id=\"conversationDiagnostics\" hidden><summary>连接诊断</summary><p id=\"conversationDiagnosticText\" class=\"note\"></p></details>"
     "<p id=\"conversationMigration\" class=\"note\" hidden></p>"
-    "<form id=\"conversationForm\" autocomplete=\"off\">"
-    "<input type=\"hidden\" name=\"service\" value=\""
-    SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "\">"
+    "<form id=\"conversationPreferencesForm\">"
     "<label for=\"conversationEnabled\">AI 对话</label><select id=\"conversationEnabled\" name=\"enabled\">"
     "<option value=\"off\">关闭（默认）</option><option value=\"on\">开启</option></select>"
-    "<label for=\"conversationKey\">API Key</label><input id=\"conversationKey\" name=\"api_key\" type=\"text\" "
-    "maxlength=\"256\" autocomplete=\"off\" autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\">"
-    "<p class=\"note\">请直接粘贴；内容仅在本次编辑时可见，保存后立即清空且不会再次显示或预填。已有配置时留空将保留当前 API Key。</p>"
     "<p class=\"note\">关闭 AI 对话不会删除 API Key；未配置、断网或省电时仍使用离线语音指令。</p>"
+    "<label for=\"conversationVoice\">音色</label><select id=\"conversationVoice\" name=\"voice\">"
+    "<option value=\"longanqian\">longanqian（默认）</option><option value=\"longanlingxin\">longanlingxin</option><option value=\"longanlingxi\">longanlingxi</option><option value=\"longanxiaoxin\">longanxiaoxin</option><option value=\"longanlufeng\">longanlufeng</option></select>"
+    "<label for=\"conversationReplyStyle\">回答风格</label><select id=\"conversationReplyStyle\" name=\"reply_style\">"
+    "<option value=\"concise\">日常简洁（默认）</option><option value=\"english_practice\">英语练习</option></select>"
+    "<p class=\"note\">英语练习优先使用简短英语回答，需要时可要求中文解释。保存后从下一次对话生效。</p>"
     "<details class=\"advanced\"><summary>高级设置</summary>"
     "<label for=\"conversationModel\">对话模型</label><select id=\"conversationModel\" name=\"model\">"
     "<option value=\"" SETTINGS_CONVERSATION_MODEL_QWEN_AUDIO_3
@@ -297,11 +304,21 @@ static const char SETTINGS_PAGE[] =
     "placeholder=\"llm-xxx.cn-beijing.maas.aliyuncs.com\" autocomplete=\"off\">"
     "<p class=\"note\">留空使用北京共享服务；也可填写受支持的新加坡共享或 Workspace 专属 API Host。不要包含 wss://、路径或端口。</p></details>"
     "<p class=\"note\">使用 AI 对话时，麦克风音频会发送至阿里云百炼，识别文本与回复由服务端生成，并可能产生费用。</p>"
+    "<p id=\"conversationPreferencesHint\" class=\"note\"></p>"
+    "<button id=\"conversationPreferencesSave\" type=\"submit\">保存对话设置</button></form>"
+    "<p id=\"conversationPreferencesMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
+    "<details id=\"conversationCredentials\" class=\"advanced\"><summary>API Key</summary>"
+    "<p id=\"conversationKeyStatus\" class=\"note\"></p>"
+    "<p id=\"conversationCredentialsHint\" class=\"note\" hidden>填写或更换 API Key，请使用页面顶部的“切换到设备热点”。其他对话设置可直接保存。</p>"
+    "<form id=\"conversationForm\" autocomplete=\"off\">"
+    "<label for=\"conversationKey\">API Key</label><input id=\"conversationKey\" name=\"api_key\" type=\"text\" "
+    "maxlength=\"256\" autocomplete=\"off\" autocapitalize=\"none\" autocorrect=\"off\" spellcheck=\"false\">"
+    "<p class=\"note\">请直接粘贴；保存后清空且不会回显。留空保留已保存的 Key，不修改其他对话设置。</p>"
     "<p class=\"note\">当前固件未启用 Flash/NVS 加密；具备设备物理访问能力的人可能读取已保存的 API Key。建议使用本设备专用、最小权限且可随时撤销的 Key。</p>"
-    "<button id=\"conversationSave\" type=\"submit\">保存 AI 对话配置</button></form>"
-    "<p id=\"conversationMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
+    "<button id=\"conversationSave\" type=\"submit\">保存 API Key</button></form>"
+    "<p id=\"conversationMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details>"
     "<details class=\"advanced\"><summary>清除 AI 对话配置</summary>"
-    "<p class=\"note\">清除已保存的 API Key，关闭 AI 对话并恢复默认模型与共享 API Host；其他设备设置不会改变，也无需重启。</p>"
+    "<p class=\"note\">清除 API Key，关闭 AI 对话，并恢复默认模型、音色、回答风格与 API Host；其他设备设置不变，无需重启。</p>"
     "<button id=\"conversationClear\" type=\"button\" class=\"danger\">确认清除 AI 对话配置</button></details></details></section>"
     "</div><div id=\"panelMedia\" aria-labelledby=\"navMedia\" hidden>"
     "<section><details id=\"musicSection\" open><summary class=\"section-toggle\">microSD 音乐</summary>"
@@ -321,10 +338,16 @@ static const char SETTINGS_PAGE[] =
     "<p id=\"musicSleepMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details>"
     "<hr class=\"divider\"><label for=\"musicFile\">从手机或电脑选择歌曲</label>"
     "<input id=\"musicFile\" type=\"file\" accept=\".mp3,.wav,audio/mpeg,audio/wav\" multiple disabled>"
-    "<p class=\"note\">可多选，依次上传；每首不超过 32 MB。失败会停止队列，已上传的歌曲保留。</p>"
+    "<p class=\"note\">可多选，依次上传；每首不超过 32 MB。失败后可在本页重试失败项或继续待上传项；刷新或关闭页面后队列不会保留。</p>"
     "<p class=\"note\">支持 MP3、16 位 PCM WAV，最多 32 首。文件保存在 SD 卡 rlcd/music/，不上传至服务器。</p>"
     "<button id=\"musicUpload\" type=\"button\" disabled>上传歌曲</button>"
     "<progress id=\"musicProgress\" max=\"100\" value=\"0\" hidden></progress>"
+    "<p id=\"musicQueueState\" class=\"note\" role=\"status\" hidden></p>"
+    "<div class=\"button-row\"><button id=\"musicRetryFailed\" type=\"button\" class=\"secondary\" hidden>重试失败歌曲</button>"
+    "<button id=\"musicContinuePending\" type=\"button\" class=\"secondary\" hidden>继续待上传歌曲</button></div>"
+    "<div class=\"button-row\"><button id=\"musicReconcile\" type=\"button\" class=\"secondary\" hidden>核对上传结果</button>"
+    "<button id=\"musicSkipUncertain\" type=\"button\" class=\"secondary\" hidden>保留设备文件并跳过</button></div>"
+    "<button id=\"musicFinishQueue\" type=\"button\" class=\"secondary\" hidden>结束本次队列</button>"
     "<p id=\"musicMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
     "<p class=\"note\">上传或删除会停止音乐；完成后立即生效，无需重启。同名文件不会覆盖。大文件可通过读卡器复制；不支持热插拔。</p>"
     "<p class=\"note\">音乐页短按 KEY 播放或暂停，按住 2 秒下一首；按住 BOOT 2 秒调整音量，短按切到下一显示页并继续播放。</p>"
@@ -370,15 +393,18 @@ static const char SETTINGS_PAGE[] =
     "<section><details><summary class=\"section-toggle\">恢复默认设置</summary><p>恢复时区、单位、音量、显示页面、音乐播放方式、闹钟与更新偏好；Wi-Fi、天气、市场看板和 AI 配置、SD 卡文件保留，不修改本次音乐定时。</p><button id=\"defaults\" type=\"button\" class=\"danger\">恢复偏好默认值</button><p id=\"maintenanceMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section></div>"
     "<p class=\"note\">闲置 5 分钟后关闭；一次最多使用 30 分钟，上传中不会因闲置而中断。</p>"
     "<footer>© <span id=\"portalYear\">2026</span> <a href=\"https://mcu.taifua.com/\" target=\"_blank\" rel=\"noopener noreferrer\">ESP32 固件</a></footer>"
-    "<script>document.getElementById('portalYear').textContent=String(new Date().getFullYear());let token='',initialUpdates='stable',settingsBusy=false,wifiConfigured=false,savedWifi='',wifiBusy=false,weatherAvailable=false,weatherConfigured=false,weatherEnabled=false,initialWeatherEnabled=false,weatherBusy=false,weatherRegionRequest=0,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
+    "<script>document.getElementById('portalYear').textContent=String(new Date().getFullYear());let token='',initialUpdates='stable',settingsBusy=false,wifiConfigured=false,savedWifi='',wifiBusy=false,weatherAvailable=false,weatherConfigured=false,weatherKeySaved=false,weatherEnabled=false,initialWeatherEnabled=false,weatherBusy=false,weatherRegionRequest=0,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
     "storedImages=[],storedIndex=0,storedSelected='',storedBusy=false,storedRequest=0;"
-    "let musicReady=false,musicFull=false,musicBusy=false,musicLoading=false,musicRequest=0,musicTracks=[],musicPlaying=false,musicSettingsBusy=false,musicSleepBusy=false,musicSleepRemaining=0;"
+    "let musicReady=false,musicFull=false,musicCatalogComplete=false,musicBusy=false,musicLoading=false,musicRequest=0,musicTracks=[],musicPlaying=false,musicSettingsBusy=false,musicSleepBusy=false,musicSleepRemaining=0,musicUploadQueue=[];"
     "let marketAvailable=false,marketBusy=false,marketPresets=[],marketIds=[],marketChecks=[],marketMoves=[];"
-    "const $=id=>document.getElementById(id);let localAccess=true;"
+    "const $=id=>document.getElementById(id);let localAccess=true,weatherPreferencesReady=false;"
     "const sections=['General','Network','Media','Maintenance'];let alarmBusy=false,updatesBusy=false,pagesBusy=false,pagesAvailable=false;"
     "const dailyPageIds=['pageWeather','pageMarket','pageCalendar','pageImage','pageMusic','pageChat'];"
+    "let dailyPageOrder=[1,2,4,8,16,32];const validPageOrder=order=>Array.isArray(order)&&order.length===6&&new Set(order).size===6&&order.every(bit=>[1,2,4,8,16,32].includes(bit));"
+    "function renderPageOrder(){dailyPageOrder.forEach(bit=>{$('pageOrder').appendChild($(dailyPageIds[Math.log2(bit)]+'Row'))});pagesControls(pagesBusy)}"
+    "dailyPageIds.forEach((id,index)=>{for(const [suffix,delta] of [['Up',-1],['Down',1]])$(id+suffix).onclick=()=>{if(pagesBusy||!pagesAvailable||!stateReady)return;const from=dailyPageOrder.indexOf(1<<index),to=from+delta;if(to<0||to>=6)return;[dailyPageOrder[from],dailyPageOrder[to]]=[dailyPageOrder[to],dailyPageOrder[from]];renderPageOrder();$(id+suffix).focus();show('pagesMessage','顺序已调整，保存后生效。')}});"
     "let stateReady=false,initialStateLoaded=false,retryBusy=false,otaStarted=false;const loadedSections=new Set(),failedLoads=new Map();const musicModes=['sequential','repeat_one','repeat_all'];"
-    "const sectionNames={all:'设备设置',settings:'常用设置',pages:'显示页面',alarm:'闹钟',updates:'更新设置',weather:'天气',weatherCities:'城市列表',market:'市场看板',conversation:'AI 对话',images:'图片',music:'歌曲列表',musicSettings:'播放设置',session:'连接状态'};"
+    "const sectionNames={all:'设备设置',settings:'常用设置',pages:'显示页面',alarm:'闹钟',updates:'更新设置',weather:'天气',weatherPreferences:'天气设置',weatherKey:'天气 API Key',weatherCities:'城市列表',market:'市场看板',conversation:'AI 对话',conversationPreferences:'对话设置',conversationCredentials:'AI API Key',images:'图片',music:'歌曲列表',musicSettings:'播放设置',session:'连接状态'};"
     "function loadNotice(){const names=Array.from(failedLoads.keys(),name=>sectionNames[name]||name);$('loadNotice').hidden=!names.length;$('loadMessage').textContent=names.length?'需要重新读取或核对：'+names.join('、')+'。确认门户仍在开启后重试；只重新读取以上内容，其他未保存修改保留。':'';$('retryLoads').disabled=retryBusy||otaStarted}"
     "function loadFailed(section,error){failedLoads.set(section,error.message);loadNotice()}function loadSucceeded(section){failedLoads.delete(section);loadedSections.add(section);loadNotice()}"
     "function uncertainError(message){const error=new Error(message);error.uncertain=true;return error}function checkUncertain(section,error){if(error.uncertain)loadFailed(section,error)}"
@@ -390,7 +416,7 @@ static const char SETTINGS_PAGE[] =
     "sections.forEach(section=>{$('nav'+section).onclick=()=>selectSection(section)});"
     "if(typeof location!=='undefined'&&location.hash){const fragment=location.hash.slice(1);if(/^[a-f0-9]{32}$/.test(fragment))token=fragment;history.replaceState(null,'',location.pathname)}"
     "const getOptions=()=>({cache:'no-store',headers:{'X-RLCD-Token':token}});"
-    "const LAN_POSTS=new Set(['/api/settings','/api/time','/api/hotspot','/api/alarm/preview','/api/activity','/api/market/config','/api/images/select','/api/images/delete','/api/images/upload','/api/music/play','/api/music/stop','/api/music/delete','/api/music/upload','/api/music/sleep']);"
+    "const LAN_POSTS=new Set(['/api/settings','/api/time','/api/hotspot','/api/alarm/preview','/api/activity','/api/market/config','/api/conversation/preferences','/api/conversation/clear','/api/weather/preferences','/api/weather/clear','/api/images/select','/api/images/delete','/api/images/upload','/api/music/play','/api/music/stop','/api/music/delete','/api/music/upload','/api/music/sleep']);"
     "let lastActivity=0;function userActivity(){const now=Date.now();if(!stateReady||!token||musicBusy||musicSettingsBusy||musicSleepBusy||imageBusy||settingsBusy||pagesBusy||wifiBusy||weatherBusy||conversationBusy||marketBusy||now-lastActivity<30000)return;lastActivity=now;post('/api/activity','').catch(()=>{})}"
     "if(document.addEventListener){document.addEventListener('input',userActivity,{passive:true});document.addEventListener('click',userActivity,{passive:true})}"
     "const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
@@ -417,35 +443,40 @@ static const char SETTINGS_PAGE[] =
     "if(!state||typeof state.enabled!=='boolean'||!Array.isArray(state.presets)||state.presets.length!==15||state.presets.some(item=>!item||!Number.isInteger(item.id)||item.id<0||item.id>=15||typeof item.name!=='string')||new Set(state.presets.map(item=>item.id)).size!==15||!Array.isArray(state.ids)||state.ids.length<1||state.ids.length>5||new Set(state.ids).size!==state.ids.length||state.ids.some(id=>!Number.isInteger(id)||!state.presets.some(item=>item.id===id)))throw new Error('设备返回的市场看板配置无效');"
     "marketPresets=state.presets;marketIds=state.ids.slice();marketAvailable=true;$('marketEnabled').value=state.enabled?'on':'off';$('marketStatus').textContent=state.enabled?'已开启 · '+marketIds.length+' 项':'已关闭';const choices=$('marketChoices');while(choices.firstChild)choices.removeChild(choices.firstChild);marketChecks=[];"
     "marketPresets.forEach(preset=>{const label=document.createElement('label'),input=document.createElement('input'),name=document.createElement('span');label.className='check';input.type='checkbox';input.onchange=()=>marketSelection(preset.id,input.checked);name.textContent=preset.name;label.appendChild(input);label.appendChild(name);choices.appendChild(label);marketChecks.push({id:preset.id,input})});renderMarketOrder();marketControls();show('marketMessage','')}"
-    "function weatherControls(){const blocked=!stateReady||localAccess||weatherBusy||!weatherAvailable,enabled=$('weatherEnabled').value==='on',hasProvince=$('weatherProvince').value!=='';"
-    "$('weatherForm').setAttribute('aria-busy',weatherBusy?'true':'false');$('weatherEnabled').disabled=blocked;$('weatherApiHost').disabled=blocked;"
-    "$('weatherKey').disabled=blocked;$('weatherProvince').disabled=blocked;$('weatherCity').disabled=blocked||!hasProvince;"
-    "$('weatherSave').disabled=blocked;$('weatherClear').disabled=blocked;"
+    "function weatherControls(){const blocked=!stateReady||weatherBusy||!weatherAvailable,enabled=$('weatherEnabled').value==='on',hasProvince=$('weatherProvince').value!=='';"
+    "const settingsBlocked=blocked||!weatherPreferencesReady;$('weatherForm').setAttribute('aria-busy',weatherBusy?'true':'false');$('weatherEnabled').disabled=settingsBlocked;$('weatherApiHost').disabled=settingsBlocked;"
+    "$('weatherKeyForm').setAttribute('aria-busy',weatherBusy?'true':'false');$('weatherKey').disabled=blocked||localAccess;$('weatherKeySave').disabled=blocked||localAccess;$('weatherKeyHint').hidden=!localAccess;"
+    "$('weatherProvince').disabled=settingsBlocked;$('weatherCity').disabled=settingsBlocked||!hasProvince;"
+    "$('weatherSave').disabled=settingsBlocked;$('weatherClear').disabled=blocked;"
     "$('weatherApiHost').required=enabled;$('weatherProvince').required=enabled;$('weatherCity').required=enabled}"
     "function weatherOptions(select,items,placeholder){while(select.firstChild)select.removeChild(select.firstChild);const empty=document.createElement('option');"
     "empty.value='';empty.textContent=placeholder;select.appendChild(empty);items.forEach(item=>{const option=document.createElement('option');"
     "option.value=String(item.id);option.textContent=item.name;select.appendChild(option)})}"
     "async function weatherRegions(province){const suffix=province?'?province='+encodeURIComponent(province):'',payload=await getJson('/api/weather/regions'+suffix);if(!payload||!Array.isArray(payload.items)||"
     "payload.items.some(item=>!item||!Number.isInteger(item.id)||item.id<=0||typeof item.name!=='string'))throw new Error('设备返回的省市列表无效');return payload.items}"
-    "async function setWeatherState(state){const weather=state&&typeof state==='object'?state:null;weatherAvailable=weather!==null&&weather.available===true&&"
+    "async function setWeatherState(state,section='weather'){const weather=state&&typeof state==='object'?state:null;weatherAvailable=weather!==null&&weather.available===true&&"
     "typeof weather.enabled==='boolean'&&typeof weather.configured==='boolean'&&typeof weather.key_saved==='boolean'&&typeof weather.api_host==='string'&&"
     "Number.isInteger(weather.province_id)&&Number.isInteger(weather.city_id);weatherConfigured=weatherAvailable&&weather.configured;"
-    "weatherEnabled=weatherAvailable&&weather.enabled;initialWeatherEnabled=weatherEnabled;$('weatherStatus').textContent=!weatherAvailable?'暂不可用':"
-    "weatherEnabled?(weatherConfigured?'已开启':'需要完善配置'):(weather&&weather.key_saved?'已关闭':'未配置');$('weatherEnabled').value=weatherEnabled?'on':'off';"
-    "$('weatherApiHost').value=weatherAvailable?weather.api_host:'';$('weatherKey').value='';$('weatherKey').placeholder=weatherAvailable&&weather.key_saved?'已保存，留空保留':'粘贴 API Key';"
+    "weatherKeySaved=weatherAvailable&&weather.key_saved;weatherEnabled=weatherAvailable&&weather.enabled;initialWeatherEnabled=weatherEnabled;$('weatherStatus').textContent=!weatherAvailable?'暂不可用':"
+    "weatherEnabled?(weatherConfigured?'已开启':'需要完善配置'):(weatherKeySaved?'已关闭':'未配置');$('weatherKeyStatus').textContent=!weatherAvailable?'暂不可用':weatherKeySaved?'API Key 已保存':'尚未保存 API Key；首次使用请连接设备热点填写。';"
+    "if(section!=='weatherPreferences'){$('weatherKey').value='';$('weatherKey').placeholder=weatherKeySaved?'已保存，留空保留':'粘贴 API Key';if(weatherAvailable&&!weatherKeySaved)$('weatherCredentials').open=true}"
+    "if(section==='weatherKey'){weatherControls();return}weatherPreferencesReady=false;weatherControls();$('weatherEnabled').value=weatherEnabled?'on':'off';$('weatherApiHost').value=weatherAvailable?weather.api_host:'';"
     "const requestId=++weatherRegionRequest;const provinces=await weatherRegions('');if(requestId!==weatherRegionRequest)return;"
     "weatherOptions($('weatherProvince'),provinces,'请选择省份');const province=weatherAvailable&&weather.province_id>0?String(weather.province_id):'';"
     "$('weatherProvince').value=province;if($('weatherProvince').selectedIndex<0)$('weatherProvince').value='';const selectedProvince=$('weatherProvince').value;"
     "const cities=selectedProvince?await weatherRegions(selectedProvince):[];if(requestId!==weatherRegionRequest)return;weatherOptions($('weatherCity'),cities,selectedProvince?'请选择城市':'请先选择省份');"
     "$('weatherCity').value=weatherAvailable&&weather.city_id>0?String(weather.city_id):'';if($('weatherCity').selectedIndex<0)$('weatherCity').value='';"
-    "show('weatherMessage',weatherAvailable?'':'天气设置暂不可用；其他设备设置仍可正常使用。');weatherControls()}"
-    "function conversationControls(){const blocked=!stateReady||localAccess||conversationBusy||!conversationAvailable;$('conversationForm').setAttribute('aria-busy',conversationBusy?'true':'false');"
-    "$('conversationEnabled').disabled=blocked;$('conversationModel').disabled=blocked;$('conversationApiHost').disabled=blocked;$('conversationKey').disabled=blocked;"
-    "$('conversationSave').disabled=blocked;$('conversationClear').disabled=blocked}"
-    "function setConversationState(state){const cloud=state&&typeof state==='object'?state:null;conversationAvailable=cloud!==null&&cloud.available===true&&cloud.service==='" SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "'&&typeof cloud.configured==='boolean'&&typeof cloud.enabled==='boolean'&&typeof cloud.model==='string'&&typeof cloud.api_host==='string'&&typeof cloud.shared_endpoint==='boolean';"
+    "weatherPreferencesReady=weatherAvailable;show('weatherMessage',weatherAvailable?'':'天气设置暂不可用；其他设备设置仍可正常使用。');weatherControls()}"
+    "function conversationControls(){const blocked=!stateReady||conversationBusy||!conversationAvailable;const credentialsBlocked=blocked||localAccess;"
+    "$('conversationForm').setAttribute('aria-busy',conversationBusy?'true':'false');$('conversationPreferencesForm').setAttribute('aria-busy',conversationBusy?'true':'false');"
+    "['conversationEnabled','conversationVoice','conversationReplyStyle','conversationModel','conversationApiHost','conversationClear'].forEach(id=>$(id).disabled=blocked);$('conversationPreferencesSave').disabled=blocked||!conversationConfigured;"
+    "['conversationKey','conversationSave'].forEach(id=>$(id).disabled=credentialsBlocked);"
+    "$('conversationCredentialsHint').hidden=!localAccess;$('conversationPreferencesHint').textContent=!conversationAvailable?'':!conversationConfigured?(localAccess?'首次使用请切换到设备热点，在下方保存 API Key，再保存对话设置。':'首次使用请在下方保存 API Key，再保存对话设置。'):'开关、音色、回答风格、模型和官方 API Host 可直接保存，无需切换热点。'}"
+    "function setConversationState(state,section='conversation'){const cloud=state&&typeof state==='object'?state:null;conversationAvailable=cloud!==null&&cloud.available===true&&cloud.service==='" SETTINGS_CONVERSATION_SERVICE_ALIYUN_REALTIME "'&&typeof cloud.configured==='boolean'&&typeof cloud.enabled==='boolean'&&typeof cloud.model==='string'&&typeof cloud.api_host==='string'&&typeof cloud.shared_endpoint==='boolean';"
+    "conversationAvailable=conversationAvailable&&['longanqian','longanlingxin','longanlingxi','longanxiaoxin','longanlufeng'].includes(cloud.voice)&&['concise','english_practice'].includes(cloud.reply_style);"
     "conversationConfigured=conversationAvailable&&cloud.configured===true;conversationEnabled=conversationConfigured&&cloud.enabled===true;$('conversationStatus').textContent=!conversationAvailable?'暂不可用':!conversationConfigured?'未配置':conversationEnabled?'已开启':'已关闭';"
-    "$('conversationEnabled').value=conversationEnabled?'on':'off';"
-    "const modelSelect=$('conversationModel');modelSelect.value=conversationAvailable?cloud.model:'';if(modelSelect.selectedIndex<0)modelSelect.value='" SETTINGS_CONVERSATION_MODEL_QWEN_AUDIO_3 "';$('conversationApiHost').value=conversationAvailable&&!(cloud.shared_endpoint&&cloud.api_host==='" CONVERSATION_DEFAULT_API_HOST "')?cloud.api_host:'';$('conversationKey').value='';"
+    "if(section!=='conversationCredentials'){$('conversationEnabled').value=conversationEnabled?'on':'off';$('conversationVoice').value=conversationAvailable?cloud.voice:'longanqian';$('conversationReplyStyle').value=conversationAvailable?cloud.reply_style:'concise';const modelSelect=$('conversationModel');modelSelect.value=conversationAvailable?cloud.model:'';if(modelSelect.selectedIndex<0)modelSelect.value='" SETTINGS_CONVERSATION_MODEL_QWEN_AUDIO_3 "';$('conversationApiHost').value=conversationAvailable&&!(cloud.shared_endpoint&&cloud.api_host==='" CONVERSATION_DEFAULT_API_HOST "')?cloud.api_host:'';}"
+    "$('conversationKeyStatus').textContent=!conversationAvailable?'暂不可用':conversationConfigured?'API Key 已保存':'尚未保存 API Key';if(section!=='conversationPreferences'){$('conversationKey').value='';if(conversationAvailable&&!conversationConfigured)$('conversationCredentials').open=true;}"
     "$('conversationActiveModel').textContent='当前模型：'+(conversationAvailable?cloud.model:'暂不可用');"
     "const results={not_tested:'尚未测试',success:'成功',failed:'失败',cancelled:'已取消'};const result=conversationAvailable&&Object.prototype.hasOwnProperty.call(results,cloud.last_result)?cloud.last_result:'not_tested';"
     "$('conversationLastResult').textContent='最近对话：'+(!conversationAvailable?'暂不可用':results[result])+(result==='failed'&&typeof cloud.last_hint==='string'&&cloud.last_hint?' · '+cloud.last_hint:'');"
@@ -453,23 +484,29 @@ static const char SETTINGS_PAGE[] =
     "$('conversationDiagnostics').hidden=!hasDiag;$('conversationDiagnostics').open=false;"
     "$('conversationDiagnosticText').textContent=hasDiag?['连接建立：'+(diag.websocket_connected?'是':'否'),'会话创建：'+(diag.session_created?'已收到':'未收到'),'会话设置：'+(diag.session_update_sent?'已发送':'未发送'),'会话确认：'+(diag.session_ready?'已收到':'未收到'),'结束事件：'+['无','连接中断','服务端关闭','会话结束'][diag.transport_end],'关闭码：'+(diag.close_code||'未提供')].join('；')+'。':'';"
     "const migration=conversationAvailable?cloud.migration:'none';$('conversationMigration').hidden=!['completed','pending'].includes(migration);"
-    "$('conversationMigration').textContent=migration==='completed'?'已自动更新旧模型，API Key、Host 和开关保持不变。':migration==='pending'?'本次已使用新模型，但迁移结果尚未保存。请在热点模式下保存一次 AI 对话配置；原凭据仍保留。':'';"
-    "show('conversationMessage',conversationAvailable?'':'AI 对话设置暂不可用；其他设备设置仍可正常使用。');conversationControls()}"
+    "$('conversationMigration').textContent=migration==='completed'?'已更新对话配置，API Key、Host 和开关保持不变。':migration==='pending'?'本次已使用兼容配置，但尚未保存。请保存一次对话设置；原凭据仍保留。':'';"
+    "conversationControls()}"
     "function storedControls(){const available=stateReady&&storedImages.length>0&&!imageBusy&&!storedBusy;"
     "$('storedPrevious').disabled=!available||storedImages.length<2;$('storedNext').disabled=!available||storedImages.length<2;"
     "$('storedSelect').disabled=!available||storedImages[storedIndex]===storedSelected;$('storedDelete').disabled=!available}"
     "function imageControls(){const blocked=!stateReady||!sdReady||imageBusy;$('imageFile').disabled=blocked;$('starterImages').disabled=blocked||localAccess;"
     "$('imageUpload').disabled=blocked||!imagePbm;$('threshold').disabled=imageBusy||!imageGray;$('dither').disabled=imageBusy||!imageGray;storedControls()}"
     "function imageBusyState(value){imageBusy=value;imageControls()}"
-    "function musicControls(){const blocked=!stateReady||musicBusy||!musicReady,empty=musicTracks.length===0;"
+    "function musicQueueCounts(){return musicUploadQueue.reduce((counts,item)=>{if(item.status==='completed')++counts.completed;else if(item.status==='failed')++counts.failed;else if(item.status==='uncertain')++counts.uncertain;else ++counts.pending;return counts},{completed:0,failed:0,pending:0,uncertain:0})}"
+    "function musicCatalogUsable(data){return !!data&&data.ready===true&&data.scanned===true&&data.truncated===false}"
+    "function musicQueueControls(){const counts=musicQueueCounts(),unresolved=musicUploadQueue.find(item=>item.status==='uncertain'),retryable=musicUploadQueue.some(item=>item.status==='failed'&&item.retryable!==false),blocked=!stateReady||musicBusy||!musicCatalogComplete;"
+    "$('musicRetryFailed').hidden=!retryable||!!unresolved;$('musicContinuePending').hidden=counts.pending===0||!!unresolved;$('musicReconcile').hidden=!unresolved;$('musicSkipUncertain').hidden=!unresolved||unresolved.conflict!==true;$('musicFinishQueue').hidden=musicUploadQueue.length===0;"
+    "['musicRetryFailed','musicContinuePending','musicReconcile'].forEach(id=>$(id).disabled=blocked);$('musicSkipUncertain').disabled=musicBusy;$('musicFinishQueue').disabled=musicBusy}"
+    "function musicQueueStatus(detail){const counts=musicQueueCounts(),state=$('musicQueueState');state.hidden=musicUploadQueue.length===0;if(!state.hidden)state.textContent='已完成 '+counts.completed+' · 失败 '+counts.failed+' · 待上传 '+counts.pending+(counts.uncertain?' · 待核对 '+counts.uncertain:'')+(detail?'。'+detail:'');musicQueueControls()}"
+    "function musicControls(){const blocked=!stateReady||musicBusy||!musicReady,empty=musicTracks.length===0,queued=musicUploadQueue.length>0;"
     "$('musicTracks').disabled=blocked||empty;$('musicPlay').disabled=blocked||empty;$('musicDelete').disabled=blocked||empty;"
     "$('musicStop').disabled=!stateReady||musicBusy||!musicPlaying;$('musicRefresh').disabled=!stateReady||musicBusy;"
-    "$('musicFile').disabled=blocked||musicFull;$('musicUpload').disabled=blocked||musicFull||!$('musicFile').files.length;"
-    "$('musicSleep').disabled=!stateReady||musicBusy||musicSleepBusy||!musicPlaying;$('musicSleepStart').disabled=$('musicSleep').disabled;$('musicSleepCancel').disabled=!stateReady||musicBusy||musicSleepBusy||musicSleepRemaining===0}"
+    "$('musicFile').disabled=blocked||musicFull||queued;$('musicUpload').disabled=blocked||musicFull||queued||!$('musicFile').files.length;"
+    "$('musicSleep').disabled=!stateReady||musicBusy||musicSleepBusy||!musicPlaying;$('musicSleepStart').disabled=$('musicSleep').disabled;$('musicSleepCancel').disabled=!stateReady||musicBusy||musicSleepBusy||musicSleepRemaining===0;musicQueueControls()}"
     "async function loadMusic(preferred){const current=++musicRequest;musicLoading=true;try{"
     "const data=await getJson('/api/music');if(current!==musicRequest)return;"
     "if(!Array.isArray(data.tracks)||data.tracks.length>32||data.tracks.some(track=>typeof track.name!=='string'||!Number.isFinite(track.bytes)))throw new Error('歌曲列表无效');"
-    "const previous=preferred||$('musicTracks').value;musicTracks=data.tracks;musicReady=data.ready===true;musicFull=musicTracks.length>=32||data.truncated===true;"
+    "const previous=preferred||$('musicTracks').value;musicTracks=data.tracks;musicReady=data.ready===true;musicCatalogComplete=musicCatalogUsable(data);musicFull=musicTracks.length>=32||data.truncated===true;"
     "const select=$('musicTracks');while(select.firstChild)select.removeChild(select.firstChild);"
     "musicTracks.forEach(track=>{const option=document.createElement('option');option.value=track.name;option.textContent=track.name+' · '+(track.bytes/1000000).toFixed(2)+' MB';select.appendChild(option)});"
     "select.value=musicTracks.some(track=>track.name===previous)?previous:(musicTracks[data.selected_index]||musicTracks[0]||{name:''}).name;"
@@ -479,8 +516,8 @@ static const char SETTINGS_PAGE[] =
     "show('musicPlayback',(data.state==='playing'?'正在播放':data.state==='paused'?'已暂停':data.state==='error'?'无法播放，请检查文件格式':'已停止')+"
     "(active?' · '+active.name:'')+(musicPlaying?' · '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0'):'')+"
     "(musicModes.includes(data.playback_mode)?' · '+({sequential:'顺序播放',repeat_one:'单曲循环',repeat_all:'列表循环'}[data.playback_mode]):''));"
-    "musicSleepRemaining=Number.isInteger(data.sleep_remaining_seconds)&&data.sleep_remaining_seconds>0?data.sleep_remaining_seconds:0;show('musicSleepState',musicSleepRemaining?'约 '+Math.ceil(musicSleepRemaining/60)+' 分钟后停止':'未开启定时');loadSucceeded('music');"
-    "}catch(error){if(current===musicRequest){musicReady=false;show('musicMessage',error.message);loadFailed('music',error)}}"
+    "musicSleepRemaining=Number.isInteger(data.sleep_remaining_seconds)&&data.sleep_remaining_seconds>0?data.sleep_remaining_seconds:0;show('musicSleepState',musicSleepRemaining?'约 '+Math.ceil(musicSleepRemaining/60)+' 分钟后停止':'未开启定时');loadSucceeded('music');return data;"
+    "}catch(error){if(current===musicRequest){musicReady=false;musicCatalogComplete=false;show('musicMessage',error.message);loadFailed('music',error)}return null}"
     "finally{if(current===musicRequest){musicLoading=false;musicControls()}}}"
     "async function musicCommand(action){if(musicBusy)return;const name=$('musicTracks').value;"
     "if(action!=='stop'&&!musicTracks.some(track=>track.name===name))return;"
@@ -501,18 +538,27 @@ static const char SETTINGS_PAGE[] =
     "request.upload.onprogress=event=>{if(event.lengthComputable){const percent=Math.round(event.loaded*100/event.total);$('musicProgress').value=percent;"
     "show('musicMessage',label+(percent===100?'正在校验并写入…':percent+'%'))}};"
     "request.onload=()=>{if(request.status===200)resolve();else reject(new Error(request.responseText||'上传失败'))};"
-    "request.onerror=request.ontimeout=request.onabort=()=>reject(new Error('连接中断或上传超时，请重新连接并刷新列表确认结果。'));request.send(file)})}"
-    "$('musicUpload').onclick=async()=>{const files=Array.from($('musicFile').files);if(musicBusy||!musicReady||musicFull||!files.length)return;"
+    "request.onerror=request.ontimeout=request.onabort=()=>reject(uncertainError('连接中断或上传超时，本首歌曲的结果尚未确认。'));request.send(file)})}"
+    "function musicCatalogMatch(item){return musicTracks.find(track=>track.name.toLowerCase()===item.file.name.toLowerCase())}"
+    "function finishMusicQueue(detail){$('musicProgress').hidden=true;const counts=musicQueueCounts();if(musicUploadQueue.length>0&&counts.completed===musicUploadQueue.length){const total=musicUploadQueue.length;musicUploadQueue=[];$('musicFile').value='';$('musicQueueState').hidden=true;show('musicMessage',detail||'本次队列已完成 '+total+' 首歌曲。')}else{musicQueueStatus(detail);if(detail)show('musicMessage',detail)}musicControls()}"
+    "async function processMusicQueue(kind,reconcile){if(musicBusy||!stateReady||musicUploadQueue.some(item=>item.status==='uncertain'))return;const eligible=item=>kind==='failed'?item.status==='failed'&&item.retryable!==false:item.status==='pending';if(!musicUploadQueue.some(eligible))return;"
+    "musicBusy=true;++musicRequest;musicLoading=false;$('musicProgress').hidden=false;musicControls();let detail='',lastCompleted='';try{let targets=musicUploadQueue.filter(eligible);"
+    "if(reconcile){const data=await loadMusic();if(!data){detail='无法读取设备歌单，队列仍保留；连接恢复后先刷新列表。';return}if(!musicCatalogUsable(data)){detail='设备歌单尚未完整可用，不能确认文件不存在；队列仍保留，不会上传。';return}for(const item of targets){if(musicCatalogMatch(item)){item.status='uncertain';item.conflict=true;item.retryable=false}}"
+    "if(musicUploadQueue.some(item=>item.status==='uncertain')){detail='设备歌单中已有待处理项的同名文件，无法证明是否来自本次请求；即使大小一致也不会视为完成。请明确保留并跳过，或结束队列后手动核对。';return}targets=musicUploadQueue.filter(eligible);if(musicTracks.length+targets.length>32){detail='设备歌单剩余位置不足，未继续上传；请先删除歌曲后重试。';return}}"
+    "for(const item of targets){item.status='uploading';musicQueueStatus();try{await uploadSong(item.file,musicUploadQueue.indexOf(item)+1,musicUploadQueue.length)}catch(error){item.status=error.uncertain?'uncertain':'failed';item.conflict=false;item.retryable=!error.uncertain;item.error=error.message;detail=error.uncertain?error.message+' 请先核对上传结果，不能直接重试或继续。':item.file.name+'：'+error.message+'。队列已暂停。';break}item.status='completed';item.retryable=false;item.error='';lastCompleted=item.file.name}"
+    "if(!musicUploadQueue.some(item=>item.status==='uncertain')&&lastCompleted){const refreshed=await loadMusic(lastCompleted);if(!refreshed&&!detail)detail='设备已确认上传，但歌曲列表暂时无法刷新；请稍后刷新列表。'}"
+    "const counts=musicQueueCounts();if(!detail&&counts.failed&&counts.pending)detail='失败项与待上传项均已保留，请选择重试失败歌曲或继续待上传歌曲。';else if(!detail&&counts.failed)detail='待上传项已处理，失败 '+counts.failed+' 首仍保留，可重试或结束本次队列。';else if(!detail&&counts.pending)detail='失败项已处理，仍有 '+counts.pending+' 首待上传。'}finally{musicBusy=false;finishMusicQueue(detail)}}"
+    "async function reconcileMusicUpload(){if(musicBusy||!stateReady)return;const item=musicUploadQueue.find(entry=>entry.status==='uncertain');if(!item)return;musicBusy=true;$('musicProgress').hidden=true;musicControls();let detail='';try{const data=await loadMusic(item.file.name);if(!data){detail='仍无法读取设备歌单，结果保持待核对；不会自动重传。';return}if(!musicCatalogUsable(data)){detail='设备歌单尚未完整可用，结果保持待核对；请先刷新列表，不会自动重传。';return}const match=musicCatalogMatch(item);if(!match){item.status='failed';item.retryable=true;item.conflict=false;detail='已重新读取完整歌单，未找到 '+item.file.name+'；现可手动重试，或继续其他待上传歌曲。'}else{item.conflict=true;item.retryable=false;detail='设备歌单中已有同名文件，无法证明它是否由本次请求写入；即使大小一致也不会视为完成。请保留设备文件并跳过，或结束队列后手动核对。'}}finally{musicBusy=false;finishMusicQueue(detail)}}"
+    "$('musicRetryFailed').onclick=()=>processMusicQueue('failed',true);$('musicContinuePending').onclick=()=>processMusicQueue('pending',true);$('musicReconcile').onclick=()=>reconcileMusicUpload();"
+    "$('musicSkipUncertain').onclick=()=>{const item=musicUploadQueue.find(entry=>entry.status==='uncertain'&&entry.conflict===true);if(!item||musicBusy)return;item.status='failed';item.retryable=false;item.conflict=false;finishMusicQueue('已保留设备中的同名文件，并将 '+item.file.name+' 记为失败；其他待上传歌曲不会自动开始。')};"
+    "$('musicFinishQueue').onclick=()=>{if(musicBusy||!musicUploadQueue.length)return;const counts=musicQueueCounts();if((counts.pending||counts.uncertain)&&!confirm('结束本次上传队列？待上传与待核对项目将不再保留，请先确认设备歌单。'))return;musicUploadQueue=[];$('musicFile').value='';$('musicProgress').hidden=true;$('musicQueueState').hidden=true;show('musicMessage','本次上传队列已结束；如需上传请重新选择文件。');musicControls()};"
+    "$('musicUpload').onclick=async()=>{const files=Array.from($('musicFile').files);if(musicBusy||musicUploadQueue.length||!musicReady||musicFull||!files.length)return;"
     "if(files.length+musicTracks.length>32){show('musicMessage','歌曲总数不能超过 32 首，请减少本次选择。');return}"
     "const names=new Set(musicTracks.map(track=>track.name.toLowerCase()));for(const file of files){"
     "if(!/\\.(mp3|wav)$/i.test(file.name)||/[\\x00-\\x1f\\x7f/\\\\:*?\"<>|]/.test(file.name)||file.name.startsWith('.')||new TextEncoder().encode(file.name).length>127||file.size<44||file.size>32000000){"
     "show('musicMessage',file.name+'：请选择不超过 32 MB 的 MP3 或 PCM WAV，文件名最长 127 个 UTF-8 字节。');return}"
     "if(names.has(file.name.toLowerCase())){show('musicMessage',file.name+'：已有同名歌曲，请更换文件名后上传。');return}names.add(file.name.toLowerCase())}"
-    "musicBusy=true;++musicRequest;musicLoading=false;musicControls();$('musicProgress').hidden=false;let completed=0;"
-    "try{for(const file of files){await uploadSong(file,completed+1,files.length);++completed;await loadMusic(file.name);"
-    "if(!musicReady)throw new Error('无法刷新歌曲列表，请确认设备连接。')}"
-    "$('musicFile').value='';show('musicMessage','已上传 '+completed+' 首歌曲。')}"
-    "catch(error){show('musicMessage','已上传 '+completed+'/'+files.length+' 首，队列已停止。'+error.message)}finally{musicBusy=false;musicControls()}};"
+    "musicUploadQueue=files.map(file=>({file,status:'pending',retryable:true,conflict:false,error:''}));musicQueueStatus();await processMusicQueue('pending',false)};"
     "function setSdState(value,count){const state=String(value||'unknown').toLowerCase(),total=Number.isFinite(Number(count))?Math.max(0,Math.floor(Number(count))):0;"
     "const output=$('sdState');if(state==='ready'||state==='available'||state==='ok'){sdReady=true;output.dataset.state='ready';"
     "output.textContent=total>0?'microSD 可用，现有 '+total+' 张图片。':'microSD 可用，尚无图片。'}"
@@ -583,20 +629,22 @@ static const char SETTINGS_PAGE[] =
     "function settingsControls(busy){settingsBusy=busy;formControls('settings',busy||!stateReady||!loadedSections.has('settings'));defaultControls()}"
     "function alarmControls(busy){alarmBusy=busy;formControls('alarmForm',busy||!stateReady||!loadedSections.has('alarm'));defaultControls()}"
     "function updatesControls(busy){updatesBusy=busy;formControls('updatesForm',busy||!stateReady||!loadedSections.has('updates'));defaultControls()}"
-    "function pagesControls(busy){pagesBusy=busy;formControls('pagesForm',busy||!stateReady||!pagesAvailable);defaultControls()}"
+    "function pagesControls(busy){pagesBusy=busy;const blocked=busy||!stateReady||!pagesAvailable;formControls('pagesForm',blocked);dailyPageOrder.forEach((bit,index)=>{const id=dailyPageIds[Math.log2(bit)];$(id+'Up').disabled=blocked||index===0;$(id+'Down').disabled=blocked||index===5});defaultControls()}"
     "function musicSettingsControls(busy){musicSettingsBusy=busy;formControls('musicSettingsForm',busy||!stateReady||!loadedSections.has('musicSettings'));defaultControls()}"
     "function syncControls(){settingsControls(settingsBusy);alarmControls(alarmBusy);updatesControls(updatesBusy);pagesControls(pagesBusy);musicSettingsControls(musicSettingsBusy);wifiControls();weatherControls();conversationControls();marketControls();imageControls();musicControls();$('setTime').disabled=!stateReady;['file','upload'].forEach(id=>$(id).disabled=!stateReady||localAccess||otaStarted)}"
     "async function load(section='all',preferred){let state;try{state=await getJson('/api/state');if(!state||typeof state.token!=='string'||!state.token)throw new Error('设备返回的连接状态无效');}catch(error){loadFailed(section,error);syncControls();throw error}"
     "token=state.token;stateReady=true;initialStateLoaded=true;localAccess=state.local_network===true;$('pairPanel').hidden=true;$('lanPanel').hidden=!localAccess;setWifiState(state.wifi_configured,state.wifi_ssid);"
-    "async function part(name,action,message){if(section!=='all'&&section!==name)return;try{await action();if(message)show(message,'');loadSucceeded(name)}catch(error){loadedSections.delete(name);loadFailed(name,error);if(message)show(message,error.message);if(name==='weather'){weatherAvailable=false;weatherControls()}if(name==='market'){marketAvailable=false;$('marketStatus').textContent='暂不可用'}if(name==='pages')pagesAvailable=false;}finally{syncControls()}}"
+    "async function part(name,action,message){if(section!=='all'&&section!==name)return;try{await action();if(message)show(message,'');loadSucceeded(name)}catch(error){loadedSections.delete(name);loadFailed(name,error);if(message)show(message,error.message);if(name==='weather'||name==='weatherPreferences'){weatherPreferencesReady=false;weatherControls()}if(name==='market'){marketAvailable=false;$('marketStatus').textContent='暂不可用'}if(name==='pages')pagesAvailable=false;}finally{syncControls()}}"
     "await part('settings',()=>{if(!Number.isInteger(state.timezone)||!['c','f'].includes(state.unit)||!Number.isInteger(state.volume)||state.volume<0||state.volume>100)throw new Error('常用设置暂不可用');$('timezone').value=state.timezone;$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume},'settingsMessage');"
     "await part('updates',()=>{if(!['stable','beta'].includes(state.updates))throw new Error('更新设置暂不可用');$('updates').value=state.updates;initialUpdates=state.updates},'updatesMessage');"
-    "await part('pages',()=>{pagesAvailable=Number.isInteger(state.daily_pages_mask)&&state.daily_pages_mask>=0&&state.daily_pages_mask<=63;if(!pagesAvailable)throw new Error('显示页面设置暂不可用，其他设置仍可使用。');dailyPageIds.forEach((id,index)=>{$(id).checked=(state.daily_pages_mask&(1<<index))!==0});show('pagesMessage','')},'pagesMessage');"
+    "await part('pages',()=>{pagesAvailable=Number.isInteger(state.daily_pages_mask)&&state.daily_pages_mask>=0&&state.daily_pages_mask<=63&&validPageOrder(state.daily_pages_order);if(!pagesAvailable)throw new Error('显示页面设置暂不可用，其他设置仍可使用。');dailyPageOrder=[...state.daily_pages_order];dailyPageIds.forEach((id,index)=>{$(id).checked=(state.daily_pages_mask&(1<<index))!==0});renderPageOrder();show('pagesMessage','')},'pagesMessage');"
     "await part('alarm',()=>{if(!Number.isInteger(state.alarm_volume)||state.alarm_volume<0||state.alarm_volume>100||!['on','off'].includes(state.alarm)||!Number.isInteger(state.alarm_hour)||state.alarm_hour<0||state.alarm_hour>23||!Number.isInteger(state.alarm_minute)||state.alarm_minute<0||state.alarm_minute>59||!Number.isInteger(state.alarm_days)||state.alarm_days<1||state.alarm_days>127)throw new Error('闹钟设置暂不可用');$('alarmVolume').value=state.alarm_volume;$('alarmVolumeValue').value=state.alarm_volume;"
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0})},'alarmMessage');"
     "await part('musicSettings',()=>{if(!musicModes.includes(state.music_mode))throw new Error('播放设置暂不可用');$('musicMode').value=state.music_mode},'musicSettingsMessage');"
-    "await part('conversation',()=>{setConversationState(state.conversation);if(!conversationAvailable)throw new Error('AI 对话设置暂不可用')},'conversationMessage');"
-    "await part('weather',async()=>{await setWeatherState(state.weather);if(!weatherAvailable)throw new Error('天气设置暂不可用')},'weatherMessage');"
+    "const conversationSection=['conversationPreferences','conversationCredentials'].includes(section)?section:'conversation';"
+    "await part(conversationSection,()=>{setConversationState(state.conversation,conversationSection);if(!conversationAvailable)throw new Error('AI 对话设置暂不可用');if(conversationSection==='conversation')show('conversationPreferencesMessage','')},conversationSection==='conversationPreferences'?'conversationPreferencesMessage':'conversationMessage');"
+    "const weatherSection=['weatherPreferences','weatherKey'].includes(section)?section:'weather';"
+    "await part(weatherSection,async()=>{await setWeatherState(state.weather,weatherSection);if(!weatherAvailable)throw new Error('天气设置暂不可用');if(weatherSection==='weather')show('weatherKeyMessage','')},weatherSection==='weatherKey'?'weatherKeyMessage':'weatherMessage');"
     "await part('market',loadMarket,'marketMessage');"
     "await part('images',async()=>{setSdState(state.sd_state,state.image_count);await loadStoredImages(preferred)},'storedMessage');"
     "if(section==='all'||section==='music')await loadMusic(preferred);failedLoads.delete(section==='all'?'all':'session');loadNotice();syncControls()}"
@@ -614,7 +662,7 @@ static const char SETTINGS_PAGE[] =
     "$('settings').onsubmit=async event=>{event.preventDefault();if(settingsBusy||!stateReady||!loadedSections.has('settings'))return;show('settingsMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();"
     "settingsControls(true);const message=await post('/api/settings',body);await load('settings');show('settingsMessage',message)}catch(error){checkUncertain('settings',error);show('settingsMessage',error.message)}finally{settingsControls(false)}};"
     "$('pagesForm').onsubmit=async event=>{event.preventDefault();if(pagesBusy||!pagesAvailable)return;const mask=dailyPageIds.reduce((value,id,index)=>$(id).checked?value|(1<<index):value,0);"
-    "$('dailyPagesMask').value=String(mask);show('pagesMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();pagesControls(true);const message=await post('/api/settings',body);await load('pages');show('pagesMessage',message)}catch(error){checkUncertain('pages',error);show('pagesMessage',error.message)}finally{pagesControls(false)}};"
+    "$('dailyPagesMask').value=String(mask);$('dailyPagesOrder').value=dailyPageOrder.join(',');show('pagesMessage','正在保存…');try{const body=new URLSearchParams(new FormData(event.target)).toString();pagesControls(true);const message=await post('/api/settings',body);await load('pages');show('pagesMessage',message)}catch(error){checkUncertain('pages',error);show('pagesMessage',error.message)}finally{pagesControls(false)}};"
     "$('alarmForm').onsubmit=async event=>{event.preventDefault();if(alarmBusy||!stateReady||!loadedSections.has('alarm'))return;const match=/^(\\d{2}):(\\d{2})$/.exec($('alarmTime').value);"
     "const days=Array.from(alarmDays()).reduce((mask,input)=>input.checked?mask|Number(input.dataset.bit):mask,0);"
     "if(!match||Number(match[1])>23||Number(match[2])>59){show('alarmMessage','请选择有效的响铃时间。');return}"
@@ -635,29 +683,38 @@ static const char SETTINGS_PAGE[] =
     "wifiBusy=true;wifiControls();show('wifiMessage','正在验证新网络，设置热点可能短暂重新连接…');try{const body='ssid='+encodeURIComponent(ssid)+'&password='+encodeURIComponent(open?'':password);"
     "show('wifiMessage',await post('/api/wifi/change',body))}catch(error){show('wifiMessage',error.name==='TypeError'?'设置热点刚刚断开。请查看设备是否已连接新网络；若热点仍在，可刷新页面确认原配置仍保留。':error.message);wifiBusy=false;wifiControls()}};"
     "$('weatherEnabled').onchange=()=>weatherControls();async function loadWeatherCities(){if(weatherBusy||!weatherAvailable)return;"
-    "const province=$('weatherProvince').value;weatherBusy=true;weatherControls();weatherOptions($('weatherCity'),[],province?'正在读取城市…':'请先选择省份');"
+    "const province=$('weatherProvince').value;weatherBusy=true;weatherPreferencesReady=false;weatherControls();weatherOptions($('weatherCity'),[],province?'正在读取城市…':'请先选择省份');"
     "const requestId=++weatherRegionRequest;try{const cities=province?await weatherRegions(province):[];if(requestId!==weatherRegionRequest)return;"
-    "weatherOptions($('weatherCity'),cities,province?'请选择城市':'请先选择省份');show('weatherMessage','');loadSucceeded('weatherCities')}catch(error){if(requestId===weatherRegionRequest){"
+    "weatherOptions($('weatherCity'),cities,province?'请选择城市':'请先选择省份');weatherPreferencesReady=true;show('weatherMessage','');loadSucceeded('weatherCities')}catch(error){if(requestId===weatherRegionRequest){"
     "weatherOptions($('weatherCity'),[],'无法读取城市');show('weatherMessage',error.message);loadFailed('weatherCities',error)}}finally{if(requestId===weatherRegionRequest){weatherBusy=false;weatherControls()}}}$('weatherProvince').onchange=loadWeatherCities;"
-    "$('weatherForm').onsubmit=async event=>{event.preventDefault();if(weatherBusy||!weatherAvailable)return;const enabled=$('weatherEnabled').value==='on',"
+    "$('weatherForm').onsubmit=async event=>{event.preventDefault();if(weatherBusy||!weatherAvailable||!weatherPreferencesReady||!stateReady)return;const enabled=$('weatherEnabled').value==='on',"
     "province=$('weatherProvince').value,city=$('weatherCity').value;"
     "if(enabled&&(!$('weatherApiHost').value||!province||!city)){show('weatherMessage','请填写 API Host，并依次选择省份和城市。');return}"
+    "if(enabled&&!weatherKeySaved){show('weatherMessage','首次使用请先连接设备热点，在下方保存 API Key。');return}"
     "if(enabled&&!initialWeatherEnabled&&!confirm('开启天气后，设备会使用你的凭据直连 QWeather，相关请求可能计入你的账户用量。是否继续？'))return;"
-    "const fields=new FormData(event.target);fields.set('district','');if(!enabled&&(!province||!city)){fields.set('province','0');fields.set('city','0')}"
+    "const fields=new FormData(event.target);if(!province)fields.set('province','0');if(!city)fields.set('city','0');"
     "const body=new URLSearchParams(fields).toString();weatherBusy=true;weatherControls();show('weatherMessage','正在保存…');"
-    "try{const message=await post('/api/weather/config',body);$('weatherKey').value='';await load('weather');show('weatherMessage',message)}"
-    "catch(error){checkUncertain('weather',error);show('weatherMessage',error.message)}finally{$('weatherKey').value='';weatherBusy=false;weatherControls()}};"
-    "$('weatherClear').onclick=async()=>{if(weatherBusy||!weatherAvailable)return;if(!confirm('确认清除天气 API Key、位置和本地缓存？此操作无法撤销。'))return;"
+    "try{const message=await post('/api/weather/preferences',body);await load('weatherPreferences');show('weatherMessage',message)}"
+    "catch(error){checkUncertain('weatherPreferences',error);show('weatherMessage',error.message)}finally{weatherBusy=false;weatherControls()}};"
+    "$('weatherKeyForm').onsubmit=async event=>{event.preventDefault();if(weatherBusy||!weatherAvailable||localAccess||!stateReady)return;"
+    "const body=new URLSearchParams(new FormData(event.target)).toString();weatherBusy=true;weatherControls();show('weatherKeyMessage','正在保存…');"
+    "try{const message=await post('/api/weather/key',body);await load('weatherKey');show('weatherKeyMessage',message)}"
+    "catch(error){checkUncertain('weatherKey',error);show('weatherKeyMessage',error.message)}finally{$('weatherKey').value='';weatherBusy=false;weatherControls()}};"
+    "$('weatherClear').onclick=async()=>{if(weatherBusy||!weatherAvailable||!stateReady)return;if(!confirm('确认清除天气 API Key、Host、位置和本地缓存？未保存的天气设置也会清空，此操作无法撤销。'))return;"
     "weatherBusy=true;weatherControls();show('weatherMessage','正在清除…');try{const message=await post('/api/weather/clear','confirm=CLEAR_WEATHER');await load('weather');show('weatherMessage',message)}"
     "catch(error){checkUncertain('weather',error);show('weatherMessage',error.message)}finally{weatherBusy=false;weatherControls()}};"
     "$('marketForm').onsubmit=async event=>{event.preventDefault();if(marketBusy||!marketAvailable)return;if(marketIds.length<1||marketIds.length>5){show('marketMessage','请选择 1—5 项指数。');return}const enabled=$('marketEnabled').value==='on',body=new URLSearchParams({enabled:enabled?'on':'off',ids:marketIds.join(',')}).toString();marketBusy=true;marketControls();show('marketMessage','正在保存…');"
     "try{const message=await post('/api/market/config',body);$('marketStatus').textContent=enabled?'已开启 · '+marketIds.length+' 项':'已关闭';loadSucceeded('market');show('marketMessage',message)}catch(error){checkUncertain('market',error);show('marketMessage',error.message)}finally{marketBusy=false;marketControls()}};"
-    "$('conversationForm').onsubmit=async event=>{event.preventDefault();if(conversationBusy||!conversationAvailable)return;"
+    "$('conversationPreferencesForm').onsubmit=async event=>{event.preventDefault();if(conversationBusy||!conversationAvailable||!conversationConfigured||!stateReady)return;"
     "const body=new URLSearchParams(new FormData(event.target)).toString();conversationBusy=true;conversationControls();"
-    "show('conversationMessage','正在保存…');try{const message=await post('/api/conversation/config',body);await load('conversation');show('conversationMessage',message)}"
-    "catch(error){checkUncertain('conversation',error);show('conversationMessage',error.message)}finally{$('conversationKey').value='';conversationBusy=false;conversationControls()}};"
-    "$('conversationClear').onclick=async()=>{if(conversationBusy||!conversationAvailable)return;"
-    "if(!confirm('确认清除已保存的 API Key，关闭 AI 对话并恢复默认模型与 API Host？此操作无法撤销。'))return;conversationBusy=true;conversationControls();"
+    "show('conversationPreferencesMessage','正在保存…');try{const message=await post('/api/conversation/preferences',body);await load('conversationPreferences');show('conversationPreferencesMessage',message)}"
+    "catch(error){checkUncertain('conversationPreferences',error);show('conversationPreferencesMessage',error.message)}finally{conversationBusy=false;conversationControls()}};"
+    "$('conversationForm').onsubmit=async event=>{event.preventDefault();if(conversationBusy||!conversationAvailable||localAccess||!stateReady)return;"
+    "const body=new URLSearchParams(new FormData(event.target)).toString();conversationBusy=true;conversationControls();"
+    "show('conversationMessage','正在保存…');try{const message=await post('/api/conversation/key',body);await load('conversationCredentials');show('conversationMessage',message)}"
+    "catch(error){checkUncertain('conversationCredentials',error);show('conversationMessage',error.message)}finally{$('conversationKey').value='';conversationBusy=false;conversationControls()}};"
+    "$('conversationClear').onclick=async()=>{if(conversationBusy||!conversationAvailable||!stateReady)return;"
+    "if(!confirm('确认清除 API Key，关闭 AI 对话并恢复默认设置？未保存的对话设置也会清空，此操作无法撤销。'))return;conversationBusy=true;conversationControls();"
     "show('conversationMessage','正在清除…');try{const message=await post('/api/conversation/clear','confirm=CLEAR_CONVERSATION');"
     "await load('conversation');show('conversationMessage',message)}catch(error){checkUncertain('conversation',error);show('conversationMessage',error.message)}finally{conversationBusy=false;conversationControls()}};"
     "$('defaults').onclick=async()=>{if(!stateReady||localAccess||settingsBusy||alarmBusy||updatesBusy||pagesBusy||musicSettingsBusy||!confirm('恢复偏好默认值？常用、显示页面、音乐播放方式、闹钟与更新设置的未保存修改也会清除。Wi-Fi、天气、市场看板和 AI 配置不变，本次音乐定时不变。'))return;settingsControls(true);alarmControls(true);updatesControls(true);pagesControls(true);musicSettingsControls(true);"
@@ -1803,6 +1860,7 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         "{\"local_network\":%s,\"wifi_configured\":%s,\"wifi_ssid\":\"%s\","
         "\"timezone\":%d,\"unit\":\"%s\","
         "\"volume\":%u,\"alarm_volume\":%u,\"updates\":\"%s\",\"daily_pages_mask\":%u,\"music_mode\":\"%s\","
+        "\"daily_pages_order\":[%u,%u,%u,%u,%u,%u],"
         "\"alarm\":\"%s\","
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
         "\"sd_state\":\"%s\",\"image_count\":%u,"
@@ -1814,6 +1872,7 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         "\"conversation\":{\"available\":%s,\"configured\":%s,"
         "\"enabled\":%s,"
         "\"model\":\"%s\",\"service\":\"%s\","
+        "\"voice\":\"%s\",\"reply_style\":\"%s\","
         "\"api_host\":\"%s\",\"shared_endpoint\":%s,"
         "\"migration\":\"%s\",\"last_result\":\"%s\","
         "\"last_error\":\"%s\",\"last_hint\":\"%s\",\"completed_turns\":%u,"
@@ -1832,6 +1891,12 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
                                                            : "stable",
         (unsigned int)settings.daily_pages_mask,
         settings_music_mode_name(settings.music_mode),
+        (unsigned int)settings.daily_pages_order[0],
+        (unsigned int)settings.daily_pages_order[1],
+        (unsigned int)settings.daily_pages_order[2],
+        (unsigned int)settings.daily_pages_order[3],
+        (unsigned int)settings.daily_pages_order[4],
+        (unsigned int)settings.daily_pages_order[5],
         settings.alarm_enabled ? "on" : "off",
         (unsigned int)settings.alarm_hour,
         (unsigned int)settings.alarm_minute,
@@ -1851,6 +1916,8 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         conversation_configured ? "true" : "false",
         conversation_enabled ? "true" : "false",
         conversation_model, conversation_service,
+        conversation_voice_name(conversation_status.voice),
+        conversation_reply_style_name(conversation_status.reply_style),
         response->escaped_api_host,
         conversation_status.shared_endpoint ? "true" : "false",
         conversation_migration_name(conversation_status.migration),
@@ -2154,6 +2221,137 @@ static const char *weather_form_error_message(
     }
 }
 
+static esp_err_t finish_weather_configuration_save(httpd_req_t *request,
+                                                  bool enabled,
+                                                  bool key_only)
+{
+    portENTER_CRITICAL(&s_status_lock);
+    s_weather_refresh_pending = enabled;
+    portEXIT_CRITICAL(&s_status_lock);
+    const esp_err_t notify_error = weather_service_notify_configuration_changed();
+    if (notify_error != ESP_OK) {
+        ESP_LOGW(TAG, "weather saved; service notification failed: %s",
+                 esp_err_to_name(notify_error));
+    }
+    return finish_regular_request(request, "200 OK", key_only
+        ? "API Key 已保存，其他天气设置保持不变；尚未验证连接。\n"
+        : enabled
+            ? "天气设置已保存。退出网页设置后获取天气，无需重启。\n"
+            : "天气已关闭，配置已保留，无需重启。\n");
+}
+
+/* Secret-free LAN route. The parser rejects even an empty api_key field. */
+static esp_err_t weather_preferences_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) return ESP_OK;
+    const size_t capacity = WEATHER_PREFERENCES_FORM_MAX_LENGTH + 1U;
+    char *body = heap_caps_calloc(1U, capacity, MALLOC_CAP_8BIT);
+    if (body == NULL) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8", "设备内存不足，请稍后重试。\n");
+    }
+    size_t length = 0U;
+    weather_preferences_t preferences = {0};
+    const esp_err_t receive_error = receive_form(request, body, capacity, &length);
+    const weather_config_result_t parse_result = receive_error == ESP_OK
+        ? weather_config_parse_preferences_form(body, length, &preferences)
+        : WEATHER_CONFIG_RESULT_INVALID_FORM;
+    weather_config_clear_sensitive(body, capacity);
+    heap_caps_free(body);
+    if (receive_error == ESP_ERR_TIMEOUT) return send_deadline_response(request);
+    if (receive_error != ESP_OK || parse_result != WEATHER_CONFIG_RESULT_OK) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                         weather_form_error_message(parse_result));
+    }
+    if (preferences.enabled) {
+        weather_config_status_t status = {0};
+        const esp_err_t error = weather_config_get_status(&status);
+        const bool key_saved = error == ESP_OK && status.key_saved;
+        memset(&status, 0, sizeof(status));
+        if (error != ESP_OK) {
+            return send_page(request, "503 Service Unavailable",
+                             "text/plain; charset=utf-8", "天气设置暂不可用，请稍后重试。\n");
+        }
+        if (!key_saved) {
+            return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                             "请先连接设备热点，保存天气 API Key 后再开启天气。\n");
+        }
+    }
+    if (!begin_regular_mutation()) return send_mutation_unavailable(request);
+    const esp_err_t error = weather_config_save_preferences(&preferences);
+    if (error != ESP_OK) {
+        return finish_regular_request(request,
+            error == ESP_ERR_INVALID_ARG ? "400 Bad Request" : "500 Internal Server Error",
+            "天气设置未能保存，请检查 Host 和省份、城市；原配置未更改。\n");
+    }
+    return finish_weather_configuration_save(request, preferences.enabled, false);
+}
+
+/* Only the two /key routes use this helper; both remain AP-only in the server
+ * policy. The body cannot contain endpoint, enabled, voice or location fields. */
+static esp_err_t cloud_api_key_post_handler(httpd_req_t *request, bool weather)
+{
+    if (!authorize_post(request)) return ESP_OK;
+    const size_t capacity = (weather ? WEATHER_API_KEY_FORM_MAX_LENGTH
+                                    : CONVERSATION_API_KEY_FORM_MAX_LENGTH) + 1U;
+    char *body = heap_caps_calloc(1U, capacity, MALLOC_CAP_8BIT);
+    if (body == NULL) {
+        return send_page(request, "503 Service Unavailable", "text/plain; charset=utf-8",
+                         "设备内存不足，暂时无法保存 API Key。\n");
+    }
+    union {
+        weather_api_key_update_t weather;
+        conversation_api_key_update_t conversation;
+    } update = {0};
+    size_t length = 0U;
+    const esp_err_t receive_error = receive_form(request, body, capacity, &length);
+    const bool valid = receive_error == ESP_OK && (weather
+        ? weather_config_parse_api_key_form(body, length, &update.weather) == WEATHER_CONFIG_RESULT_OK
+        : conversation_config_parse_api_key_form(body, length, &update.conversation) == CONVERSATION_CONFIG_RESULT_OK);
+    conversation_config_clear_sensitive(body, capacity);
+    heap_caps_free(body);
+    if (!valid) {
+        conversation_config_clear_sensitive(&update, sizeof(update));
+        if (receive_error == ESP_ERR_TIMEOUT) return send_deadline_response(request);
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                         "API Key 表单无效，请检查后重新填写；其他设置请单独保存。\n");
+    }
+    if (!begin_regular_mutation()) {
+        conversation_config_clear_sensitive(&update, sizeof(update));
+        return send_mutation_unavailable(request);
+    }
+    const esp_err_t error = weather
+        ? weather_config_save_api_key(&update.weather)
+        : conversation_config_save_api_key(&update.conversation);
+    conversation_config_clear_sensitive(&update, sizeof(update));
+    if (error != ESP_OK) {
+        const bool invalid = error == ESP_ERR_INVALID_ARG || error == ESP_ERR_INVALID_STATE;
+        return finish_regular_request(request,
+            invalid ? "400 Bad Request" : "500 Internal Server Error",
+            invalid ? "请填写有效的 API Key；留空只能保留已保存的 Key。\n"
+                    : "API Key 未能保存，原配置未更改。\n");
+    }
+    if (weather) {
+        weather_config_status_t status = {0};
+        const esp_err_t status_error = weather_config_get_status(&status);
+        const bool enabled = status_error == ESP_OK && status.enabled;
+        memset(&status, 0, sizeof(status));
+        return finish_weather_configuration_save(request, enabled, true);
+    }
+    return finish_regular_request(request, "200 OK",
+        "API Key 已保存，其他对话设置保持不变；尚未验证连接。首次使用请开启 AI 并保存对话设置。\n");
+}
+
+static esp_err_t weather_api_key_post_handler(httpd_req_t *request)
+{
+    return cloud_api_key_post_handler(request, true);
+}
+
+static esp_err_t conversation_api_key_post_handler(httpd_req_t *request)
+{
+    return cloud_api_key_post_handler(request, false);
+}
+
 static esp_err_t weather_config_post_handler(httpd_req_t *request)
 {
     if (!authorize_post(request)) {
@@ -2308,6 +2506,10 @@ static const char *conversation_form_error_message(
         return "当前仅支持阿里云百炼 Realtime。\n";
     case CONVERSATION_CONFIG_RESULT_INVALID_MODEL:
         return "请选择固件支持的阿里云百炼 Realtime 模型。\n";
+    case CONVERSATION_CONFIG_RESULT_INVALID_VOICE:
+        return "请选择列表中的音色。\n";
+    case CONVERSATION_CONFIG_RESULT_INVALID_REPLY_STYLE:
+        return "请选择日常简洁或英语练习。\n";
     case CONVERSATION_CONFIG_RESULT_INVALID_API_HOST:
         return "API Host 无效；请留空使用北京共享服务，或填写受支持的百炼共享或 Workspace 专属 Host。\n";
     case CONVERSATION_CONFIG_RESULT_API_KEY_REQUIRED:
@@ -2319,6 +2521,69 @@ static const char *conversation_form_error_message(
     default:
         return "AI 对话配置格式无效，请检查后重试。\n";
     }
+}
+
+/* This route is permitted from the paired LAN portal. It accepts controlled
+ * settings including official endpoints, never API keys or the full form. */
+static esp_err_t conversation_preferences_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) {
+        return ESP_OK;
+    }
+    const size_t capacity = CONVERSATION_PREFERENCES_FORM_MAX_LENGTH + 1U;
+    char *body = heap_caps_calloc(1U, capacity, MALLOC_CAP_8BIT);
+    if (body == NULL) {
+        return send_page(request, "503 Service Unavailable", "text/plain; charset=utf-8",
+                         "设备内存不足，暂时无法保存对话设置。\n");
+    }
+    size_t length = 0U;
+    conversation_preferences_t preferences = {0};
+    const esp_err_t receive_error =
+        receive_form(request, body, capacity, &length);
+    const conversation_config_result_t parse_result =
+        receive_error == ESP_OK
+            ? conversation_config_parse_preferences_form(
+                  body, length, &preferences)
+            : CONVERSATION_CONFIG_RESULT_INVALID_FORM;
+    conversation_config_clear_sensitive(body, capacity);
+    heap_caps_free(body);
+    if (receive_error == ESP_ERR_TIMEOUT) {
+        return send_deadline_response(request);
+    }
+    if (receive_error != ESP_OK ||
+        parse_result != CONVERSATION_CONFIG_RESULT_OK) {
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         "对话设置无效，请检查音色、模型和官方 API Host；API Key 请单独保存。原配置未更改。\n");
+    }
+    conversation_config_status_t status = {0};
+    const esp_err_t status_error = conversation_config_get_status(&status);
+    const bool configured = status_error == ESP_OK && status.configured;
+    memset(&status, 0, sizeof(status));
+    if (status_error != ESP_OK) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8",
+                         "AI 对话设置暂不可用，请稍后重试。\n");
+    }
+    if (!configured) {
+        return send_page(request, "400 Bad Request",
+                         "text/plain; charset=utf-8",
+                         "首次使用请先连接设备热点，保存 API Key 后再保存对话设置。\n");
+    }
+    if (!begin_regular_mutation()) {
+        return send_mutation_unavailable(request);
+    }
+    const esp_err_t error = conversation_config_save_preferences(&preferences);
+    if (error != ESP_OK) {
+        const bool invalid = error == ESP_ERR_INVALID_ARG ||
+                             error == ESP_ERR_INVALID_STATE;
+        return finish_regular_request(
+            request, invalid ? "400 Bad Request" : "500 Internal Server Error",
+            invalid ? "对话配置已变化，请重新读取后再保存。\n"
+                    : "对话设置未能保存，原配置未更改。\n");
+    }
+    return finish_regular_request(
+        request, "200 OK", "对话设置已保存，API Key 保持不变；下次对话生效，无需重启。\n");
 }
 
 static esp_err_t conversation_config_post_handler(httpd_req_t *request)
@@ -2371,17 +2636,11 @@ static esp_err_t conversation_config_post_handler(httpd_req_t *request)
                              "text/plain; charset=utf-8",
                              "AI 对话设置暂不可用，请稍后重试。\n");
         }
-        if (update.enabled && !has_saved_key) {
+        if (!has_saved_key) {
             conversation_config_clear_sensitive(&update, sizeof(update));
             return send_page(request, "400 Bad Request",
                              "text/plain; charset=utf-8",
-                             "开启 AI 对话前需要填写 API Key。\n");
-        }
-        if (!update.enabled && !has_saved_key) {
-            conversation_config_clear_sensitive(&update, sizeof(update));
-            return send_page(request, "200 OK",
-                             "text/plain; charset=utf-8",
-                             "AI 对话保持关闭，无需保存 API Key。\n");
+                             "AI 对话尚未配置，请先填写 API Key 再保存；当前仍保持关闭。\n");
         }
     }
     if (!begin_regular_mutation()) {
@@ -2403,7 +2662,7 @@ static esp_err_t conversation_config_post_handler(httpd_req_t *request)
                 : "AI 对话配置未能保存，原配置未更改。\n");
     }
     return finish_regular_request(
-        request, "200 OK", "AI 对话配置已保存，尚未验证连接。退出网页设置后，可在设备对话页试用。\n");
+        request, "200 OK", "服务与凭据已保存，开关与对话偏好保持不变；尚未验证连接。首次使用请在上方开启 AI 对话并保存偏好。\n");
 }
 
 static esp_err_t conversation_clear_post_handler(httpd_req_t *request)
@@ -3289,7 +3548,7 @@ static esp_err_t start_web_server(void)
     const bool recovery_mode = boot_recovery_is_active();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192U;
-    config.max_uri_handlers = 32U;
+    config.max_uri_handlers = 40U;
     config.max_open_sockets = 2U;
     config.recv_wait_timeout = 15U;
     config.lru_purge_enable = true;
@@ -3333,6 +3592,16 @@ static esp_err_t start_web_server(void)
         .method = HTTP_POST,
         .handler = weather_config_post_handler,
     };
+    const httpd_uri_t weather_preferences_uri = {
+        .uri = "/api/weather/preferences",
+        .method = HTTP_POST,
+        .handler = weather_preferences_post_handler,
+    };
+    const httpd_uri_t weather_api_key_uri = {
+        .uri = "/api/weather/key",
+        .method = HTTP_POST,
+        .handler = weather_api_key_post_handler,
+    };
     const httpd_uri_t weather_clear_uri = {
         .uri = "/api/weather/clear",
         .method = HTTP_POST,
@@ -3342,6 +3611,16 @@ static esp_err_t start_web_server(void)
         .uri = "/api/conversation/config",
         .method = HTTP_POST,
         .handler = conversation_config_post_handler,
+    };
+    const httpd_uri_t conversation_preferences_uri = {
+        .uri = "/api/conversation/preferences",
+        .method = HTTP_POST,
+        .handler = conversation_preferences_post_handler,
+    };
+    const httpd_uri_t conversation_api_key_uri = {
+        .uri = "/api/conversation/key",
+        .method = HTTP_POST,
+        .handler = conversation_api_key_post_handler,
     };
     const httpd_uri_t conversation_clear_uri = {
         .uri = "/api/conversation/clear",
@@ -3438,11 +3717,27 @@ static esp_err_t start_web_server(void)
     }
     if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
+                                           &weather_preferences_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &weather_api_key_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server,
                                            &weather_clear_uri);
     }
     if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,
                                            &conversation_config_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &conversation_preferences_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server,
+                                           &conversation_api_key_uri);
     }
     if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server,

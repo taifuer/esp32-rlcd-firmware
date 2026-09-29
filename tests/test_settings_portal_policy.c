@@ -34,9 +34,9 @@ int main(void)
     assert(!settings_portal_pair_code_matches("ABC12345", "code=abc12345", 13U));
     assert(!settings_portal_pair_code_matches("ABC12345", "code=ABC12345&x=1", 17U));
     assert(!settings_portal_pair_code_matches(NULL, "code=ABC12345", 13U));
-    const char *allowed[] = {"/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/music/upload?name=a.mp3", "/api/music/sleep", "/api/market/config"};
+    const char *allowed[] = {"/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/music/upload?name=a.mp3", "/api/music/sleep", "/api/market/config", "/api/conversation/preferences", "/api/conversation/preferences?x=1", "/api/conversation/clear", "/api/weather/preferences", "/api/weather/clear"};
     for (size_t i = 0; i < sizeof(allowed) / sizeof(allowed[0]); ++i) assert(settings_portal_lan_post_allowed(allowed[i]));
-    const char *denied[] = {"/api/wifi/change", "/api/conversation/config", "/api/weather/config", "/api/images/starter", "/update", "/api/settings/", "/api/music/upload/../update", "/api/settings%00", "/api/market/config/", "/api/market/config%00", NULL};
+    const char *denied[] = {"/api/wifi/change", "/api/conversation/config", "/api/conversation/key", "/api/conversation/key?x=1", "/api/conversation/preferences/", "/api/conversation/preferences/../key", "/api/conversation/preferences%00", "/api/conversation/preferencesX", "/api/weather/key", "/api/weather/key?x=1", "/api/weather/config", "/api/weather/preferences/", "/api/weather/preferences%00", "/api/weather/preferences/../key", "/api/weather/clear/", "/api/conversation/clear%00", "/api/images/starter", "/update", "/api/settings/", "/api/music/upload/../update", "/api/settings%00", "/api/market/config/", "/api/market/config%00", NULL};
     for (size_t i = 0; i < sizeof(denied) / sizeof(denied[0]); ++i) assert(!settings_portal_lan_post_allowed(denied[i]));
     uint8_t volume = 42U;
     assert(settings_portal_parse_volume_form("volume=0", 8U, &volume) && volume == 0U);

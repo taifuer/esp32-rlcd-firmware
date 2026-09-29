@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "weather_config_model.h"
+#include "weather_location_catalog.h"
 
 _Static_assert(
     WEATHER_CONFIG_FORM_MAX_LENGTH >=
@@ -11,6 +12,12 @@ _Static_assert(
             3U * WEATHER_API_KEY_MAX_LENGTH +
             3U * WEATHER_DISTRICT_MAX_LENGTH,
     "weather form capacity must cover maximum encoded valid fields");
+_Static_assert(WEATHER_PREFERENCES_FORM_MAX_LENGTH >=
+    3U * (7U + 8U + 8U + 4U + 3U + WEATHER_API_HOST_MAX_LENGTH + 10U + 10U) + 7U,
+    "preference form covers encoded names and values");
+_Static_assert(WEATHER_API_KEY_FORM_MAX_LENGTH >=
+    3U * (7U + WEATHER_API_KEY_MAX_LENGTH) + 1U,
+    "API key form covers encoded names and values");
 
 static weather_config_update_t make_update(
     bool enabled, const char *api_host, const char *api_key,
@@ -407,6 +414,188 @@ static void test_portal_form_parser(void)
     weather_config_clear_sensitive(&update, sizeof(update));
 }
 
+static void assert_zeroed(const void *memory, size_t size)
+{
+    const uint8_t *bytes = memory;
+    for (size_t i = 0U; i < size; ++i) assert(bytes[i] == 0U);
+}
+
+static void test_independent_preferences(void)
+{
+    static const char valid[] =
+        "enabled=on&api_host=NEW.QWEATHERAPI.COM&province=320000&city=320100";
+    weather_preferences_t preferences;
+    assert(weather_config_parse_preferences_form(valid, strlen(valid), &preferences) ==
+           WEATHER_CONFIG_RESULT_OK);
+    weather_config_t current = make_config("key-preserved"), candidate;
+    strcpy(current.district, "legacy");
+    assert(weather_config_apply_preferences(&current, &preferences, &candidate) ==
+           WEATHER_CONFIG_RESULT_OK);
+    assert(candidate.enabled && candidate.province_id == 320000U && candidate.city_id == 320100U);
+    assert(strcmp(candidate.api_host, "new.qweatherapi.com") == 0);
+    assert(strcmp(candidate.api_key, current.api_key) == 0 && candidate.district[0] == '\0');
+    preferences.enabled = false;
+    assert(weather_config_apply_preferences(&candidate, &preferences, &candidate) ==
+           WEATHER_CONFIG_RESULT_OK);
+    assert(!candidate.enabled && strcmp(candidate.api_key, "key-preserved") == 0);
+
+    const struct { const char *suffix; weather_config_result_t result; } extras[] = {
+        {"&api_key=", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"&api%5Fkey=replace", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"&district=", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"&unknown=1", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"&enabled=off", WEATHER_CONFIG_RESULT_DUPLICATE_FIELD},
+        {"&%61pi_host=", WEATHER_CONFIG_RESULT_DUPLICATE_FIELD},
+        {"&province=310000", WEATHER_CONFIG_RESULT_DUPLICATE_FIELD},
+        {"&city=310100", WEATHER_CONFIG_RESULT_DUPLICATE_FIELD},
+        {"&", WEATHER_CONFIG_RESULT_INVALID_FORM},
+        {"&&city=0", WEATHER_CONFIG_RESULT_INVALID_FORM},
+    };
+    for (size_t i = 0U; i < sizeof(extras) / sizeof(extras[0]); ++i) {
+        char form[WEATHER_PREFERENCES_FORM_MAX_LENGTH + 1U];
+        const int size = snprintf(form, sizeof(form), "%s%s", valid, extras[i].suffix);
+        assert(size > 0 && (size_t)size < sizeof(form));
+        memset(&preferences, 0xa5, sizeof(preferences));
+        assert(weather_config_parse_preferences_form(form, (size_t)size, &preferences) ==
+               extras[i].result);
+        assert_zeroed(&preferences, sizeof(preferences));
+    }
+    const struct { const char *form; weather_config_result_t result; } cases[] = {
+        {"enabled=off&api_host=&province=0&city=0", WEATHER_CONFIG_RESULT_OK},
+        {"enabled=off&api_host=&province=310000&city=0", WEATHER_CONFIG_RESULT_OK},
+        {"enabled=off&api_host=&province=0", WEATHER_CONFIG_RESULT_MISSING_FIELD},
+        {"enabled=off&province=0&city=0", WEATHER_CONFIG_RESULT_MISSING_FIELD},
+        {"api_host=&province=0&city=0", WEATHER_CONFIG_RESULT_MISSING_FIELD},
+        {"enabled=off&api_host=&city=0", WEATHER_CONFIG_RESULT_MISSING_FIELD},
+        {"enabled=yes&api_host=&province=0&city=0", WEATHER_CONFIG_RESULT_INVALID_FORM},
+        {"enabled=off&api_host=bad.example&province=0&city=0", WEATHER_CONFIG_RESULT_INVALID_API_HOST},
+        {"enabled=off&api_host=&province=0&city=310100", WEATHER_CONFIG_RESULT_INVALID_LOCATION},
+        {"enabled=off&api_host=&province=999999&city=0", WEATHER_CONFIG_RESULT_INVALID_LOCATION},
+        {"enabled=off&api_host=&province=310000&city=320100", WEATHER_CONFIG_RESULT_INVALID_LOCATION},
+        {"enabled=off&api_host=&province=4294967296&city=0", WEATHER_CONFIG_RESULT_INVALID_LOCATION},
+        {"enabled=off&api_host=&province=-1&city=0", WEATHER_CONFIG_RESULT_INVALID_LOCATION},
+        {"enabled=off&api_host=&province=&city=0", WEATHER_CONFIG_RESULT_INVALID_LOCATION},
+        {"enabled=on&api_host=&province=0&city=0", WEATHER_CONFIG_RESULT_INVALID_API_HOST},
+        {"enabled=on&api_host=x.qweatherapi.com&province=310000&city=0", WEATHER_CONFIG_RESULT_LOCATION_REQUIRED},
+        {"enabled=off%00&api_host=&province=0&city=0", WEATHER_CONFIG_RESULT_INVALID_ENCODING},
+        {"enabled=off&api_host=%GG&province=0&city=0", WEATHER_CONFIG_RESULT_INVALID_ENCODING},
+        {"enabled=off&api_host=%&province=0&city=0", WEATHER_CONFIG_RESULT_INVALID_ENCODING},
+        {"enabled=off&api_host=x=y&province=0&city=0", WEATHER_CONFIG_RESULT_INVALID_FORM},
+        {"enabled=off&api_host=&province=0&city", WEATHER_CONFIG_RESULT_INVALID_FORM},
+        {"", WEATHER_CONFIG_RESULT_INVALID_FORM},
+    };
+    for (size_t i = 0U; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        assert(weather_config_parse_preferences_form(cases[i].form, strlen(cases[i].form),
+                                                     &preferences) == cases[i].result);
+        if (cases[i].result != WEATHER_CONFIG_RESULT_OK) assert_zeroed(&preferences, sizeof(preferences));
+    }
+    static const char encoded[] = "%65nabled=%6Fn&api%5Fhost=x.qweatherapi.com&province=310000&city=310000";
+    assert(weather_config_parse_preferences_form(encoded, strlen(encoded), &preferences) ==
+           WEATHER_CONFIG_RESULT_OK);
+    weather_config_defaults(&candidate);
+    assert(weather_config_apply_preferences(&candidate, &preferences, &candidate) ==
+           WEATHER_CONFIG_RESULT_API_KEY_REQUIRED);
+    assert(!candidate.enabled && candidate.api_key[0] == '\0');
+    preferences.enabled = false;
+    assert(weather_config_apply_preferences(&candidate, &preferences, &candidate) == WEATHER_CONFIG_RESULT_OK);
+    assert(candidate.api_key[0] == '\0' && candidate.city_id == 310000U);
+
+    /* Every accepted city must belong to its province; enforce this in the
+     * model as well as the HTTP handler, including while disabled. */
+    for (size_t p = 0U; p < weather_location_province_count(); ++p) {
+        const weather_province_t *province = weather_location_province_at(p);
+        preferences.province_id = province->id;
+        for (size_t c = 0U; c < weather_location_city_count(province->id); ++c) {
+            preferences.city_id = weather_location_city_at(province->id, c)->id;
+            assert(weather_config_apply_preferences(&current, &preferences, &candidate) == WEATHER_CONFIG_RESULT_OK);
+        }
+    }
+    preferences.province_id = 310000U;
+    preferences.city_id = 320100U;
+    assert(weather_config_apply_preferences(&current, &preferences, &candidate) == WEATHER_CONFIG_RESULT_INVALID_LOCATION);
+    assert(candidate.api_key[0] == '\0' && strcmp(current.api_key, "key-preserved") == 0);
+    assert(weather_config_apply_preferences(NULL, &preferences, &candidate) == WEATHER_CONFIG_RESULT_INVALID_ARGUMENT);
+    assert(weather_config_apply_preferences(&current, NULL, &candidate) == WEATHER_CONFIG_RESULT_INVALID_ARGUMENT);
+    assert(weather_config_apply_preferences(&current, &preferences, NULL) == WEATHER_CONFIG_RESULT_INVALID_ARGUMENT);
+    char oversized[WEATHER_PREFERENCES_FORM_MAX_LENGTH + 1U];
+    memset(oversized, 'x', sizeof(oversized));
+    assert(weather_config_parse_preferences_form(oversized, sizeof(oversized), &preferences) == WEATHER_CONFIG_RESULT_INVALID_FORM);
+    assert(weather_config_parse_preferences_form(NULL, 1U, &preferences) == WEATHER_CONFIG_RESULT_INVALID_FORM);
+    assert(weather_config_parse_preferences_form(valid, strlen(valid), NULL) == WEATHER_CONFIG_RESULT_INVALID_ARGUMENT);
+    weather_config_reset(&current);
+    weather_config_reset(&candidate);
+}
+
+static void test_independent_api_key(void)
+{
+    weather_api_key_update_t update;
+    static const char valid[] = "api%5Fkey=dev%2Bkey%3D1";
+    assert(weather_config_parse_api_key_form(valid, strlen(valid), &update) == WEATHER_CONFIG_RESULT_OK);
+    assert(strcmp(update.api_key, "dev+key=1") == 0);
+    weather_config_t current, candidate;
+    weather_config_defaults(&current);
+    assert(weather_config_apply_api_key_update(&current, &update, &candidate) == WEATHER_CONFIG_RESULT_OK);
+    assert(!candidate.enabled && candidate.api_host[0] == '\0');
+    assert(candidate.province_id == 0U && candidate.city_id == 0U && candidate.district[0] == '\0');
+    assert(strcmp(candidate.api_key, "dev+key=1") == 0);
+    current = make_config("old-key");
+    strcpy(current.district, "legacy");
+    assert(weather_config_apply_api_key_update(&current, &update, &candidate) == WEATHER_CONFIG_RESULT_OK);
+    memset(candidate.api_key, 0, sizeof(candidate.api_key));
+    strcpy(candidate.api_key, current.api_key);
+    assert(memcmp(&candidate, &current, sizeof(current)) == 0);
+    update.api_key[0] = '\0';
+    assert(weather_config_apply_api_key_update(&current, &update, &current) == WEATHER_CONFIG_RESULT_OK);
+    assert(strcmp(current.api_key, "old-key") == 0);
+    const struct { const char *form; weather_config_result_t result; } cases[] = {
+        {"api_key=", WEATHER_CONFIG_RESULT_OK},
+        {"api_key=one&api%5Fkey=two", WEATHER_CONFIG_RESULT_DUPLICATE_FIELD},
+        {"api_key=one&api_host=", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"api_key=one&enabled=off", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"api_key=one&province=0", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"api_key=one&city=0", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"api_key=one&district=", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"api_key=one&unknown=", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"api_host=", WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD},
+        {"api_key=bad+key", WEATHER_CONFIG_RESULT_INVALID_API_KEY},
+        {"api_key=%E4%B8%AD", WEATHER_CONFIG_RESULT_INVALID_API_KEY},
+        {"api_key=key%00hidden", WEATHER_CONFIG_RESULT_INVALID_ENCODING},
+        {"api_key=%GG", WEATHER_CONFIG_RESULT_INVALID_ENCODING},
+        {"api_key=raw=value", WEATHER_CONFIG_RESULT_INVALID_FORM},
+        {"api_key=x&", WEATHER_CONFIG_RESULT_INVALID_FORM},
+        {"api_key", WEATHER_CONFIG_RESULT_INVALID_FORM},
+        {"", WEATHER_CONFIG_RESULT_INVALID_FORM},
+    };
+    for (size_t i = 0U; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        memset(&update, 0xa5, sizeof(update));
+        assert(weather_config_parse_api_key_form(cases[i].form, strlen(cases[i].form), &update) == cases[i].result);
+        if (cases[i].result != WEATHER_CONFIG_RESULT_OK) assert_zeroed(&update, sizeof(update));
+    }
+    char form[WEATHER_API_KEY_FORM_MAX_LENGTH + 1U] = "%61%70%69%5F%6B%65%79=";
+    size_t length = strlen(form);
+    for (size_t i = 0U; i < WEATHER_API_KEY_MAX_LENGTH; ++i) {
+        memcpy(form + length, "%3D", 3U);
+        length += 3U;
+    }
+    assert(weather_config_parse_api_key_form(form, length, &update) == WEATHER_CONFIG_RESULT_OK);
+    assert(strlen(update.api_key) == WEATHER_API_KEY_MAX_LENGTH);
+    assert(weather_config_apply_api_key_update(&current, &update, &candidate) == WEATHER_CONFIG_RESULT_OK);
+    memcpy(form + length, "%3D", 3U);
+    assert(weather_config_parse_api_key_form(form, length + 3U, &update) == WEATHER_CONFIG_RESULT_INVALID_API_KEY);
+    memset(update.api_key, 'k', sizeof(update.api_key));
+    assert(weather_config_apply_api_key_update(&current, &update, &current) == WEATHER_CONFIG_RESULT_INVALID_API_KEY);
+    assert(strcmp(current.api_key, "old-key") == 0);
+    assert(weather_config_parse_api_key_form(NULL, 1U, &update) == WEATHER_CONFIG_RESULT_INVALID_FORM);
+    assert(weather_config_parse_api_key_form(valid, strlen(valid), NULL) == WEATHER_CONFIG_RESULT_INVALID_ARGUMENT);
+    assert(weather_config_parse_api_key_form(form, sizeof(form), &update) == WEATHER_CONFIG_RESULT_INVALID_FORM);
+    assert(weather_config_apply_api_key_update(NULL, &update, &candidate) == WEATHER_CONFIG_RESULT_INVALID_ARGUMENT);
+    assert(weather_config_apply_api_key_update(&current, NULL, &candidate) == WEATHER_CONFIG_RESULT_INVALID_ARGUMENT);
+    assert(weather_config_apply_api_key_update(&current, &update, NULL) == WEATHER_CONFIG_RESULT_INVALID_ARGUMENT);
+    weather_config_reset(&current);
+    weather_config_reset(&candidate);
+    weather_config_clear_sensitive(&update, sizeof(update));
+}
+
 static void test_result_names(void)
 {
     assert(strcmp(weather_config_result_name(WEATHER_CONFIG_RESULT_OK),
@@ -426,6 +615,8 @@ int main(void)
     test_update_preserves_key_and_allows_disabled_state();
     test_utf8_and_field_bounds();
     test_portal_form_parser();
+    test_independent_preferences();
+    test_independent_api_key();
     test_result_names();
     puts("weather config tests passed");
     return 0;

@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "conversation_protocol.h"
+#include "cJSON.h"
 
 static const char EVENT_ID[] =
     "f894c16f-f20e-4c1d-837e-89e0fbc63a43";
@@ -15,7 +16,8 @@ static void test_model_specific_session_update(void)
     size_t written = 0U;
     assert(conversation_protocol_build_session_update(
         message, sizeof(message), EVENT_ID,
-        CONVERSATION_DEFAULT_MODEL, &written));
+        CONVERSATION_DEFAULT_MODEL, CONVERSATION_DEFAULT_VOICE,
+        CONVERSATION_DEFAULT_REPLY_STYLE, &written));
     assert(written == strlen(message));
     assert(strstr(message, "\"type\":\"session.update\"") != NULL);
     assert(strstr(message, "\"modalities\":[\"text\",\"audio\"]") !=
@@ -36,7 +38,8 @@ static void test_model_specific_session_update(void)
 
     assert(conversation_protocol_build_session_update(
         message, sizeof(message), EVENT_ID,
-        CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH, &written));
+        CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH,
+        CONVERSATION_DEFAULT_VOICE, CONVERSATION_DEFAULT_REPLY_STYLE, &written));
     assert(strstr(message, "\"voice\":\"longanqian\"") != NULL);
     assert(strstr(message, "input_audio_transcription") == NULL);
     assert(strstr(message, "Cherry") == NULL);
@@ -49,20 +52,23 @@ static void test_model_specific_session_update(void)
     /* Retired model IDs remain decodable from storage, never callable. */
     assert(!conversation_protocol_build_session_update(
         message, sizeof(message), EVENT_ID,
-        CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME, &written));
+        CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME,
+        CONVERSATION_DEFAULT_VOICE, CONVERSATION_DEFAULT_REPLY_STYLE, &written));
     assert(message[0] == '\0' && written == 0U);
 
     char too_small[32];
     assert(!conversation_protocol_build_session_update(
         too_small, sizeof(too_small), EVENT_ID,
-        CONVERSATION_DEFAULT_MODEL, NULL));
+        CONVERSATION_DEFAULT_MODEL, CONVERSATION_DEFAULT_VOICE,
+        CONVERSATION_DEFAULT_REPLY_STYLE, NULL));
     assert(too_small[0] == '\0');
     assert(!conversation_protocol_build_session_update(
         message, sizeof(message), "bad\"id",
-        CONVERSATION_DEFAULT_MODEL, NULL));
+        CONVERSATION_DEFAULT_MODEL, CONVERSATION_DEFAULT_VOICE,
+        CONVERSATION_DEFAULT_REPLY_STYLE, NULL));
     assert(!conversation_protocol_build_session_update(
         message, sizeof(message), EVENT_ID, CONVERSATION_MODEL_COUNT,
-        NULL));
+        CONVERSATION_DEFAULT_VOICE, CONVERSATION_DEFAULT_REPLY_STYLE, NULL));
 }
 
 static void test_audio_append_and_client_events(void)
@@ -109,6 +115,49 @@ static void test_audio_append_and_client_events(void)
     }
     assert(conversation_client_event_name(
                (conversation_client_event_t)99) == NULL);
+}
+
+static void test_voice_and_style_session_options(void)
+{
+    for (unsigned voice = 0U; voice < CONVERSATION_VOICE_COUNT; ++voice) {
+        for (unsigned style = 0U; style < CONVERSATION_REPLY_STYLE_COUNT; ++style) {
+            char message[CONVERSATION_PROTOCOL_MESSAGE_CAPACITY];
+            size_t written = 0U;
+            assert(conversation_protocol_build_session_update(
+                message, sizeof(message), EVENT_ID, CONVERSATION_DEFAULT_MODEL,
+                (conversation_voice_t)voice, (conversation_reply_style_t)style, &written));
+            assert(written == strlen(message));
+            cJSON *root = cJSON_ParseWithLength(message, written + 1U);
+            assert(root != NULL);
+            const cJSON *session = cJSON_GetObjectItemCaseSensitive(root, "session");
+            const cJSON *voice_value = cJSON_GetObjectItemCaseSensitive(session, "voice");
+            assert(cJSON_IsString(voice_value));
+            assert(strcmp(voice_value->valuestring,
+                          conversation_voice_name((conversation_voice_t)voice)) == 0);
+            const cJSON *instructions = cJSON_GetObjectItemCaseSensitive(session, "instructions");
+            assert(cJSON_IsString(instructions));
+            assert(strstr(instructions->valuestring, "英文通常不超过四十词") != NULL);
+            assert(strstr(instructions->valuestring, style == CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE
+                ? "英语口语练习伙伴" : "中英双语语音助手") != NULL);
+            assert(cJSON_GetObjectItemCaseSensitive(session, "input_audio_transcription") == NULL);
+            assert(cJSON_GetObjectItemCaseSensitive(session, "output_audio") == NULL);
+            assert(cJSON_GetObjectItemCaseSensitive(session, "max_tokens") == NULL);
+            assert(cJSON_GetObjectItemCaseSensitive(session, "tools") == NULL);
+            assert(cJSON_GetObjectItemCaseSensitive(session, "enable_search") == NULL);
+            assert(cJSON_IsNull(cJSON_GetObjectItemCaseSensitive(session, "turn_detection")));
+            cJSON_Delete(root);
+        }
+    }
+    char message[CONVERSATION_PROTOCOL_MESSAGE_CAPACITY];
+    size_t written = 99U;
+    assert(!conversation_protocol_build_session_update(
+        message, sizeof(message), EVENT_ID, CONVERSATION_DEFAULT_MODEL,
+        CONVERSATION_VOICE_COUNT, CONVERSATION_DEFAULT_REPLY_STYLE, &written));
+    assert(written == 0U && message[0] == '\0');
+    assert(!conversation_protocol_build_session_update(
+        message, sizeof(message), EVENT_ID, CONVERSATION_DEFAULT_MODEL,
+        CONVERSATION_DEFAULT_VOICE, CONVERSATION_REPLY_STYLE_COUNT, &written));
+    assert(written == 0U && message[0] == '\0');
 }
 
 static conversation_server_event_t parse(const char *json,
@@ -386,6 +435,7 @@ int main(void)
 {
     test_model_specific_session_update();
     test_audio_append_and_client_events();
+    test_voice_and_style_session_options();
     test_session_and_transcript_events();
     test_audio_events_and_strict_base64();
     test_response_done_status_and_errors();

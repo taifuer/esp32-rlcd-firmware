@@ -3,7 +3,7 @@
 本文面向只想使用发布固件、不参与源码开发的用户。开发者请参阅
 [开发与发布指南](development.md)和[开发烧录指南](flashing.md)。
 
-本文的下载与烧录示例以 v0.31.0 正式版为准；功能交互同时跟随当前源码。
+本文的下载、烧录与使用说明对应 v0.32.0 正式版。
 AI 对话仍是默认关闭的 Beta 功能；未开启、离线或处于 `SAVING` 时继续使用本地
 MultiNet 指令识别。市场看板同样是可选 Beta 功能，默认关闭，开启方法见
 [市场看板](market-dashboard.md)。
@@ -13,7 +13,7 @@ MultiNet 指令识别。市场看板同样是可选 Beta 功能，默认关闭�
 当前正式发布物可从
 [GitHub Releases](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) 下载，
 仓库内对应文件是
-[`dist/v0.31.0/`](../dist/v0.31.0/)。
+[`dist/v0.32.0/`](../dist/v0.32.0/)。
 GitHub 的 Latest 入口指向最新正式版本，历史固件也在 `dist/` 中按版本保存。
 v0.7.0 起每个正式版本目录同时包含 Factory、OTA、`SHA256SUMS` 和版本说明；v0.18.0
 起还包含离线语音模型。
@@ -26,13 +26,13 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 
 | 文件 | 用途 | 安装方式 |
 | --- | --- | --- |
-| `esp32-rlcd-firmware-v0.31.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，包含语音模型并清除 NVS |
-| `esp32-rlcd-firmware-v0.31.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
-| `esp32-rlcd-firmware-v0.31.0-model.bin` | 为旧设备补装自 v0.18.0 起提供的离线语音模型 | 仅与同版本 OTA 通过项目 USB 脚本写入，不可单独启动或上传网页 |
+| `esp32-rlcd-firmware-v0.32.0-factory.bin` | 首次安装、v0.6.0 及更早版本迁移、故障恢复 | ROM 下载模式写入 `0x0`，包含语音模型并清除 NVS |
+| `esp32-rlcd-firmware-v0.32.0-ota.bin` | 已安装 v0.7.0+ 后的日常更新 | 在线更新、设置门户本地 OTA 或串行应用更新，保留 NVS |
+| `esp32-rlcd-firmware-v0.32.0-model.bin` | 为旧设备补装自 v0.18.0 起提供的离线语音模型 | 仅与同版本 OTA 通过项目 USB 脚本写入，不可单独启动或上传网页 |
 
 目标硬件为 Waveshare ESP32-S3-RLCD-4.2，Factory 镜像使用 DIO、80 MHz、16 MB Flash
 参数；全部发布二进制的 SHA-256 见
-[`dist/v0.31.0/SHA256SUMS`](../dist/v0.31.0/SHA256SUMS)。
+[`dist/v0.32.0/SHA256SUMS`](../dist/v0.32.0/SHA256SUMS)。
 
 不要把仅包含应用的 `-ota.bin` 写到 `0x0`，也不要在网页中上传 `-factory.bin`。Factory
 镜像不是 BIOS：ESP32-S3 芯片内置的 ROM 下载程序不会被它替换。两类更新的完整说明见
@@ -41,21 +41,23 @@ GitHub Release 还包含 `LICENSE`、`NOTICE.md`、完整许可文本压缩包�
 ### 从旧版本升级
 
 v0.7.0—v0.9.0 没有在线更新客户端，可从原系统中心最后一页的本地更新入口上传
-v0.31.0 `-ota.bin`，或使用 USB 写入。v0.10.0 及更新版本可直接从 `ONLINE UPDATE`
+v0.32.0 `-ota.bin`，或使用 USB 写入。v0.10.0 及更新版本可直接从 `ONLINE UPDATE`
 升级到当前稳定版，不需要逐版本安装；v0.6.0 及更早版本必须使用 Factory 固件完整安装。
 
 在线更新和网页本地 OTA 只更新应用，不写语音模型。从 v0.16.0 等旧正式版升级后，时钟、
 低功耗及其他功能可以正常使用，但对话页会提示模型不可用。要使用离线语音指令，可执行
 一次“USB 应用与模型更新”；该方法保留 Wi-Fi 和其他 NVS 设置。首次安装或允许重新配网时，
-直接写入 v0.31.0 Factory 即可同时安装应用和模型。
+直接写入 v0.32.0 Factory 即可同时安装应用和模型。
 
 v0.30.0 起迁移并保留原有设备偏好；新增偏好的默认值为显示全部日常页、顺序播放音乐。
 从开发版升级时保留已保存的选择。若之后回退旧固件，
 旧版会因设置格式较新而使用默认偏好并禁止改写；重新升级可恢复新版保存的偏好。
 Wi-Fi 等独立配置不受此规则影响，详见[升级与回退](v0.30-plan.md#升级与回退)。
 
-v0.31.0 自动迁移 AI 旧模型配置，保留 API Key、Host 和开关。新模型仍需在相同地域与
+v0.31.0 起自动迁移 AI 旧模型配置，保留 API Key、Host 和开关。新模型仍需在相同地域与
 业务空间开通调用权限，见[AI 对话配置](cloud-voice.md#准备和配置)。
+v0.32.0 进一步迁移页面排序及 AI 音色、风格配置，保留现有选择与凭据，
+升级与回退限制见 [v0.32.0 计划](v0.32-plan.md)。
 
 设备默认只检查 `stable.json`；只有在设置门户明确开启 Beta 固件更新后才检查
 `testing.json`，版本名本身不会切换通道。联网后的自动流程只记录检查结果，不会自动下载
@@ -92,7 +94,7 @@ v0.31.0 自动迁移 AI 旧模型配置，保留 API Key、Host 和开关。新�
 WSL、Linux 可执行：
 
 ```bash
-cd dist/v0.31.0
+cd dist/v0.32.0
 sha256sum --check SHA256SUMS
 cd ../..
 ```
@@ -100,18 +102,18 @@ cd ../..
 macOS 可执行：
 
 ```bash
-shasum -a 256 dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-factory.bin
-shasum -a 256 dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-ota.bin
-shasum -a 256 dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-model.bin
+shasum -a 256 dist/v0.32.0/esp32-rlcd-firmware-v0.32.0-factory.bin
+shasum -a 256 dist/v0.32.0/esp32-rlcd-firmware-v0.32.0-ota.bin
+shasum -a 256 dist/v0.32.0/esp32-rlcd-firmware-v0.32.0-model.bin
 ```
 
 Windows PowerShell 可执行：
 
 ```powershell
-(Get-FileHash .\dist\v0.31.0\esp32-rlcd-firmware-v0.31.0-factory.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.31.0\esp32-rlcd-firmware-v0.31.0-ota.bin -Algorithm SHA256).Hash.ToLower()
-(Get-FileHash .\dist\v0.31.0\esp32-rlcd-firmware-v0.31.0-model.bin -Algorithm SHA256).Hash.ToLower()
-Get-Content .\dist\v0.31.0\SHA256SUMS
+(Get-FileHash .\dist\v0.32.0\esp32-rlcd-firmware-v0.32.0-factory.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.32.0\esp32-rlcd-firmware-v0.32.0-ota.bin -Algorithm SHA256).Hash.ToLower()
+(Get-FileHash .\dist\v0.32.0\esp32-rlcd-firmware-v0.32.0-model.bin -Algorithm SHA256).Hash.ToLower()
+Get-Content .\dist\v0.32.0\SHA256SUMS
 ```
 
 ## 进入 ROM 下载模式
@@ -131,7 +133,7 @@ Get-Content .\dist\v0.31.0\SHA256SUMS
 
 ```bash
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-factory.bin \
+  --firmware dist/v0.32.0/esp32-rlcd-firmware-v0.32.0-factory.bin \
   --confirm
 ```
 
@@ -172,7 +174,7 @@ Get-CimInstance Win32_SerialPort |
 py -m esptool --chip esp32s3 --port COM5 --baud 460800 `
   --before no-reset --after no-reset write-flash `
   --flash-mode dio --flash-freq 80m --flash-size 16MB `
-  0x0 .\dist\v0.31.0\esp32-rlcd-firmware-v0.31.0-factory.bin
+  0x0 .\dist\v0.32.0\esp32-rlcd-firmware-v0.32.0-factory.bin
 ```
 
 如果使用 Espressif 官方独立版 `esptool.exe`，只需把命令开头的 `py -m esptool`
@@ -190,7 +192,7 @@ python3 -m pip install "esptool==5.3.1"
 python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
   --before no-reset --after no-reset write-flash \
   --flash-mode dio --flash-freq 80m --flash-size 16MB \
-  0x0 dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-factory.bin
+  0x0 dist/v0.32.0/esp32-rlcd-firmware-v0.32.0-factory.bin
 ```
 
 ## 烧录后启动
@@ -207,13 +209,13 @@ python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --baud 460800 \
 ## 旧设备补装离线语音模型
 
 已经运行 v0.7.0 或更新版本、并且希望保留 Wi-Fi 与设备偏好的设备，可通过 Windows + WSL
-一次写入 v0.31.0 应用和同版本模型。离线语音模型自 v0.18.0 起提供。先把 OTA、模型和
-`SHA256SUMS` 放在同一目录；从 Release 下载或使用仓库 `dist/v0.31.0/` 即已满足这一
+一次写入 v0.32.0 应用和同版本模型。离线语音模型自 v0.18.0 起提供。先把 OTA、模型和
+`SHA256SUMS` 放在同一目录；从 Release 下载或使用仓库 `dist/v0.32.0/` 即已满足这一
 条件。进入 ROM 下载模式后执行：
 
 ```bash
 ./scripts/update-app.sh --port COM5 \
-  --firmware dist/v0.31.0/esp32-rlcd-firmware-v0.31.0-ota.bin \
+  --firmware dist/v0.32.0/esp32-rlcd-firmware-v0.32.0-ota.bin \
   --confirm
 ```
 
@@ -273,7 +275,7 @@ VID/PID。自动配网的完整行为和安全边界见[自动配网与网络校
 
 | 按键 | 正常运行时的用途 |
 | --- | --- |
-| `BOOT` | 日常页依次切换时钟、可选天气、可选市场看板、月历、可选图片、可选音乐、对话；系统中心中返回时钟 |
+| `BOOT` | 按保存的顺序切换已勾选且可用的日常页，时钟固定第一位；系统中心中返回时钟 |
 | `KEY` | 主界面、天气、市场看板、日历和空闲对话页进入设置；多图图片页切换下一张；音乐页播放/暂停；系统中心依次切换“设置 → 在线更新 → 状态” |
 | `KEY` 长按 | 天气或市场刷新、图片删除确认、音乐下一首、状态校时、开始对话、直接打开网页设置均为 2 秒；在线更新页按住 2 秒检查，松开后在确认页按住 3 秒安装 |
 | `BOOT` 长按 | “设置”页按住 2 秒切换手动省电；音乐页按住 2 秒直接调音量；其他运行页面不执行隐藏操作 |
@@ -297,6 +299,8 @@ v0.26.0 起，切到哪一页就停在哪一页，由用户手动切换，不需
 短按 `KEY` 会先跳过当前回复，短暂显示 `NEXT TURN` 后再进入下一轮。回答默认简短，
 文字跟随本地播放进度滚动显示最新 4 行。会话仍为半双工，结束后不跨次保留上下文；设备
 也没有唤醒词或后台麦克风。
+云端失败后等待资源清理并松开按键，看到 `KEY: RETRY` 可短按重试，`BOOT: BACK` 返回；
+重试会新建会话并重新收音，不重复上传旧录音。
 
 本地模式支持“回到主页 / 查看时间”“打开日历 / 查看日期”“查看状态 / 设备状态”、
 “打开图片 / 查看图片”“打开设置 / 查看设置”和“取消”。云端回复只展示和播放，不执行
@@ -308,10 +312,12 @@ v0.26.0 起，切到哪一页就停在哪一页，由用户手动切换，不需
 一次最多 30 分钟，已开始的写入另有最多 10 分钟时限。手机进入页面后可以：
 
 - 修改时区、摄氏/华氏温标、回放音量、单个每周闹钟和 Beta 固件更新偏好；
+- 选择六个可选日常页并调整顺序，时钟与维护入口始终保留；
 - 开关市场看板，从 15 个指数中选择 1–5 项并调整顺序，无需 API Key 或 SD 卡；
-- 可开启或停用 AI 对话、保存或清除 API Key，并在高级设置中从
-  `qwen3-omni-flash-realtime`（默认）和 `qwen-audio-3.0-realtime-flash` 中选择；API
-  Host 留空使用北京共享域名，也可填写北京或新加坡的百炼官方共享/业务空间专属 Host。
+- 开关天气、修改省市与 QWeather 官方 Host，API Key 独立保存；
+- 开关 AI 对话、选择五种官方音色和“日常简洁 / 英语练习”，API Key 独立保存；
+  当前唯一支持的模型是 `qwen-audio-3.0-realtime-flash`。API Host 留空使用北京共享域名，
+  也可填写北京或新加坡的百炼官方共享/业务空间专属 Host。
   只填写主机名，不含 `wss://`、路径或端口；设置页不接受独立 Workspace ID、App ID、
   完整 URL 或任意域名；
 - 使用手机当前时间校准 RTC，或恢复偏好默认值；
@@ -321,8 +327,9 @@ v0.26.0 起，切到哪一页就停在哪一页，由用户手动切换，不需
 - 上传本项目发布的 `-ota.bin` 完成本地升级；不要上传 `-factory.bin`。
 
 网页分为常用、联网、媒体、维护四区，支持歌曲多选上传和独立闹钟音量；各区保存不清除
-其他区域的输入。编辑 Wi-Fi、天气和 AI 凭据或本地升级必须使用设备热点；局域网入口仅
-用于普通设置、市场看板、校时和媒体管理。访问方式和限制见[设备设置](device-settings.md)。
+其他区域的输入。天气与 AI 的普通设置可直接在同 Wi-Fi 下修改，清除配置须单独确认。
+只有录入、更换 API Key，以及编辑 Wi-Fi、本地升级等维护操作必须使用设备热点。
+访问方式和限制见[设备设置](device-settings.md)。
 
 电源模式无需进入热点设置：设备根据电量和 USB 数据主机状态自动决定，低电时进入
 `SAVING`，连接电脑 USB 时立即退出；“设置”页按住 `BOOT` 2 秒可手动提前进入或取消
@@ -341,7 +348,7 @@ Beta 固件更新默认关闭，仅建议能够使用本地 OTA 或 USB 恢复�
 设备与扬声器没有供电，因此不会响铃，也不会在下次开机补发。
 
 `BOOT` 在开机时和正常运行时具有不同含义：关机后按住它再按 `PWR` 会选择 ROM 下载
-模式；固件正常运行后短按用于页面导航或取消，只有“设置”页定义了长按动作。
+模式；固件正常运行后短按用于页面导航或取消，长按在“设置”页切换手动省电、在音乐页调音量。
 关机后按住 `KEY` 再按 `PWR` 则选择应用恢复模式，不会进入 ROM 下载程序。
 
 ## 常见问题
@@ -377,7 +384,7 @@ USB 校时脚本。若希望关机仍保持时间，应按微雪产品文档使�
 
 ### 对话页显示模型不可用
 
-这通常表示设备从旧版本仅通过在线更新或网页 OTA 安装了 v0.31.0 应用。其他功能不受
+这通常表示设备从旧版本仅通过在线更新或网页 OTA 安装了当前应用，未补装离线语音模型。其他功能不受
 影响；按“旧设备补装离线语音模型”通过 USB 同时写入同版本 OTA 和模型，或使用 Factory
 重新完整安装。`-model.bin` 不能单独启动，也不能上传到设置门户。
 

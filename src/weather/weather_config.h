@@ -23,6 +23,11 @@ esp_err_t weather_config_get_status(weather_config_status_t *status);
 /* An empty update API key preserves the stored key. The clear operation is
  * the only API that removes stored weather credentials. */
 esp_err_t weather_config_save(const weather_config_update_t *update);
+/* Merge only ordinary settings or only the key under the configuration mutex,
+ * preserving the latest saved values of the other independent form. An empty
+ * key submission without an existing key returns ESP_ERR_INVALID_STATE. */
+esp_err_t weather_config_save_preferences(const weather_preferences_t *preferences);
+esp_err_t weather_config_save_api_key(const weather_api_key_update_t *update);
 esp_err_t weather_config_clear(void);
 
 #ifdef __cplusplus

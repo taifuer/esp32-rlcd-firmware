@@ -58,7 +58,8 @@ static esp_err_t read_record_slot(
     if (error != ESP_OK) {
         return error;
     }
-    if (encoded_size != CONVERSATION_CONFIG_RECORD_ENCODED_SIZE) {
+    if (encoded_size != CONVERSATION_CONFIG_RECORD_ENCODED_SIZE &&
+        encoded_size != CONVERSATION_CONFIG_RECORD_V2_ENCODED_SIZE) {
         return ESP_OK;
     }
 
@@ -153,13 +154,15 @@ esp_err_t conversation_config_init(void)
             s_config = slot_b.config;
             s_generation = slot_b.generation;
         }
-        if (s_config.model ==
+        if (s_config.schema_version != CONVERSATION_CONFIG_SCHEMA_VERSION ||
+            s_config.model ==
             CONVERSATION_MODEL_QWEN3_OMNI_FLASH_REALTIME) {
             /* Keep the newest valid source slot intact until the replacement
              * record has been committed to the other slot. A storage failure
              * must neither erase credentials nor use the retired model nor
              * make an otherwise usable local boot fail. */
             s_config.model = CONVERSATION_DEFAULT_MODEL;
+            s_config.schema_version = CONVERSATION_CONFIG_SCHEMA_VERSION;
             s_migration = CONVERSATION_CONFIG_MIGRATION_PENDING;
             const conversation_config_record_slot_t target =
                 latest == CONVERSATION_CONFIG_RECORD_SLOT_A
@@ -221,6 +224,34 @@ esp_err_t conversation_config_get_status(
     return ESP_OK;
 }
 
+/* Caller holds s_mutex and has validated the candidate. A failed write never
+ * changes the active RAM config or its original committed source slot. */
+static esp_err_t commit_candidate_locked(const conversation_config_t *candidate)
+{
+    const conversation_config_record_slot_t target =
+        s_active_slot == CONVERSATION_CONFIG_RECORD_SLOT_A
+            ? CONVERSATION_CONFIG_RECORD_SLOT_B
+            : CONVERSATION_CONFIG_RECORD_SLOT_A;
+    const uint32_t generation = s_generation + 1U;
+    nvs_handle_t handle = 0;
+    esp_err_t error = nvs_open(CONVERSATION_CONFIG_NAMESPACE,
+                               NVS_READWRITE, &handle);
+    if (error == ESP_OK) {
+        error = write_record_slot(handle, target, generation, candidate);
+        nvs_close(handle);
+    }
+    if (error == ESP_OK) {
+        conversation_config_clear_sensitive(&s_config, sizeof(s_config));
+        s_config = *candidate;
+        s_active_slot = target;
+        s_generation = generation;
+        if (s_migration == CONVERSATION_CONFIG_MIGRATION_PENDING) {
+            s_migration = CONVERSATION_CONFIG_MIGRATION_COMPLETED;
+        }
+    }
+    return error;
+}
+
 esp_err_t conversation_config_save(
     const conversation_config_update_t *update)
 {
@@ -237,34 +268,64 @@ esp_err_t conversation_config_save(
     conversation_config_t candidate;
     const conversation_config_result_t validation =
         conversation_config_apply_update(&s_config, update, &candidate);
-    if (validation != CONVERSATION_CONFIG_RESULT_OK) {
-        conversation_config_clear_sensitive(&candidate,
-                                            sizeof(candidate));
-        xSemaphoreGive(s_mutex);
+    const esp_err_t error = validation == CONVERSATION_CONFIG_RESULT_OK
+        ? commit_candidate_locked(&candidate) : ESP_ERR_INVALID_ARG;
+    conversation_config_clear_sensitive(&candidate, sizeof(candidate));
+    xSemaphoreGive(s_mutex);
+    return error;
+}
+
+esp_err_t conversation_config_save_preferences(
+    const conversation_preferences_t *preferences)
+{
+    if (preferences == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
+    if (!s_initialized || s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
 
-    const conversation_config_record_slot_t target =
-        s_active_slot == CONVERSATION_CONFIG_RECORD_SLOT_A
-            ? CONVERSATION_CONFIG_RECORD_SLOT_B
-            : CONVERSATION_CONFIG_RECORD_SLOT_A;
-    const uint32_t generation = s_generation + 1U;
-    nvs_handle_t handle = 0;
-    esp_err_t error = nvs_open(CONVERSATION_CONFIG_NAMESPACE,
-                               NVS_READWRITE, &handle);
-    if (error == ESP_OK) {
-        error = write_record_slot(handle, target, generation, &candidate);
-        nvs_close(handle);
+    /* No caller-provided snapshot can overwrite a newer credential save. */
+    conversation_config_t candidate;
+    const conversation_config_result_t validation =
+        conversation_config_apply_preferences(&s_config, preferences, &candidate);
+    const esp_err_t error = validation == CONVERSATION_CONFIG_RESULT_OK
+        ? commit_candidate_locked(&candidate)
+        : (validation == CONVERSATION_CONFIG_RESULT_API_KEY_REQUIRED
+               ? ESP_ERR_INVALID_STATE : ESP_ERR_INVALID_ARG);
+    conversation_config_clear_sensitive(&candidate, sizeof(candidate));
+    xSemaphoreGive(s_mutex);
+    return error;
+}
+
+esp_err_t conversation_config_save_api_key(
+    const conversation_api_key_update_t *update)
+{
+    if (update == NULL) {
+        return ESP_ERR_INVALID_ARG;
     }
-    if (error == ESP_OK) {
-        conversation_config_clear_sensitive(&s_config, sizeof(s_config));
-        s_config = candidate;
-        s_active_slot = target;
-        s_generation = generation;
-        if (s_migration == CONVERSATION_CONFIG_MIGRATION_PENDING) {
-            s_migration = CONVERSATION_CONFIG_MIGRATION_COMPLETED;
-        }
+    if (!s_initialized || s_mutex == NULL) {
+        return ESP_ERR_INVALID_STATE;
     }
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    /* Only the key comes from the caller. Merge all other fields from the
+     * latest record under the lock, including after a concurrent portal save. */
+    conversation_config_t candidate = s_config;
+    if (update->api_key[0] != '\0') {
+        memcpy(candidate.api_key, update->api_key, sizeof(candidate.api_key));
+    }
+    const conversation_config_result_t validation =
+        conversation_config_validate(&candidate);
+    const esp_err_t error = validation == CONVERSATION_CONFIG_RESULT_OK
+        ? commit_candidate_locked(&candidate)
+        : (validation == CONVERSATION_CONFIG_RESULT_API_KEY_REQUIRED
+               ? ESP_ERR_INVALID_STATE : ESP_ERR_INVALID_ARG);
     conversation_config_clear_sensitive(&candidate, sizeof(candidate));
     xSemaphoreGive(s_mutex);
     return error;

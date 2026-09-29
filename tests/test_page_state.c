@@ -26,6 +26,117 @@ static void assert_footer_destination(app_page_t page, app_page_t next)
     assert(strlen(footer) <= DISPLAY_INTERACTION_FOOTER_MAX_CHARS);
 }
 
+static unsigned tested_orders;
+
+static app_page_t page_for_id(uint8_t id)
+{
+    switch (id) {
+    case APP_DAILY_PAGE_WEATHER: return APP_PAGE_WEATHER;
+    case APP_DAILY_PAGE_MARKET: return APP_PAGE_MARKET;
+    case APP_DAILY_PAGE_CALENDAR: return APP_PAGE_CALENDAR;
+    case APP_DAILY_PAGE_IMAGE: return APP_PAGE_IMAGE;
+    case APP_DAILY_PAGE_MUSIC: return APP_PAGE_MUSIC;
+    case APP_DAILY_PAGE_CHAT: return APP_PAGE_VOICE;
+    default: assert(false); return APP_PAGE_HOME;
+    }
+}
+
+static void assert_ordered_ring(const uint8_t *order)
+{
+    for (unsigned mask = 0U; mask <= APP_DAILY_PAGES_ALL_MASK; ++mask) {
+        for (unsigned flags = 0U; flags < 16U; ++flags) {
+            app_page_state_t state;
+            app_page_state_init(&state);
+            app_page_state_set_weather_enabled(&state, (flags & 1U) != 0U);
+            app_page_state_set_market_enabled(&state, (flags & 2U) != 0U);
+            app_page_state_set_image_available(&state, (flags & 4U) != 0U);
+            app_page_state_set_music_available(&state, (flags & 8U) != 0U);
+            app_page_state_set_daily_pages_mask(&state, (uint8_t)mask);
+            assert(app_page_state_set_daily_pages_order(&state, order));
+            assert(app_page_state_current(&state) == APP_PAGE_HOME);
+            app_page_t ring[APP_DAILY_PAGE_COUNT + 1U] = {APP_PAGE_HOME};
+            size_t count = 1U;
+            for (size_t i = 0U; i < APP_DAILY_PAGE_COUNT; ++i) {
+                const app_page_t page = page_for_id(order[i]);
+                if (app_page_state_page_available(&state, page)) ring[count++] = page;
+            }
+            for (size_t i = 0U; i < count; ++i) {
+                const app_page_t next = ring[(i + 1U) % count];
+                assert(app_page_state_current(&state) == ring[i]);
+                assert(app_page_state_next_daily_page(&state) == next);
+                assert_footer_destination(ring[i], next);
+                app_page_state_boot_short_press(&state);
+                assert(app_page_state_current(&state) == next);
+            }
+        }
+    }
+}
+
+static void test_page_permutations(uint8_t *order, size_t position)
+{
+    if (position == APP_DAILY_PAGE_COUNT) {
+        assert_ordered_ring(order);
+        ++tested_orders;
+        return;
+    }
+    for (size_t i = position; i < APP_DAILY_PAGE_COUNT; ++i) {
+        const uint8_t saved = order[position];
+        order[position] = order[i];
+        order[i] = saved;
+        test_page_permutations(order, position + 1U);
+        order[i] = order[position];
+        order[position] = saved;
+    }
+}
+
+static void test_reordering_preserves_current_and_rejects_invalid(void)
+{
+    app_page_state_t state;
+    app_page_state_init(&state);
+    app_page_state_set_weather_enabled(&state, true);
+    app_page_state_set_market_enabled(&state, true);
+    app_page_state_set_image_available(&state, true);
+    app_page_state_set_music_available(&state, true);
+    const uint8_t order[] = {APP_DAILY_PAGE_CHAT, APP_DAILY_PAGE_MUSIC,
+        APP_DAILY_PAGE_IMAGE, APP_DAILY_PAGE_CALENDAR, APP_DAILY_PAGE_MARKET,
+        APP_DAILY_PAGE_WEATHER};
+    for (app_page_t page = APP_PAGE_HOME; page <= APP_PAGE_ONLINE_UPDATE; ++page) {
+        /* Voice navigation and modal restore target IDs, not old positions. */
+        assert(app_page_state_open_page(&state, page));
+        assert(app_page_state_set_daily_pages_order(&state, order));
+        assert(app_page_state_current(&state) == page);
+        assert(app_page_state_open_page(&state, page));
+    }
+    assert(app_page_state_open_page(&state, APP_PAGE_CALENDAR));
+    const app_page_state_t before = state;
+    for (size_t i = 0U; i < APP_DAILY_PAGE_COUNT; ++i) {
+        for (unsigned id = 0U; id <= UINT8_MAX; ++id) {
+            uint8_t invalid[APP_DAILY_PAGE_COUNT];
+            memcpy(invalid, order, sizeof(invalid));
+            invalid[i] = (uint8_t)id;
+            assert(app_page_state_set_daily_pages_order(&state, invalid) == (id == order[i]));
+            assert(memcmp(&state, &before, sizeof(state)) == 0);
+        }
+    }
+    assert(!app_page_state_set_daily_pages_order(NULL, order));
+    assert(!app_page_state_set_daily_pages_order(&state, NULL));
+    assert(app_page_state_set_daily_pages_order(&state, state.daily_pages_order));
+    assert(memcmp(&state, &before, sizeof(state)) == 0);
+    app_page_state_set_daily_pages_mask(&state, APP_DAILY_PAGE_CHAT);
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+    assert(!app_page_state_open_page(&state, APP_PAGE_CALENDAR));
+    assert(app_page_state_next_daily_page(&state) == APP_PAGE_VOICE);
+    app_page_state_set_daily_pages_mask(&state, APP_DAILY_PAGES_ALL_MASK);
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+    app_page_state_set_recovery_mode(&state, true);
+    assert(app_page_state_set_daily_pages_order(&state, order));
+    assert(app_page_state_current(&state) == APP_PAGE_ONLINE_UPDATE);
+    assert(app_page_state_next_daily_page(&state) == APP_PAGE_ONLINE_UPDATE);
+    app_page_state_set_recovery_mode(&state, false);
+    assert(app_page_state_current(&state) == APP_PAGE_HOME);
+    assert(app_page_state_next_daily_page(&state) == APP_PAGE_VOICE);
+}
+
 static void test_every_visibility_and_availability_combination(void)
 {
     const app_page_t daily[] = {APP_PAGE_HOME, APP_PAGE_WEATHER, APP_PAGE_MARKET,
@@ -156,6 +267,10 @@ static void test_browsing_stays_and_background_discovery_never_navigates(void)
 
 int main(void)
 {
+    uint8_t order[] = APP_DAILY_PAGES_DEFAULT_ORDER;
+    test_page_permutations(order, 0U);
+    assert(tested_orders == 720U);
+    test_reordering_preserves_current_and_rejects_invalid();
     test_every_visibility_and_availability_combination();
     test_browsing_stays_and_background_discovery_never_navigates();
     app_page_state_t state;

@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "settings_model.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,6 +55,7 @@ typedef struct {
     bool music_available;
     bool recovery_mode;
     uint8_t daily_pages_mask;
+    uint8_t daily_pages_order[APP_DAILY_PAGE_COUNT];
 } app_page_state_t;
 
 void app_page_state_init(app_page_state_t *state);
@@ -64,6 +66,9 @@ bool app_page_state_open_page(app_page_state_t *state, app_page_t page);
 bool app_page_state_page_available(const app_page_state_t *state,
                                     app_page_t page);
 void app_page_state_set_daily_pages_mask(app_page_state_t *state, uint8_t mask);
+/* Full permutation of stable optional-page IDs; never changes current page. */
+bool app_page_state_set_daily_pages_order(app_page_state_t *state,
+                                         const uint8_t *order);
 /* The BOOT destination and display footer must use this same query. */
 app_page_t app_page_state_next_daily_page(const app_page_state_t *state);
 const char *app_page_daily_label(app_page_t page);

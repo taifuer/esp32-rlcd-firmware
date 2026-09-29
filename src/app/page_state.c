@@ -18,19 +18,27 @@ static uint8_t daily_page_bit(app_page_t page)
 
 app_page_t app_page_state_next_daily_page(const app_page_state_t *state)
 {
-    static const app_page_t ring[] = {
-        APP_PAGE_HOME, APP_PAGE_WEATHER, APP_PAGE_MARKET, APP_PAGE_CALENDAR,
+    static const app_page_t pages[] = {
+        APP_PAGE_WEATHER, APP_PAGE_MARKET, APP_PAGE_CALENDAR,
         APP_PAGE_IMAGE, APP_PAGE_MUSIC, APP_PAGE_VOICE,
     };
     if (state == NULL) return APP_PAGE_HOME;
     /* BOOT is inert in recovery, including when every daily page is hidden. */
     if (state->recovery_mode) return state->current;
-    for (size_t i = 0U; i < sizeof(ring) / sizeof(ring[0]); ++i) {
-        if (ring[i] != state->current) continue;
-        for (++i; i < sizeof(ring) / sizeof(ring[0]); ++i) {
-            if (app_page_state_page_available(state, ring[i])) return ring[i];
+    if (!app_page_is_daily(state->current)) return APP_PAGE_HOME;
+    static const uint8_t default_order[] = APP_DAILY_PAGES_DEFAULT_ORDER;
+    const uint8_t *order = app_daily_pages_order_valid(state->daily_pages_order)
+        ? state->daily_pages_order : default_order;
+    bool after_current = state->current == APP_PAGE_HOME;
+    for (size_t i = 0U; i < APP_DAILY_PAGE_COUNT; ++i) {
+        for (size_t j = 0U; j < sizeof(pages) / sizeof(pages[0]); ++j) {
+            if (daily_page_bit(pages[j]) != order[i]) continue;
+            if (after_current && app_page_state_page_available(state, pages[j])) {
+                return pages[j];
+            }
+            if (pages[j] == state->current) after_current = true;
+            break;
         }
-        break;
     }
     return APP_PAGE_HOME;
 }
@@ -69,6 +77,8 @@ void app_page_state_init(app_page_state_t *state)
     memset(state, 0, sizeof(*state));
     state->current = APP_PAGE_HOME;
     state->daily_pages_mask = APP_DAILY_PAGES_ALL_MASK;
+    const uint8_t order[] = APP_DAILY_PAGES_DEFAULT_ORDER;
+    memcpy(state->daily_pages_order, order, sizeof(order));
 }
 
 void app_page_state_go_home(app_page_state_t *state)
@@ -110,6 +120,14 @@ void app_page_state_set_daily_pages_mask(app_page_state_t *state, uint8_t mask)
         !app_page_state_page_available(state, state->current)) {
         app_page_state_go_home(state);
     }
+}
+
+bool app_page_state_set_daily_pages_order(app_page_state_t *state,
+                                         const uint8_t *order)
+{
+    if (state == NULL || !app_daily_pages_order_valid(order)) return false;
+    memmove(state->daily_pages_order, order, sizeof(state->daily_pages_order));
+    return true;
 }
 
 void app_page_state_set_weather_enabled(app_page_state_t *state,

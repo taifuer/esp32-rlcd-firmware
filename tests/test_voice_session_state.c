@@ -366,8 +366,54 @@ static void test_state_names(void)
            NULL);
 }
 
+static void test_explicit_cloud_failure_retry(void)
+{
+    voice_session_state_t state;
+    voice_session_state_init(&state);
+    uint32_t first = 0U, retry = 99U;
+    assert(voice_session_state_begin(&state, true, &first));
+    assert(voice_session_state_report_failure(&state, first));
+    voice_session_state_retain_failure(&state);
+    assert(!voice_session_state_retry(&state, &retry) && retry == 0U);
+    assert(!voice_session_state_leave_failure(&state));
+    assert(!voice_session_state_arm_retry(&state, true, true));
+    assert(voice_session_state_tick(&state, 2000U) == VOICE_SESSION_ACTION_NONE);
+    assert(!voice_session_state_arm_retry(&state, false, true));
+    assert(!voice_session_state_arm_retry(&state, true, false));
+    assert(voice_session_state_arm_retry(&state, true, true));
+    assert(!voice_session_state_arm_retry(&state, true, true));
+    assert(voice_session_state_tick(&state, UINT32_MAX) == VOICE_SESSION_ACTION_NONE);
+    assert(voice_session_state_phase(&state) == VOICE_SESSION_PHASE_FAILED);
+    assert(voice_session_state_retry(&state, &retry));
+    assert(retry != first && retry != 0U);
+    assert(!state.failure_retained && !state.retry_ready);
+    assert(!voice_session_state_report_failure(&state, first));
+    assert(voice_session_state_phase(&state) == VOICE_SESSION_PHASE_WAITING_FOR_RELEASE);
+    assert(voice_session_state_key_released(&state) == VOICE_SESSION_ACTION_START_LISTENING);
+    assert(voice_session_state_report_failure(&state, retry));
+    voice_session_state_retain_failure(&state);
+    (void)voice_session_state_tick(&state, 2000U);
+    assert(voice_session_state_arm_retry(&state, true, true));
+    assert(voice_session_state_alarm_started(&state) == VOICE_SESSION_ACTION_CANCEL_AND_CLEAR);
+    assert(!voice_session_state_retry(&state, NULL));
+    assert(!state.failure_retained && !state.retry_ready);
+    assert(voice_session_state_begin(&state, true, &retry));
+    assert(voice_session_state_report_failure(&state, retry));
+    voice_session_state_retain_failure(&state);
+    (void)voice_session_state_tick(&state, 2000U);
+    assert(voice_session_state_arm_retry(&state, true, true));
+    assert(voice_session_state_leave_failure(&state));
+    assert(voice_session_state_phase(&state) == VOICE_SESSION_PHASE_READY);
+    assert(!voice_session_state_report_failure(&state, retry));
+    voice_session_state_retain_failure(NULL);
+    assert(!voice_session_state_arm_retry(NULL, true, true));
+    assert(!voice_session_state_retry(NULL, NULL));
+    assert(!voice_session_state_leave_failure(NULL));
+}
+
 int main(void)
 {
+    test_explicit_cloud_failure_retry();
     test_successful_session();
     test_no_voice_and_not_understood();
     test_timeouts();

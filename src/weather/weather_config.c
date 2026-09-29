@@ -194,27 +194,10 @@ esp_err_t weather_config_get_status(weather_config_status_t *status)
     return ESP_OK;
 }
 
-esp_err_t weather_config_save(const weather_config_update_t *update)
+/* Caller holds s_mutex and has validated the candidate. Never change the
+ * active RAM configuration or overwrite its committed source on failure. */
+static esp_err_t commit_candidate_locked(const weather_config_t *candidate)
 {
-    if (update == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (!s_initialized || s_mutex == NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
-        return ESP_ERR_TIMEOUT;
-    }
-
-    weather_config_t candidate;
-    const weather_config_result_t validation =
-        weather_config_apply_update(&s_config, update, &candidate);
-    if (validation != WEATHER_CONFIG_RESULT_OK) {
-        weather_config_clear_sensitive(&candidate, sizeof(candidate));
-        xSemaphoreGive(s_mutex);
-        return ESP_ERR_INVALID_ARG;
-    }
-
     const weather_config_record_slot_t target =
         s_active_slot == WEATHER_CONFIG_RECORD_SLOT_A
             ? WEATHER_CONFIG_RECORD_SLOT_B
@@ -224,15 +207,67 @@ esp_err_t weather_config_save(const weather_config_update_t *update)
     esp_err_t error = nvs_open(WEATHER_CONFIG_NAMESPACE, NVS_READWRITE,
                                &handle);
     if (error == ESP_OK) {
-        error = write_record_slot(handle, target, generation, &candidate);
+        error = write_record_slot(handle, target, generation, candidate);
         nvs_close(handle);
     }
     if (error == ESP_OK) {
         weather_config_clear_sensitive(&s_config, sizeof(s_config));
-        s_config = candidate;
+        s_config = *candidate;
         s_active_slot = target;
         s_generation = generation;
     }
+    return error;
+}
+
+esp_err_t weather_config_save(const weather_config_update_t *update)
+{
+    if (update == NULL) return ESP_ERR_INVALID_ARG;
+    if (!s_initialized || s_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) return ESP_ERR_TIMEOUT;
+
+    weather_config_t candidate;
+    const weather_config_result_t validation =
+        weather_config_apply_update(&s_config, update, &candidate);
+    const esp_err_t error = validation == WEATHER_CONFIG_RESULT_OK
+        ? commit_candidate_locked(&candidate) : ESP_ERR_INVALID_ARG;
+    weather_config_clear_sensitive(&candidate, sizeof(candidate));
+    xSemaphoreGive(s_mutex);
+    return error;
+}
+
+esp_err_t weather_config_save_preferences(const weather_preferences_t *preferences)
+{
+    if (preferences == NULL) return ESP_ERR_INVALID_ARG;
+    if (!s_initialized || s_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) return ESP_ERR_TIMEOUT;
+
+    weather_config_t candidate;
+    const weather_config_result_t validation =
+        weather_config_apply_preferences(&s_config, preferences, &candidate);
+    const esp_err_t error = validation == WEATHER_CONFIG_RESULT_OK
+        ? commit_candidate_locked(&candidate)
+        : validation == WEATHER_CONFIG_RESULT_API_KEY_REQUIRED
+            ? ESP_ERR_INVALID_STATE : ESP_ERR_INVALID_ARG;
+    weather_config_clear_sensitive(&candidate, sizeof(candidate));
+    xSemaphoreGive(s_mutex);
+    return error;
+}
+
+esp_err_t weather_config_save_api_key(const weather_api_key_update_t *update)
+{
+    if (update == NULL) return ESP_ERR_INVALID_ARG;
+    if (!s_initialized || s_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) return ESP_ERR_TIMEOUT;
+    if (update->api_key[0] == '\0' && s_config.api_key[0] == '\0') {
+        xSemaphoreGive(s_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    weather_config_t candidate;
+    const weather_config_result_t validation =
+        weather_config_apply_api_key_update(&s_config, update, &candidate);
+    const esp_err_t error = validation == WEATHER_CONFIG_RESULT_OK
+        ? commit_candidate_locked(&candidate) : ESP_ERR_INVALID_ARG;
     weather_config_clear_sensitive(&candidate, sizeof(candidate));
     xSemaphoreGive(s_mutex);
     return error;

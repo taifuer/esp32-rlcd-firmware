@@ -3,7 +3,8 @@
 #include <limits.h>
 
 #define SETTINGS_RECORD_MAGIC UINT32_C(0x47464352)
-#define SETTINGS_RECORD_FORMAT_VERSION 9U
+#define SETTINGS_RECORD_FORMAT_VERSION 10U
+#define SETTINGS_RECORD_SCHEMA10_FORMAT_VERSION 9U
 #define SETTINGS_RECORD_SCHEMA9_FORMAT_VERSION 8U
 #define SETTINGS_RECORD_SCHEMA8_FORMAT_VERSION 7U
 #define SETTINGS_RECORD_SCHEMA7_FORMAT_VERSION 6U
@@ -40,7 +41,9 @@ enum {
     ALARM_VOLUME_OFFSET = 26,
     DAILY_PAGES_OFFSET = 27,
     MUSIC_MODE_OFFSET = 28,
-    CHECKSUM_OFFSET = 32,
+    DAILY_ORDER_OFFSET = 29,
+    CHECKSUM_OFFSET = 36,
+    SCHEMA10_CHECKSUM_OFFSET = 32,
     LEGACY_CHECKSUM_OFFSET = 28,
     SCHEMA3_CHECKSUM_OFFSET = 24,
     SCHEMA2_CHECKSUM_OFFSET = 20,
@@ -129,6 +132,9 @@ bool settings_record_encode(uint32_t generation,
     encoded[ALARM_VOLUME_OFFSET] = settings->alarm_volume;
     encoded[DAILY_PAGES_OFFSET] = settings->daily_pages_mask;
     encoded[MUSIC_MODE_OFFSET] = (uint8_t)settings->music_mode;
+    for (size_t index = 0U; index < APP_DAILY_PAGE_COUNT; ++index) {
+        encoded[DAILY_ORDER_OFFSET + index] = settings->daily_pages_order[index];
+    }
     put_u32(encoded, CHECKSUM_OFFSET,
             record_checksum(encoded, CHECKSUM_OFFSET));
     return true;
@@ -137,10 +143,11 @@ bool settings_record_encode(uint32_t generation,
 static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
                                   settings_record_t *record, uint16_t schema)
 {
-    const size_t expected_size = schema >= 10U
-        ? SETTINGS_RECORD_ENCODED_SIZE : SETTINGS_RECORD_SCHEMA9_ENCODED_SIZE;
-    const size_t checksum_offset = schema >= 10U
-        ? CHECKSUM_OFFSET : LEGACY_CHECKSUM_OFFSET;
+    const size_t expected_size = schema >= 11U ? SETTINGS_RECORD_ENCODED_SIZE
+        : schema == 10U ? SETTINGS_RECORD_SCHEMA10_ENCODED_SIZE
+                        : SETTINGS_RECORD_SCHEMA9_ENCODED_SIZE;
+    const size_t checksum_offset = schema >= 11U ? CHECKSUM_OFFSET
+        : schema == 10U ? SCHEMA10_CHECKSUM_OFFSET : LEGACY_CHECKSUM_OFFSET;
     if (encoded == NULL || record == NULL ||
         encoded_size != expected_size ||
         get_u32(encoded, MAGIC_OFFSET) != SETTINGS_RECORD_MAGIC ||
@@ -149,6 +156,7 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
              : schema == 7U ? SETTINGS_RECORD_SCHEMA7_FORMAT_VERSION
              : schema == 8U ? SETTINGS_RECORD_SCHEMA8_FORMAT_VERSION
              : schema == 9U ? SETTINGS_RECORD_SCHEMA9_FORMAT_VERSION
+             : schema == 10U ? SETTINGS_RECORD_SCHEMA10_FORMAT_VERSION
                             : SETTINGS_RECORD_FORMAT_VERSION) ||
         get_u16(encoded, SCHEMA_OFFSET) != schema ||
         get_u16(encoded, SIZE_OFFSET) != expected_size ||
@@ -168,7 +176,7 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
         (schema >= 7U && encoded[LEGACY_DEFAULT_DISPLAY_OFFSET] > 2U)) {
         return false;
     }
-    const app_settings_t settings = {
+    app_settings_t settings = {
         .schema_version = APP_SETTINGS_SCHEMA_VERSION,
         .manual_saving_requested =
             encoded[MANUAL_SAVING_OFFSET] == 1U,
@@ -186,10 +194,16 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
         .alarm_weekdays = encoded[ALARM_WEEKDAYS_OFFSET],
         .daily_pages_mask = schema >= 9U ? encoded[DAILY_PAGES_OFFSET]
                                         : APP_DAILY_PAGES_ALL_MASK,
+        .daily_pages_order = APP_DAILY_PAGES_DEFAULT_ORDER,
         .music_mode = schema >= 10U
             ? (app_music_mode_t)encoded[MUSIC_MODE_OFFSET]
             : APP_MUSIC_MODE_SEQUENTIAL,
     };
+    if (schema >= 11U) {
+        for (size_t index = 0U; index < APP_DAILY_PAGE_COUNT; ++index) {
+            settings.daily_pages_order[index] = encoded[DAILY_ORDER_OFFSET + index];
+        }
+    }
     if (!app_settings_validate(&settings)) {
         return false;
     }
@@ -213,6 +227,13 @@ bool settings_record_decode_schema8(const uint8_t *encoded,
                                     settings_record_t *record)
 {
     return decode_recent_record(encoded, encoded_size, record, 8U);
+}
+
+bool settings_record_decode_schema10(const uint8_t *encoded,
+                                     size_t encoded_size,
+                                     settings_record_t *record)
+{
+    return decode_recent_record(encoded, encoded_size, record, 10U);
 }
 
 bool settings_record_decode_schema9(const uint8_t *encoded,

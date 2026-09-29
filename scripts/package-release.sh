@@ -96,7 +96,7 @@ install -m 0644 "${RLCD_PROJECT_DIR}/LICENSE" "${release_dir}/LICENSE"
 install -m 0644 "${RLCD_PROJECT_DIR}/NOTICE.md" "${release_dir}/NOTICE.md"
 for preview_name in \
     home-screen.svg weather.svg market-screen.svg calendar-screen.svg image-screen.svg image-delete-confirm.svg music.svg \
-    device-health.svg network-time.svg audio.svg voice.svg \
+    device-health.svg network-time.svg audio.svg voice.svg chat-failed.svg \
     offline-commands.svg hold-prompt.svg \
     wifi-maintenance.svg online-update.svg local-update.svg \
     status.svg settings.svg quick-settings.svg volume.svg alarm.svg settings-portal.svg \

@@ -48,6 +48,10 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 node tests/test_recovery_portal.mjs
 node tests/test_settings_portal.mjs
 node tests/test_device_navigation.mjs
+cmake -DRLCD_PROJECT_DIR="${RLCD_PROJECT_DIR}" \
+  -DRLCD_UPSTREAM_WEBSOCKET_DIR="${RLCD_ESP_WEBSOCKET_CLIENT_DIR}" \
+  -DRLCD_TEST_TMP="${RLCD_TEST_TMP}/websocket-redirect-policy" \
+  -P tests/test_websocket_redirect_policy.cmake
 
 if [[ ! -f "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" ]]; then
   echo "未找到固定版本的 U8g2 字体测试依赖，请先执行: ./scripts/bootstrap.sh" >&2
@@ -183,8 +187,9 @@ cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
 
 cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
   -I"${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc" \
-  -Isrc/conversation/include \
+  -Isrc/conversation/include -Isrc/display \
   src/conversation/conversation_feedback.c tests/test_conversation_layout.c \
+  src/display/voice_display_model.c \
   "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_font.c" \
   "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" \
   "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
@@ -192,7 +197,7 @@ cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
-  -Isrc/app \
+  -Isrc/app -Isrc/settings/include \
   src/app/hold_interaction.c tests/test_hold_interaction.c \
   -o "${RLCD_TEST_TMP}/test_hold_interaction"
 
@@ -204,7 +209,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
-  -Isrc/app -Isrc/input/include \
+  -Isrc/app -Isrc/input/include -Isrc/settings/include \
   src/app/image_delete_ui.c src/input/button_state.c \
   tests/test_image_delete_interaction.c \
   -o "${RLCD_TEST_TMP}/test_image_delete_interaction"
@@ -347,6 +352,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/conversation -Isrc/conversation/include \
   -I"${RLCD_CJSON_DIR}/cJSON" \
   src/conversation/conversation_text_buffer.c \
+  src/conversation/conversation_config_model.c \
   src/conversation/conversation_protocol.c \
   tests/test_conversation_protocol.c \
   "${RLCD_TEST_TMP}/cJSON.o" -lm \
@@ -475,6 +481,7 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
   -Isrc/weather \
   src/weather/weather_config_model.c \
+  src/weather/weather_location_catalog.c \
   tests/test_weather_config.c \
   -o "${RLCD_TEST_TMP}/test_weather_config"
 
@@ -483,8 +490,16 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/weather \
   src/weather/weather_config_model.c \
   src/weather/weather_config_record.c \
+  src/weather/weather_location_catalog.c \
   tests/test_weather_config_record.c \
   -o "${RLCD_TEST_TMP}/test_weather_config_record"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Itests/conversation_storage_stubs -Isrc/weather -Isrc/storage/include \
+  src/weather/weather_config_model.c src/weather/weather_location_catalog.c \
+  src/weather/weather_config_record.c tests/test_weather_config_storage.c \
+  -o "${RLCD_TEST_TMP}/test_weather_config_storage"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
@@ -638,6 +653,7 @@ ASAN_OPTIONS=detect_leaks=0 \
 "${RLCD_TEST_TMP}/test_voice_display_model"
 "${RLCD_TEST_TMP}/test_weather_config"
 "${RLCD_TEST_TMP}/test_weather_config_record"
+"${RLCD_TEST_TMP}/test_weather_config_storage"
 "${RLCD_TEST_TMP}/test_weather_model"
 ASAN_OPTIONS=detect_leaks=0 \
   "${RLCD_TEST_TMP}/test_weather_response"

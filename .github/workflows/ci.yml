@@ -79,6 +79,25 @@ jobs:
           test "$(git -C "${display_root}" rev-parse HEAD)" = "${WAVESHARE_COMMIT}"
           test -f "${display_root}/${WAVESHARE_COMPONENTS_RELATIVE_PATH}/u8g2/csrc/u8g2_fonts.c"
 
+      - name: Prepare pinned WebSocket policy test dependency
+        shell: bash
+        env:
+          RLCD_DEPS_DIR: ${{ runner.temp }}/esp32-rlcd-firmware-deps
+        run: |
+          source ./tool-versions.env
+          protocols_root="${RLCD_DEPS_DIR}/sources/espressif/esp-protocols"
+          mkdir -p "$(dirname -- "${protocols_root}")"
+          git clone --filter=blob:none --no-checkout \
+            "${ESP_PROTOCOLS_REPOSITORY_URL}" "${protocols_root}"
+          git -C "${protocols_root}" sparse-checkout init --cone
+          git -C "${protocols_root}" sparse-checkout set \
+            "${ESP_WEBSOCKET_CLIENT_RELATIVE_PATH}"
+          git -C "${protocols_root}" checkout --detach \
+            "${ESP_WEBSOCKET_CLIENT_COMMIT}"
+          test "$(git -C "${protocols_root}" rev-parse HEAD)" = \
+            "${ESP_WEBSOCKET_CLIENT_COMMIT}"
+          test -f "${protocols_root}/${ESP_WEBSOCKET_CLIENT_RELATIVE_PATH}/esp_websocket_client.c"
+
       - name: Run host tests
         env:
           RLCD_DEPS_DIR: ${{ runner.temp }}/esp32-rlcd-firmware-deps

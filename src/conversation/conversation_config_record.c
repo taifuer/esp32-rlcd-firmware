@@ -3,7 +3,7 @@
 #include <limits.h>
 #include <string.h>
 
-#define RECORD_FORMAT_VERSION 2U
+#define RECORD_FORMAT_VERSION 3U
 #define MAGIC_OFFSET 0U
 #define FORMAT_OFFSET 4U
 #define SIZE_OFFSET 6U
@@ -17,13 +17,17 @@
 #define API_HOST_LENGTH_OFFSET 20U
 #define API_KEY_OFFSET 22U
 #define API_HOST_OFFSET (API_KEY_OFFSET + CONVERSATION_API_KEY_MAX_LENGTH)
-#define CHECKSUM_OFFSET (API_HOST_OFFSET + CONVERSATION_API_HOST_MAX_LENGTH)
+#define VOICE_OFFSET (API_HOST_OFFSET + CONVERSATION_API_HOST_MAX_LENGTH)
+#define REPLY_STYLE_OFFSET (VOICE_OFFSET + 1U)
+#define CHECKSUM_OFFSET (REPLY_STYLE_OFFSET + 1U)
 
 static const uint8_t RECORD_MAGIC[4] = {'R', 'L', 'C', 'V'};
 
 _Static_assert(CHECKSUM_OFFSET + 4U ==
                    CONVERSATION_CONFIG_RECORD_ENCODED_SIZE,
                "conversation config record layout mismatch");
+_Static_assert(VOICE_OFFSET + 4U == CONVERSATION_CONFIG_RECORD_V2_ENCODED_SIZE,
+               "legacy conversation record layout must remain unchanged");
 
 static size_t bounded_length(const char *text, size_t limit)
 {
@@ -134,6 +138,8 @@ bool conversation_config_record_encode(
     put_u16(encoded, API_HOST_LENGTH_OFFSET, (uint16_t)api_host_length);
     memcpy(encoded + API_KEY_OFFSET, config->api_key, api_key_length);
     memcpy(encoded + API_HOST_OFFSET, config->api_host, api_host_length);
+    encoded[VOICE_OFFSET] = (uint8_t)config->voice;
+    encoded[REPLY_STYLE_OFFSET] = (uint8_t)config->reply_style;
     put_u32(encoded, CHECKSUM_OFFSET,
             record_checksum(encoded, CHECKSUM_OFFSET));
     return true;
@@ -148,24 +154,33 @@ bool conversation_config_record_decode(
     }
     conversation_config_clear_sensitive(record, sizeof(*record));
     if (encoded == NULL ||
-        encoded_size != CONVERSATION_CONFIG_RECORD_ENCODED_SIZE ||
-        memcmp(encoded + MAGIC_OFFSET, RECORD_MAGIC,
+        (encoded_size != CONVERSATION_CONFIG_RECORD_ENCODED_SIZE &&
+         encoded_size != CONVERSATION_CONFIG_RECORD_V2_ENCODED_SIZE)) {
+        return false;
+    }
+    const bool legacy =
+        encoded_size == CONVERSATION_CONFIG_RECORD_V2_ENCODED_SIZE;
+    const size_t checksum_offset = encoded_size - 4U;
+    if (memcmp(encoded + MAGIC_OFFSET, RECORD_MAGIC,
                sizeof(RECORD_MAGIC)) != 0 ||
-        get_u16(encoded, FORMAT_OFFSET) != RECORD_FORMAT_VERSION ||
-        get_u16(encoded, SIZE_OFFSET) !=
-            CONVERSATION_CONFIG_RECORD_ENCODED_SIZE ||
+        get_u16(encoded, FORMAT_OFFSET) != (legacy ? 2U : RECORD_FORMAT_VERSION) ||
+        get_u16(encoded, SIZE_OFFSET) != encoded_size ||
         get_u16(encoded, SCHEMA_OFFSET) !=
-            CONVERSATION_CONFIG_SCHEMA_VERSION ||
+            (legacy ? 2U : CONVERSATION_CONFIG_SCHEMA_VERSION) ||
         encoded[ENABLED_OFFSET] > 1U || encoded[RESERVED_OFFSET] != 0U ||
-        get_u32(encoded, CHECKSUM_OFFSET) !=
-            record_checksum(encoded, CHECKSUM_OFFSET)) {
+        get_u32(encoded, checksum_offset) !=
+            record_checksum(encoded, checksum_offset)) {
         return false;
     }
 
     conversation_config_t config = {
-        .schema_version = get_u16(encoded, SCHEMA_OFFSET),
+        .schema_version = CONVERSATION_CONFIG_SCHEMA_VERSION,
         .service = (conversation_service_t)encoded[SERVICE_OFFSET],
         .model = (conversation_model_t)encoded[MODEL_OFFSET],
+        .voice = legacy ? CONVERSATION_DEFAULT_VOICE
+                        : (conversation_voice_t)encoded[VOICE_OFFSET],
+        .reply_style = legacy ? CONVERSATION_DEFAULT_REPLY_STYLE
+                        : (conversation_reply_style_t)encoded[REPLY_STYLE_OFFSET],
         .enabled = encoded[ENABLED_OFFSET] != 0U,
     };
     const bool decoded =
@@ -192,6 +207,7 @@ bool conversation_config_record_decode(
     }
 
     config.model = stored_model;
+    config.schema_version = get_u16(encoded, SCHEMA_OFFSET);
     record->generation = get_u32(encoded, GENERATION_OFFSET);
     record->config = config;
     conversation_config_clear_sensitive(&config, sizeof(config));

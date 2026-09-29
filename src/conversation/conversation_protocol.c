@@ -65,19 +65,29 @@ static bool finish_message(char *output, size_t capacity, int result,
 
 bool conversation_protocol_build_session_update(
     char *output, size_t capacity, const char *event_id,
-    conversation_model_t model, size_t *written)
+    conversation_model_t model, conversation_voice_t voice,
+    conversation_reply_style_t reply_style, size_t *written)
 {
+    const char *voice_name = conversation_voice_name(voice);
     if (written != NULL) {
         *written = 0U;
     }
     if (output == NULL || capacity == 0U ||
         !event_id_is_safe(event_id) ||
-        model != CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH) {
+        model != CONVERSATION_MODEL_QWEN_AUDIO_3_0_REALTIME_FLASH ||
+        voice_name == NULL || conversation_reply_style_name(reply_style) == NULL) {
         if (output != NULL && capacity > 0U) {
             output[0] = '\0';
         }
         return false;
     }
+
+    /* Fixed instructions have no JSON metacharacters and are not user input.
+     * Both presets bound response length as a preference, not a hard quota.
+     * English practice does not claim pronunciation assessment. */
+    const char *instructions = reply_style == CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE
+        ? "你是友好简洁的英语口语练习伙伴。主要用简单自然的英语回答，每次一至三个短句，英文通常不超过四十词。用户明确要求中文解释时用简短中文。每轮最多温和纠正一个用词或语法问题，再用一个简短问题继续练习；不逐句翻译，不声称能给发音评分。只输出适合朗读的纯文本，不用Markdown，不复述问题，不主动长篇讲解。用户学习单词时清楚读出单词并给一个简短例句。"
+        : "你是简洁友好的中英双语语音助手。跟随用户语言，用适合朗读的纯文本回答。默认先给结论，只说一至三个短句；中文通常不超过六十字，英文通常不超过四十词。内容较多时只给最重要的三点，并请用户继续追问。不要复述问题，不用Markdown，不主动展开。用户明确要求详细说明时仍分轮简短回答；单词学习需要清楚朗读。";
 
     /* Audio 3 uses PCM16 mono, 16 kHz input / 24 kHz output, and native input
      * transcription. max_history_turns limits context, not response length;
@@ -86,13 +96,12 @@ bool conversation_protocol_build_session_update(
         output, capacity,
         "{\"event_id\":\"%s\",\"type\":\"session.update\","
         "\"session\":{\"modalities\":[\"text\",\"audio\"],"
-        "\"voice\":\"longanqian\",\"instructions\":"
-        "\"你是简洁友好的中英双语语音助手。跟随用户语言，用适合朗读的纯文本回答。默认先给结论，只说一至三个短句；中文通常不超过六十字，英文通常不超过四十词。内容较多时只给最重要的三点，并请用户继续追问。不要复述问题，不用Markdown，不主动展开。用户明确要求详细说明时仍分轮简短回答；单词学习需要清楚朗读。\","
+        "\"voice\":\"%s\",\"instructions\":\"%s\","
         "\"input_audio_format\":\"pcm\","
         "\"output_audio_format\":\"pcm\","
         "\"max_history_turns\":5,"
         "\"turn_detection\":null}}",
-        event_id);
+        event_id, voice_name, instructions);
     return finish_message(output, capacity, result, written);
 }
 

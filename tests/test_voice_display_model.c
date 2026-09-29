@@ -73,8 +73,8 @@ static void test_targeted_navigation_footers(void)
                   "BOOT: CHAT | KEY: SETTINGS") == 0);
     assert(strcmp(display_interaction_status_footer(),
                   "BOOT: HOME | KEY: SETTINGS | HOLD KEY 2s: SYNC TIME") == 0);
-    assert(strcmp(display_interaction_chat_footer(),
-                  "BOOT: HOME | KEY: SETTINGS") == 0);
+    assert(display_interaction_format_daily_navigation(footer, sizeof(footer), "HOME"));
+    assert(strcmp(footer, "BOOT: HOME | KEY: SETTINGS") == 0);
     assert(strcmp(display_interaction_chat_next_turn_footer(),
                   "KEY: NEXT TURN | BOOT: CANCEL") == 0);
     assert(strcmp(display_interaction_settings_navigation_footer(),
@@ -106,7 +106,6 @@ static void test_targeted_navigation_footers(void)
         }
     }
     assert_footer_uses_concrete_targets(display_interaction_status_footer());
-    assert_footer_uses_concrete_targets(display_interaction_chat_footer());
     assert_footer_uses_concrete_targets(
         display_interaction_chat_next_turn_footer());
     assert_footer_uses_concrete_targets(
@@ -307,6 +306,9 @@ static void test_text_window_invalid_arguments(void)
 
 int main(void)
 {
+    assert(strcmp(voice_display_failure_footer(false, true), "PLEASE WAIT...") == 0);
+    assert(strcmp(voice_display_failure_footer(true, true), "KEY: RETRY | BOOT: BACK") == 0);
+    assert(strcmp(voice_display_failure_footer(true, false), "BOOT: BACK") == 0);
     test_mode_title();
     test_ready_prompt_names_the_chat_action();
     test_targeted_navigation_footers();

@@ -31,8 +31,12 @@ for (const [id, expected] of Object.entries({
   settings: ['section', 'timezone', 'unit', 'volume'],
   alarmForm: ['section', 'alarm_volume', 'alarm', 'alarm_hour', 'alarm_minute', 'alarm_days'],
   updatesForm: ['section', 'updates'],
-  pagesForm: ['section', 'daily_pages_mask'],
+  pagesForm: ['section', 'daily_pages_mask', 'daily_pages_order'],
   musicSettingsForm: ['section', 'music_mode'],
+  weatherForm: ['enabled', 'api_host', 'province', 'city'],
+  weatherKeyForm: ['api_key'],
+  conversationPreferencesForm: ['enabled', 'voice', 'reply_style', 'model', 'api_host'],
+  conversationForm: ['api_key'],
 })) {
   const form = html.split('<form id="' + id + '"')[1].split('</form>')[0];
   assert.deepEqual([...form.matchAll(/\bname="([^"]+)"/g)].map(match => match[1]), expected);
@@ -40,6 +44,10 @@ for (const [id, expected] of Object.entries({
 assert.match(html, /<footer>© .*target="_blank" rel="noopener noreferrer">ESP32 固件/);
 assert.match(html, /<details><summary class="section-toggle">天气/);
 assert.match(html, /<details><summary class="section-toggle">AI 对话 Beta/);
+assert.match(html, /<details id="conversationCredentials" class="advanced">/);
+assert.doesNotMatch(html, /<details id="conversationCredentials"[^>]*\sopen(?:\s|>)/);
+assert.match(html, /<details id="weatherCredentials" class="advanced">/);
+assert.doesNotMatch(html, /<details id="weatherCredentials"[^>]*\sopen(?:\s|>)/);
 assert.doesNotMatch(html, /qwen3-omni-flash-realtime/);
 assert.match(html, /Qwen Audio 3\.0 Realtime Flash（默认）/);
 assert.match(html, /保存配置不会自动连接或发起收费测试/);
@@ -54,12 +62,21 @@ assert.doesNotMatch(javascript, /localStorage|sessionStorage|navigator\.clipboar
 const serverDefinition = source.split('static esp_err_t start_web_server(void)')[1].split('static void stop_web_server')[0];
 const routeCount = [...serverDefinition.matchAll(/\.uri\s*=/g)].length;
 assert.ok(routeCount <= Number(serverDefinition.match(/max_uri_handlers\s*=\s*(\d+)/)[1]), 'all portal routes fit the server handler limit');
+for (const route of ['/api/conversation/key', '/api/conversation/preferences', '/api/conversation/clear',
+  '/api/weather/key', '/api/weather/preferences', '/api/weather/clear']) {
+  assert.ok(serverDefinition.includes('.uri = "' + route + '"'), 'registered route ' + route);
+}
+for (const uri of ['weather_preferences_uri', 'weather_api_key_uri', 'weather_clear_uri',
+  'conversation_preferences_uri', 'conversation_api_key_uri', 'conversation_clear_uri']) {
+  assert.match(serverDefinition, new RegExp('if \\(error == ESP_OK && !recovery_mode\\) \\{\\s*' +
+    'error = httpd_register_uri_handler\\(s_http_server,\\s*&' + uri + '\\);'), uri + ' excluded from recovery');
+}
 
 class Element {
   value = ''; checked = false; disabled = false; hidden = false;
   dataset = {}; children = []; selectedIndex = 0; textContent = '';
   files = []; open = false;
-  appendChild(child) { this.children.push(child); }
+  appendChild(child) { if (this.children.includes(child)) this.removeChild(child); this.children.push(child); }
   removeChild(child) { this.children.splice(this.children.indexOf(child), 1); }
   get firstChild() { return this.children[0] || null; }
   attributes = {}; controls = [];
@@ -73,27 +90,31 @@ const forms = {
   settings: {section: 'general', names: {timezone: 'timezone', unit: 'unit', volume: 'volume'}},
   alarmForm: {section: 'alarm', names: {alarmVolume: 'alarm_volume', alarm: 'alarm', alarmHour: 'alarm_hour', alarmMinute: 'alarm_minute', alarmDays: 'alarm_days'}},
   updatesForm: {section: 'updates', names: {updates: 'updates'}},
-  pagesForm: {section: 'pages', names: {dailyPagesMask: 'daily_pages_mask'}},
+  pagesForm: {section: 'pages', names: {dailyPagesMask: 'daily_pages_mask', dailyPagesOrder: 'daily_pages_order'}},
   musicSettingsForm: {section: 'music', names: {musicMode: 'music_mode'}},
-  weatherForm: {names: {weatherEnabled: 'enabled', weatherApiHost: 'api_host', weatherKey: 'api_key', weatherProvince: 'province', weatherCity: 'city'}},
+  weatherForm: {names: {weatherEnabled: 'enabled', weatherApiHost: 'api_host', weatherProvince: 'province', weatherCity: 'city'}},
+  weatherKeyForm: {names: {weatherKey: 'api_key'}},
+  conversationPreferencesForm: {names: {conversationEnabled: 'enabled', conversationVoice: 'voice', conversationReplyStyle: 'reply_style', conversationModel: 'model', conversationApiHost: 'api_host'}},
+  conversationForm: {names: {conversationKey: 'api_key'}},
 };
 for (const [id, form] of Object.entries(forms)) elements[id].controls = Object.keys(form.names).map(name => elements[name]);
 elements.alarmForm.controls.push(elements.alarmTime, elements.alarmPreview, ...days);
 const pageIds = ['pageWeather', 'pageMarket', 'pageCalendar', 'pageImage', 'pageMusic', 'pageChat'];
-elements.pagesForm.controls.push(...pageIds.map(id => elements[id]), elements.pagesSave);
+elements.pagesForm.controls.push(...pageIds.flatMap(id => [elements[id], elements[id+'Up'], elements[id+'Down']]), elements.pagesSave);
 elements.panelNetwork.hidden = elements.panelMedia.hidden = elements.panelMaintenance.hidden = true;
 elements.musicSection.open = true;
 elements.musicSleep.value = '15';
 elements.wifiForm.hidden = true;
 let state = {
   token: 'test-token', timezone: 480, unit: 'c', volume: 50, alarm_volume: 68, updates: 'stable',
-  daily_pages_mask: 63, music_mode: 'sequential',
+  daily_pages_mask: 63, daily_pages_order: [1,2,4,8,16,32], music_mode: 'sequential',
   alarm: 'off', alarm_hour: 7, alarm_minute: 30, alarm_days: 62,
   wifi_configured: true, wifi_ssid: 'Test Wi-Fi', sd_state: 'ready', image_count: 0,
   weather: {available: true, enabled: false, configured: false, key_saved: false,
     api_host: '', province_id: 0, city_id: 0},
   conversation: {available: true, service: 'aliyun_realtime', configured: false, enabled: false,
     model: 'qwen-audio-3.0-realtime-flash', api_host: 'dashscope.aliyuncs.com', shared_endpoint: true,
+    voice: 'longanqian', reply_style: 'concise',
     migration: 'none', last_result: 'not_tested', last_error: 'none', last_hint: '', completed_turns: 0},
 };
 let market = {enabled: false, ids: [0, 3, 7, 9, 11],
@@ -135,19 +156,51 @@ const context = vm.createContext({
         unauthorized = false;
         return {ok: true, text: async () => sessionToken};
       }
+      if (unauthorized) return {ok: false, status: 401, text: async () => '需要授权'};
       if (pendingPost) await pendingPost;
       if (disconnectedPost) throw new TypeError('network disconnected');
       if (path === '/api/settings' && !failPost) {
         const fields = new URLSearchParams(options.body);
-        if (fields.get('section') === 'pages') state.daily_pages_mask = Number(fields.get('daily_pages_mask'));
+        if (fields.get('section') === 'pages') {
+          state.daily_pages_mask = Number(fields.get('daily_pages_mask'));
+          state.daily_pages_order = fields.get('daily_pages_order').split(',').map(Number);
+        }
         if (fields.get('section') === 'music') state.music_mode = fields.get('music_mode');
       }
-      if (path === '/api/settings/defaults' && !failPost) { state.daily_pages_mask = 63; state.music_mode = 'sequential'; }
-      if (path === '/api/music/sleep' && !failPost) music.sleep_remaining_seconds = Number(new URLSearchParams(options.body).get('minutes')) * 60;
-      if (path === '/api/weather/config' && !failPost) {
+      if (path === '/api/settings/defaults' && !failPost) { state.daily_pages_mask = 63; state.daily_pages_order = [1,2,4,8,16,32]; state.music_mode = 'sequential'; }
+      if (path === '/api/conversation/key' && !failPost) {
         const fields = new URLSearchParams(options.body);
-        state.weather = {...state.weather, enabled: fields.get('enabled') === 'on', configured: true,
-          key_saved: true, api_host: fields.get('api_host'), province_id: Number(fields.get('province')), city_id: Number(fields.get('city'))};
+        state.conversation = {...state.conversation,
+          configured: state.conversation.configured || fields.get('api_key').length > 0};
+      }
+      if (path === '/api/conversation/preferences' && !failPost && state.conversation.configured) {
+        const fields = new URLSearchParams(options.body);
+        const host = fields.get('api_host');
+        state.conversation = {...state.conversation, enabled: fields.get('enabled') === 'on',
+          voice: fields.get('voice'), reply_style: fields.get('reply_style'),
+          model: fields.get('model'), api_host: host || 'dashscope.aliyuncs.com',
+          shared_endpoint: !host || ['dashscope.aliyuncs.com', 'dashscope-intl.aliyuncs.com'].includes(host)};
+      }
+      if (path === '/api/conversation/clear' && !failPost) {
+        state.conversation = {...state.conversation, configured: false, enabled: false,
+          model: 'qwen-audio-3.0-realtime-flash', api_host: 'dashscope.aliyuncs.com', shared_endpoint: true,
+          voice: 'longanqian', reply_style: 'concise'};
+      }
+      if (path === '/api/music/sleep' && !failPost) music.sleep_remaining_seconds = Number(new URLSearchParams(options.body).get('minutes')) * 60;
+      if (path === '/api/weather/preferences' && !failPost) {
+        const fields = new URLSearchParams(options.body);
+        state.weather = {...state.weather, enabled: fields.get('enabled') === 'on',
+          configured: state.weather.key_saved && !!fields.get('api_host') && Number(fields.get('province')) > 0 && Number(fields.get('city')) > 0,
+          api_host: fields.get('api_host'), province_id: Number(fields.get('province')), city_id: Number(fields.get('city'))};
+      }
+      if (path === '/api/weather/key' && !failPost) {
+        const fields = new URLSearchParams(options.body);
+        state.weather = {...state.weather, key_saved: state.weather.key_saved || fields.get('api_key').length > 0};
+        state.weather.configured = state.weather.key_saved && !!state.weather.api_host && state.weather.province_id > 0 && state.weather.city_id > 0;
+      }
+      if (path === '/api/weather/clear' && !failPost) {
+        state.weather = {...state.weather, enabled: false, configured: false, key_saved: false,
+          api_host: '', province_id: 0, city_id: 0};
       }
       if (path === '/api/market/config' && !failPost) {
         const fields = new URLSearchParams(options.body);
@@ -174,6 +227,7 @@ const context = vm.createContext({
       const definition = Object.entries(forms).find(([id]) => form === elements[id])?.[1];
       assert.ok(definition, 'known independent form');
       if (definition.section) this.set('section', definition.section);
+      for (const [name, value] of Object.entries(definition.fixed || {})) this.set(name, value);
       for (const [id, name] of Object.entries(definition.names)) {
         if (!elements[id].disabled) this.set(name, String(elements[id].value));
       }
@@ -200,7 +254,7 @@ assert.equal(elements.conversationLastResult.textContent, '最近对话：尚未
 assert.equal(elements.conversationMigration.hidden, false);
 assert.match(elements.conversationMigration.textContent, /API Key、Host 和开关保持不变/);
 renderConversation({migration: 'pending'});
-assert.match(elements.conversationMigration.textContent, /迁移结果尚未保存/);
+assert.match(elements.conversationMigration.textContent, /尚未保存/);
 renderConversation({last_result: 'success', last_hint: 'stale error'});
 assert.equal(elements.conversationLastResult.textContent, '最近对话：成功');
 renderConversation({last_result: 'failed', last_hint: '身份验证失败，请检查 API Key。'});
@@ -237,6 +291,7 @@ assert.equal(elements.conversationMigration.hidden, true);
 renderConversation({available: false, last_result: 'success'});
 assert.equal(elements.conversationLastResult.textContent, '最近对话：暂不可用');
 assert.equal(elements.conversationSave.disabled, true);
+assert.equal(elements.conversationPreferencesSave.disabled, true);
 renderConversation({});
 assert.equal(writes.length, aiWritesBefore, 'state display must not generate a mutation or cloud test');
 assert.equal(elements.volume.value, 50);
@@ -418,6 +473,7 @@ confirmed = true;
 await elements.musicDelete.onclick();
 assert.equal(lastPath, '/api/music/delete');
 assert.match(lastBody, /&confirm=DELETE$/);
+const originalMusicTracks = structuredClone(music.tracks);
 elements.musicFile.files = [{name: '新歌 + a.mp3', size: 9000}];
 elements.musicFile.onchange();
 assert.equal(elements.musicUpload.disabled, false);
@@ -431,11 +487,45 @@ request.onerror();
 await upload;
 assert.equal(elements.musicPlay.disabled, false, 'connection failure releases controls');
 assert.equal(elements.musicFile.files.length, 1, 'failed upload keeps chosen file');
-upload = elements.musicUpload.onclick();
-request.status = 200; request.responseText = '歌曲已写入';
-await request.onload();
-await upload;
-assert.equal(elements.musicMessage.textContent, '已上传 1 首歌曲。');
+assert.equal(elements.musicFile.disabled, true, 'current-page queue retains its File object');
+assert.match(elements.musicQueueState.textContent, /已完成 0 · 失败 0 · 待上传 0 · 待核对 1/);
+assert.equal(elements.musicReconcile.hidden, false);
+assert.equal(elements.musicRetryFailed.hidden, true, 'an uncertain write is never replayed');
+assert.equal(elements.musicContinuePending.hidden, true);
+request = null;
+failedGets.set('/api/music', '另一个操作正在进行');
+await elements.musicReconcile.onclick();
+assert.equal(request, null, 'a failed catalog read never starts an upload');
+assert.match(elements.musicQueueState.textContent, /待核对 1/);
+assert.equal(elements.musicReconcile.disabled, true);
+failedGets.delete('/api/music');
+await vm.runInContext('loadMusic()', context);
+for (const incomplete of [
+  {ready: false, scanned: true, truncated: false},
+  {ready: true, scanned: false, truncated: false},
+  {ready: true, scanned: true, truncated: true},
+]) {
+  Object.assign(music, incomplete);
+  request = null;
+  await elements.musicReconcile.onclick();
+  assert.equal(request, null, 'an incomplete catalog never starts an upload');
+  assert.match(elements.musicQueueState.textContent, /待核对 1/);
+  assert.equal(elements.musicContinuePending.hidden, true);
+  assert.equal(elements.musicReconcile.disabled, true);
+  Object.assign(music, {ready: true, scanned: true, truncated: false});
+  await vm.runInContext('loadMusic()', context);
+  assert.equal(elements.musicReconcile.disabled, false);
+}
+await elements.musicReconcile.onclick();
+assert.match(elements.musicMessage.textContent, /未找到.*现可手动重试/);
+assert.equal(elements.musicRetryFailed.hidden, false);
+let retry = elements.musicRetryFailed.onclick();
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(request.path, '/api/music/upload?name=' + encodeURIComponent('新歌 + a.mp3'));
+request.status = 200; request.responseText = '歌曲已写入'; request.onload();
+await retry;
+assert.match(elements.musicMessage.textContent, /本次队列已完成 1 首/);
+assert.equal(elements.musicQueueState.hidden, true);
 assert.equal(elements.conversationKey.value, 'edited-while-other-form-saves');
 request = null;
 elements.musicFile.files = [{name: 'first.mp3', size: 9000}, {name: 'second.wav', size: 9000}, {name: 'third.mp3', size: 9000}];
@@ -448,8 +538,85 @@ assert.notEqual(request, firstRequest, 'next file starts only after first finish
 assert.match(request.path, /second\.wav$/);
 request.status = 409; request.responseText = '写入失败'; request.onload();
 await upload;
-assert.match(elements.musicMessage.textContent, /已上传 1\/3 首，队列已停止/);
+assert.match(elements.musicQueueState.textContent, /已完成 1 · 失败 1 · 待上传 1/);
+assert.equal(elements.musicRetryFailed.hidden, false);
+assert.equal(elements.musicContinuePending.hidden, false);
 assert.match(request.path, /second\.wav$/, 'third file was not sent');
+let continuation = elements.musicContinuePending.onclick();
+await new Promise(resolve => setImmediate(resolve));
+assert.match(request.path, /third\.mp3$/);
+request.status = 200; request.onload();
+await continuation;
+assert.match(elements.musicQueueState.textContent, /已完成 2 · 失败 1 · 待上传 0/);
+assert.equal(elements.musicRetryFailed.hidden, false, 'continuing pending files retains failures');
+music.tracks.push({name: 'second.wav', bytes: 9000});
+request = null;
+retry = elements.musicRetryFailed.onclick();
+await retry;
+assert.equal(request, null, 'a failed item matching a catalog entry is never replayed or marked complete');
+assert.match(elements.musicQueueState.textContent, /已完成 2 · 失败 0 · 待上传 0 · 待核对 1/);
+assert.equal(elements.musicSkipUncertain.hidden, false);
+elements.musicSkipUncertain.onclick();
+assert.match(elements.musicQueueState.textContent, /已完成 2 · 失败 1 · 待上传 0/);
+elements.musicFinishQueue.onclick();
+assert.equal(elements.musicQueueState.hidden, true);
+
+// A dropped response may have committed, but an equal name and size still
+// cannot prove which request created the catalog entry.
+music.tracks = structuredClone(originalMusicTracks);
+request = null;
+elements.musicFile.files = [{name: 'uncertain.mp3', size: 9000}, {name: 'after.wav', size: 9100}];
+upload = elements.musicUpload.onclick();
+request.onerror();
+await upload;
+music.tracks.push({name: 'uncertain.mp3', bytes: 9000});
+request = null;
+await elements.musicReconcile.onclick();
+assert.equal(request, null, 'catalog reconciliation performs no upload');
+assert.match(elements.musicQueueState.textContent, /已完成 0 · 失败 0 · 待上传 1 · 待核对 1/);
+assert.equal(elements.musicContinuePending.hidden, true);
+assert.equal(elements.musicSkipUncertain.hidden, false);
+elements.musicSkipUncertain.onclick();
+assert.match(elements.musicQueueState.textContent, /已完成 0 · 失败 1 · 待上传 1/);
+continuation = elements.musicContinuePending.onclick();
+await new Promise(resolve => setImmediate(resolve));
+assert.match(request.path, /after\.wav$/);
+request.status = 200; request.onload();
+await continuation;
+assert.match(elements.musicQueueState.textContent, /已完成 1 · 失败 1 · 待上传 0/);
+elements.musicFinishQueue.onclick();
+assert.equal(elements.musicQueueState.hidden, true);
+
+// A never-sent pending item with an equal-size catalog entry is also a
+// conflict, not a completed upload.
+music.tracks = structuredClone(originalMusicTracks);
+request = null;
+elements.musicFile.files = [{name: 'blocked.mp3', size: 9000}, {name: 'pending.wav', size: 9200}];
+upload = elements.musicUpload.onclick();
+request.status = 409; request.responseText = '写入失败'; request.onload();
+await upload;
+music.tracks.push({name: 'pending.wav', bytes: 9200});
+request = null;
+await elements.musicContinuePending.onclick();
+assert.equal(request, null, 'a pending item matching a catalog entry is never sent or marked complete');
+assert.match(elements.musicQueueState.textContent, /已完成 0 · 失败 1 · 待上传 0 · 待核对 1/);
+assert.equal(elements.musicSkipUncertain.hidden, false);
+assert.equal(elements.musicContinuePending.hidden, true);
+elements.musicSkipUncertain.onclick();
+assert.match(elements.musicQueueState.textContent, /已完成 0 · 失败 2 · 待上传 0/);
+assert.equal(elements.musicFinishQueue.hidden, false);
+elements.musicFinishQueue.onclick();
+assert.equal(elements.musicQueueState.hidden, true);
+music.tracks = structuredClone(originalMusicTracks);
+music.tracks = Array.from({length: 31}, (_, index) => ({name: `catalog-${index}.mp3`, bytes: 9000}));
+await vm.runInContext('loadMusic()', context);
+request = null;
+elements.musicFile.files = [{name: 'slot-a.mp3', size: 9000}, {name: 'slot-b.mp3', size: 9000}];
+await elements.musicUpload.onclick();
+assert.equal(request, null, 'catalog plus selected files cannot exceed the 32-song limit');
+assert.match(elements.musicMessage.textContent, /不能超过 32 首/);
+music.tracks = structuredClone(originalMusicTracks);
+await vm.runInContext('loadMusic()', context);
 request = null;
 elements.musicFile.files = [{name: 'a.mp3', size: 9000}, {name: 'A.MP3', size: 9000}];
 await elements.musicUpload.onclick();
@@ -482,8 +649,13 @@ assert.equal(elements.pairCode.value, '');
 assert.equal(elements.pairPanel.hidden, true);
 assert.equal(elements.lanPanel.hidden, false);
 assert.equal(elements.wifiLabel.textContent, '当前连接');
-for (const id of ['wifiEdit','forgetWifi','weatherSave','conversationSave','defaults','file','upload','starterImages']) {
+for (const id of ['wifiEdit','forgetWifi','weatherKeySave','conversationSave','defaults','file','upload','starterImages']) {
   assert.equal(elements[id].disabled, true, id + ' requires hotspot');
+}
+assert.equal(elements.conversationPreferencesSave.disabled, true, 'preferences remain unavailable before an API Key exists');
+assert.match(elements.conversationPreferencesHint.textContent, /首次使用请切换到设备热点.*API Key/);
+for (const id of ['weatherSave','weatherClear','conversationClear','weatherApiHost','weatherProvince','conversationApiHost','conversationModel']) {
+  assert.equal(elements[id].disabled, false, id + ' is available on authenticated LAN');
 }
 assert.equal(elements.marketSave.disabled, false, 'preset-only market configuration available on authenticated LAN');
 await elements.marketForm.onsubmit({preventDefault() {}});
@@ -496,6 +668,9 @@ await vm.runInContext('userActivity()', context);
 assert.equal(lastPath, 'unchanged', 'user activity is throttled; polling never renews');
 lastPath = beforeBlockedPost;
 await assert.rejects(vm.runInContext("post('/api/conversation/config','api_key=never-send-this')", context), /热点/);
+await assert.rejects(vm.runInContext("post('/api/conversation/key','api_key=never-send-this')", context), /热点/);
+await assert.rejects(vm.runInContext("post('/api/weather/key','api_key=never-send-this')", context), /热点/);
+await assert.rejects(vm.runInContext("post('/api/weather/config','api_key=never-send-this')", context), /热点/);
 assert.equal(lastPath, beforeBlockedPost, 'blocked credentials never leave the browser');
 for (const item of getRequests.slice(requestsBeforePair)) assert.equal(item.options.headers['X-RLCD-Token'], sessionToken);
 confirmed = false;
@@ -535,7 +710,7 @@ for (let mask = 0; mask <= 63; mask++) {
   pageIds.forEach((id, index) => { elements[id].checked = (mask & (1 << index)) !== 0; });
   await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
   assert.equal(lastPath, '/api/settings');
-  assert.equal(lastBody, 'section=pages&daily_pages_mask=' + mask);
+  assert.equal(lastBody, 'section=pages&daily_pages_mask=' + mask + '&daily_pages_order=1%2C2%2C4%2C8%2C16%2C32');
   assert.equal(state.daily_pages_mask, mask);
   assert.equal(elements.volume.value, 43);
   assert.equal(elements.alarmVolume.value, 31);
@@ -581,6 +756,22 @@ elements.weatherKey.value = 'test-not-a-real-key';
 elements.weatherProvince.value = '1';
 elements.weatherCity.value = '1';
 vm.runInContext('weatherControls()', context);
+const beforeMissingWeatherKey = writes.length;
+await elements.weatherForm.onsubmit({preventDefault() {}, target: elements.weatherForm});
+assert.equal(writes.length, beforeMissingWeatherKey, 'unsaved key draft does not enable weather');
+assert.match(elements.weatherMessage.textContent, /保存 API Key/);
+const beforeWeatherKeyGets = getRequests.length;
+await elements.weatherKeyForm.onsubmit({preventDefault() {}, target: elements.weatherKeyForm});
+assert.equal(lastPath, '/api/weather/key');
+assert.deepEqual([...new URLSearchParams(lastBody)], [['api_key', 'test-not-a-real-key']]);
+assert.equal(state.weather.enabled, false, 'first key save never enables weather');
+assert.equal(elements.weatherEnabled.value, 'on');
+assert.equal(elements.weatherApiHost.value, 'test.qweatherapi.com');
+assert.equal(elements.weatherProvince.value, '1');
+assert.equal(elements.weatherCity.value, '1');
+assert.equal(elements.weatherKey.value, '');
+assert.ok(getRequests.slice(beforeWeatherKeyGets).every(({path}) => path === '/api/state'), 'key reload does not fetch or reset region choices');
+elements.weatherKey.value = 'unsaved-weather-rotation';
 elements.pageMusic.checked = true;
 elements.conversationKey.value = 'keep-ai-draft';
 elements.wifiForm.hidden = false;
@@ -596,11 +787,12 @@ assert.equal(elements.volume.disabled, false);
 finishWeatherPost();
 await weatherSubmission;
 pendingPost = null;
-assert.equal(lastPath, '/api/weather/config');
+assert.equal(lastPath, '/api/weather/preferences');
 assert.equal(new URLSearchParams(lastBody).get('enabled'), 'on');
+assert.deepEqual([...new URLSearchParams(lastBody).keys()], ['enabled', 'api_host', 'province', 'city']);
 assert.equal(elements.weatherSave.disabled, false, 'enabled weather save does not leave a closing/busy page');
 assert.equal(elements.weatherClear.disabled, false);
-assert.equal(elements.weatherKey.value, '');
+assert.equal(elements.weatherKey.value, 'unsaved-weather-rotation', 'preferences preserve key draft');
 assert.equal(elements.conversationKey.value, 'keep-ai-draft');
 assert.equal(elements.volume.value, 43);
 assert.equal(elements.pageMusic.checked, true);
@@ -779,6 +971,433 @@ assert.equal(elements.musicMode.value, state.music_mode, 'explicit retry shows a
 assert.equal(elements.musicSettingsMessage.textContent, '', 'successful verification clears stale uncertain message');
 assert.equal(elements.loadNotice.hidden, true);
 
+// Ordering keeps the six stable IDs, preserves hidden pages and independent
+// drafts, and changes only after explicit save. Invalid server data blocks it.
+state.daily_pages_order = [1,2,4,8,16,32];
+await vm.runInContext("load('pages')", context);
+assert.equal(elements.pageWeatherUp.disabled, true);
+assert.equal(elements.pageChatDown.disabled, true);
+elements.pageChatUp.onclick();
+const orderedBits = () => Array.from(vm.runInContext('dailyPageOrder', context));
+assert.deepEqual(orderedBits(), [1,2,4,8,32,16]);
+assert.deepEqual(state.daily_pages_order, [1,2,4,8,16,32]);
+elements.pageChat.checked = false;
+await vm.runInContext("load('settings')", context);
+elements.navNetwork.onclick(); elements.navGeneral.onclick();
+assert.deepEqual(orderedBits(), [1,2,4,8,32,16]);
+assert.equal(elements.pageChat.checked, false);
+await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
+assert.deepEqual(state.daily_pages_order, [1,2,4,8,32,16]);
+assert.equal(elements.pageOrder.children[4], elements.pageChatRow);
+failPost = true;
+elements.pageChatUp.onclick();
+await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
+assert.deepEqual(orderedBits(), [1,2,4,32,8,16], 'failed save retains ordered draft');
+assert.deepEqual(state.daily_pages_order, [1,2,4,8,32,16]);
+failPost = false;
+for (const invalid of [undefined, [], [1,1,4,8,16,32], [1,2,4,8,16,64], ['1',2,4,8,16,32]]) {
+  state.daily_pages_order = invalid;
+  await vm.runInContext("load('pages')", context);
+  assert.equal(elements.pagesSave.disabled, true);
+  const previous = orderedBits();
+  elements.pageChatUp.onclick();
+  assert.deepEqual(orderedBits(), previous);
+}
+state.daily_pages_order = [1,2,4,8,16,32];
+await vm.runInContext("load('pages')", context);
+
+// Daily AI preferences and service credentials are separate forms and trust
+// boundaries. Credentials remain AP-only; configured preferences also work on
+// authenticated household Wi-Fi. Neither scoped reload overwrites the other
+// form's unsaved draft.
+state.local_network = false;
+state.conversation = {...state.conversation, configured: false, enabled: false,
+  voice: 'longanqian', reply_style: 'concise', model: 'qwen-audio-3.0-realtime-flash',
+  api_host: 'dashscope.aliyuncs.com', shared_endpoint: true};
+await vm.runInContext("load('conversation')", context);
+assert.equal(elements.conversationCredentials.open, true, 'missing credentials expand their otherwise-collapsed panel');
+assert.equal(elements.conversationPreferencesSave.disabled, true);
+assert.match(elements.conversationPreferencesHint.textContent, /下方保存 API Key/);
+assert.equal(elements.conversationSave.disabled, false);
+for (const id of ['conversationEnabled', 'conversationVoice', 'conversationReplyStyle', 'conversationModel', 'conversationApiHost']) {
+  assert.equal(elements[id].disabled, false, 'preferences may be drafted before a key is saved');
+}
+const beforeUnconfiguredPreference = writes.length;
+await elements.conversationPreferencesForm.onsubmit({preventDefault() {}, target: elements.conversationPreferencesForm});
+assert.equal(writes.length, beforeUnconfiguredPreference, 'preferences cannot save before an API Key exists');
+
+elements.conversationEnabled.value = 'on';
+elements.conversationVoice.value = 'longanlingxi';
+elements.conversationReplyStyle.value = 'english_practice';
+elements.conversationKey.value = 'test-credential-not-real';
+elements.conversationApiHost.value = 'draft.cn-beijing.maas.aliyuncs.com';
+await vm.runInContext("load('conversationPreferences')", context);
+assert.equal(elements.conversationKey.value, 'test-credential-not-real', 'preference reload preserves credential secret draft');
+assert.equal(elements.conversationApiHost.value, '', 'preference reload refreshes Host as part of the same form');
+elements.conversationEnabled.value = 'on';
+elements.conversationVoice.value = 'longanlingxi';
+elements.conversationReplyStyle.value = 'english_practice';
+elements.conversationApiHost.value = 'draft.ap-southeast-1.maas.aliyuncs.com';
+elements.conversationModel.value = 'qwen-audio-3.0-realtime-flash';
+elements.volume.value = 37;
+const aiMutationsStart = writes.length;
+await elements.conversationForm.onsubmit({preventDefault() {}, target: elements.conversationForm});
+assert.equal(lastPath, '/api/conversation/key');
+let aiFields = new URLSearchParams(lastBody);
+assert.deepEqual([...aiFields.keys()], ['api_key']);
+assert.equal(aiFields.get('service'), null);
+assert.equal(aiFields.get('api_key'), 'test-credential-not-real');
+assert.equal(aiFields.get('enabled'), null);
+assert.equal(aiFields.get('voice'), null);
+assert.equal(aiFields.get('reply_style'), null);
+assert.equal(aiFields.get('api_host'), null);
+assert.equal(aiFields.get('model'), null);
+assert.equal(state.conversation.configured, true);
+assert.equal(state.conversation.enabled, false, 'credential save does not overwrite daily preferences');
+assert.equal(state.conversation.voice, 'longanqian');
+assert.equal(elements.conversationEnabled.value, 'on', 'credential reload preserves preference draft');
+assert.equal(elements.conversationVoice.value, 'longanlingxi');
+assert.equal(elements.conversationReplyStyle.value, 'english_practice');
+assert.equal(elements.conversationApiHost.value, 'draft.ap-southeast-1.maas.aliyuncs.com');
+assert.equal(elements.conversationModel.value, 'qwen-audio-3.0-realtime-flash');
+assert.equal(state.conversation.api_host, 'dashscope.aliyuncs.com');
+assert.equal(elements.conversationKey.value, '');
+assert.equal(elements.volume.value, 37);
+
+elements.conversationKey.value = 'unsaved-credential-secret';
+elements.conversationApiHost.value = 'selected.cn-beijing.maas.aliyuncs.com';
+await elements.conversationPreferencesForm.onsubmit({preventDefault() {}, target: elements.conversationPreferencesForm});
+assert.equal(lastPath, '/api/conversation/preferences');
+aiFields = new URLSearchParams(lastBody);
+assert.deepEqual([...aiFields.keys()], ['enabled', 'voice', 'reply_style', 'model', 'api_host']);
+assert.equal(aiFields.get('enabled'), 'on');
+assert.equal(aiFields.get('voice'), 'longanlingxi');
+assert.equal(aiFields.get('reply_style'), 'english_practice');
+assert.equal(aiFields.get('service'), null);
+assert.equal(aiFields.get('api_key'), null);
+assert.equal(aiFields.get('model'), 'qwen-audio-3.0-realtime-flash');
+assert.equal(aiFields.get('api_host'), 'selected.cn-beijing.maas.aliyuncs.com');
+assert.equal(state.conversation.enabled, true);
+assert.equal(state.conversation.voice, 'longanlingxi');
+assert.equal(state.conversation.reply_style, 'english_practice');
+assert.equal(elements.conversationKey.value, 'unsaved-credential-secret', 'preference save preserves credential secret draft');
+assert.equal(elements.conversationApiHost.value, 'selected.cn-beijing.maas.aliyuncs.com');
+assert.equal(state.conversation.api_host, 'selected.cn-beijing.maas.aliyuncs.com');
+assert.ok(writes.slice(aiMutationsStart).every(item =>
+  ['/api/conversation/key', '/api/conversation/preferences'].includes(item.path)),
+  'saving local AI settings never starts a cloud conversation or paid test');
+
+// Definite failures retain the edited form and the other form's draft. Secret
+// input is deliberately cleared after a credential submission attempt.
+elements.conversationEnabled.value = 'off';
+elements.conversationVoice.value = 'longanxiaoxin';
+elements.conversationReplyStyle.value = 'concise';
+const savedConversation = structuredClone(state.conversation);
+failPost = true;
+await elements.conversationPreferencesForm.onsubmit({preventDefault() {}, target: elements.conversationPreferencesForm});
+failPost = false;
+assert.deepEqual(state.conversation, savedConversation);
+assert.equal(elements.conversationEnabled.value, 'off');
+assert.equal(elements.conversationVoice.value, 'longanxiaoxin');
+assert.equal(elements.conversationPreferencesSave.disabled, false);
+assert.equal(elements.conversationPreferencesMessage.textContent, '保存失败');
+assert.equal(elements.conversationKey.value, 'unsaved-credential-secret');
+
+elements.conversationKey.value = 'failed-secret';
+elements.conversationApiHost.value = 'failed.credentials.example';
+failPost = true;
+await elements.conversationForm.onsubmit({preventDefault() {}, target: elements.conversationForm});
+failPost = false;
+assert.deepEqual(state.conversation, savedConversation);
+assert.equal(elements.conversationKey.value, '', 'credential attempt clears the secret field even on failure');
+assert.equal(elements.conversationApiHost.value, 'failed.credentials.example');
+assert.equal(elements.conversationVoice.value, 'longanxiaoxin');
+assert.equal(elements.conversationMessage.textContent, '保存失败');
+assert.equal(elements.conversationSave.disabled, false);
+
+renderConversation({voice: 'unknown'});
+assert.equal(elements.conversationPreferencesSave.disabled, true);
+assert.equal(elements.conversationSave.disabled, true);
+renderConversation({reply_style: 'unknown'});
+assert.equal(elements.conversationPreferencesSave.disabled, true);
+assert.equal(elements.conversationSave.disabled, true);
+await vm.runInContext("load('conversation')", context);
+
+state.local_network = true;
+await vm.runInContext("load('session')", context);
+assert.equal(elements.conversationPreferencesSave.disabled, false, 'configured daily preferences are available on authenticated LAN');
+assert.equal(elements.conversationSave.disabled, true, 'credentials stay AP-only');
+assert.equal(elements.conversationClear.disabled, false, 'confirmed clear is available on authenticated LAN');
+assert.equal(elements.conversationCredentialsHint.hidden, false);
+assert.match(html, /conversationCredentialsHint[^>]*[^<]*<\/p>/);
+assert.match(html, /填写或更换 API Key，请使用页面顶部的“切换到设备热点”。其他对话设置可直接保存/);
+elements.conversationKey.value = 'never-send-over-lan';
+const beforeLanCredentialSubmit = writes.length;
+await elements.conversationForm.onsubmit({preventDefault() {}, target: elements.conversationForm});
+assert.equal(writes.length, beforeLanCredentialSubmit, 'credential form guard sends nothing over LAN');
+assert.equal(elements.conversationKey.value, 'never-send-over-lan');
+elements.conversationEnabled.value = 'off';
+elements.conversationVoice.value = 'longanlufeng';
+elements.conversationReplyStyle.value = 'concise';
+elements.conversationApiHost.value = 'dashscope-intl.aliyuncs.com';
+await elements.conversationPreferencesForm.onsubmit({preventDefault() {}, target: elements.conversationPreferencesForm});
+assert.equal(lastPath, '/api/conversation/preferences');
+assert.equal(state.conversation.enabled, false);
+assert.equal(state.conversation.voice, 'longanlufeng');
+assert.equal(state.conversation.api_host, 'dashscope-intl.aliyuncs.com');
+assert.equal(elements.conversationKey.value, 'never-send-over-lan');
+const beforeLanClear = writes.length;
+confirmed = false;
+await elements.conversationClear.onclick();
+assert.equal(writes.length, beforeLanClear, 'cancelled confirmation never clears over LAN');
+assert.match(lastConfirmation, /未保存的对话设置也会清空/);
+assert.equal(state.conversation.configured, true);
+confirmed = true;
+
+// A 401 never mutates saved preferences or silently replays the request. Pairing
+// again restores controls while retaining the unsaved preference draft.
+elements.conversationVoice.value = 'longanlingxin';
+const beforeUnauthorizedState = structuredClone(state.conversation);
+const preferencesBeforeUnauthorized = writes.filter(item => item.path === '/api/conversation/preferences').length;
+unauthorized = true;
+await elements.conversationPreferencesForm.onsubmit({preventDefault() {}, target: elements.conversationPreferencesForm});
+assert.deepEqual(state.conversation, beforeUnauthorizedState);
+assert.equal(writes.filter(item => item.path === '/api/conversation/preferences').length, preferencesBeforeUnauthorized + 1);
+assert.equal(elements.pairPanel.hidden, false);
+assert.match(elements.conversationPreferencesMessage.textContent, /重新授权/);
+assert.equal(elements.conversationVoice.value, 'longanlingxin');
+assert.equal(elements.conversationPreferencesSave.disabled, true);
+elements.pairCode.value = 'abc12345';
+await elements.pairForm.onsubmit({preventDefault() {}});
+assert.equal(writes.filter(item => item.path === '/api/conversation/preferences').length, preferencesBeforeUnauthorized + 1,
+  'pairing retries only state reads and never replays the rejected preference write');
+assert.equal(elements.conversationPreferencesSave.disabled, false);
+assert.equal(elements.conversationVoice.value, 'longanlingxin');
+state.local_network = false;
+await vm.runInContext("load('session')", context);
+assert.equal(elements.conversationSave.disabled, false);
+assert.equal(elements.conversationCredentialsHint.hidden, true);
+
+state.local_network = true;
+await vm.runInContext("load('session')", context);
+confirmed = true;
+elements.conversationApiHost.value = 'discarded.cn-beijing.maas.aliyuncs.com';
+elements.conversationKey.value = 'discarded-key-draft';
+const beforeFailedConversationClear = structuredClone(state.conversation);
+failPost = true;
+await elements.conversationClear.onclick();
+failPost = false;
+assert.deepEqual(state.conversation, beforeFailedConversationClear);
+assert.equal(elements.conversationApiHost.value, 'discarded.cn-beijing.maas.aliyuncs.com');
+assert.equal(elements.conversationKey.value, 'discarded-key-draft');
+assert.equal(elements.conversationMessage.textContent, '保存失败');
+await elements.conversationClear.onclick();
+assert.equal(lastPath, '/api/conversation/clear');
+assert.equal(lastBody, 'confirm=CLEAR_CONVERSATION');
+assert.equal(state.conversation.configured, false);
+assert.equal(elements.conversationPreferencesSave.disabled, true);
+assert.equal(elements.conversationEnabled.value, 'off');
+assert.equal(elements.conversationVoice.value, 'longanqian');
+assert.equal(elements.conversationReplyStyle.value, 'concise');
+assert.equal(elements.conversationApiHost.value, '');
+assert.equal(elements.conversationKey.value, '');
+assert.equal(elements.conversationModel.value, 'qwen-audio-3.0-realtime-flash');
+assert.equal(elements.conversationCredentials.open, true);
+state.local_network = false;
+await vm.runInContext("load('session')", context);
+
+// Weather follows the same split boundary: ordinary settings and confirmed
+// clear work on LAN; only key entry requires the AP. Each reload owns only its
+// form, and credentials do not depend on the province/city directory loading.
+state.weather = {...state.weather, enabled: false, configured: true, key_saved: true,
+  api_host: 'saved.qweatherapi.com', province_id: 1, city_id: 1};
+await vm.runInContext("load('weather')", context);
+elements.weatherKey.value = 'weather-secret-draft';
+elements.weatherApiHost.value = 'draft.qweatherapi.com';
+elements.weatherProvince.value = '2';
+elements.weatherCity.value = '3';
+elements.weatherEnabled.value = 'on';
+const keyReloadGets = getRequests.length;
+await vm.runInContext("load('weatherKey')", context);
+assert.equal(elements.weatherKey.value, '');
+assert.equal(elements.weatherApiHost.value, 'draft.qweatherapi.com');
+assert.equal(elements.weatherProvince.value, '2');
+assert.equal(elements.weatherCity.value, '3');
+assert.equal(elements.weatherEnabled.value, 'on');
+assert.ok(getRequests.slice(keyReloadGets).every(item => item.path === '/api/state'));
+elements.weatherKey.value = 'keep-key-on-preference-read';
+await vm.runInContext("load('weatherPreferences')", context);
+assert.equal(elements.weatherApiHost.value, 'saved.qweatherapi.com');
+assert.equal(elements.weatherKey.value, 'keep-key-on-preference-read');
+
+// Definite key-save failures clear the sensitive input, but never discard
+// independently edited Host, location or on/off selections.
+elements.weatherApiHost.value = 'draft.qweatherapi.com';
+elements.weatherProvince.value = '2';
+elements.weatherCity.value = '3';
+elements.weatherEnabled.value = 'on';
+const weatherBeforeKeyFailure = structuredClone(state.weather);
+failPost = true;
+await elements.weatherKeyForm.onsubmit({preventDefault() {}, target: elements.weatherKeyForm});
+failPost = false;
+assert.equal(lastPath, '/api/weather/key');
+assert.equal(elements.weatherKey.value, '');
+assert.equal(elements.weatherApiHost.value, 'draft.qweatherapi.com');
+assert.equal(elements.weatherProvince.value, '2');
+assert.equal(elements.weatherCity.value, '3');
+assert.equal(elements.weatherEnabled.value, 'on');
+assert.equal(elements.weatherKeySave.disabled, false);
+assert.equal(elements.weatherKeyMessage.textContent, '保存失败');
+assert.deepEqual(state.weather, weatherBeforeKeyFailure);
+elements.weatherKey.value = 'weather-key-rotation';
+const beforeRotatedWeatherKeyGets = getRequests.length;
+await elements.weatherKeyForm.onsubmit({preventDefault() {}, target: elements.weatherKeyForm});
+assert.deepEqual([...new URLSearchParams(lastBody)], [['api_key', 'weather-key-rotation']]);
+assert.deepEqual(state.weather, weatherBeforeKeyFailure, 'key replacement preserves weather preferences');
+assert.ok(getRequests.slice(beforeRotatedWeatherKeyGets).every(item => item.path === '/api/state'));
+assert.equal(elements.weatherApiHost.value, 'draft.qweatherapi.com');
+assert.equal(elements.weatherProvince.value, '2');
+assert.equal(elements.weatherCity.value, '3');
+
+state.local_network = true;
+await vm.runInContext("load('session')", context);
+for (const id of ['weatherEnabled', 'weatherApiHost', 'weatherProvince', 'weatherCity', 'weatherSave', 'weatherClear']) {
+  assert.equal(elements[id].disabled, false, id + ' is editable on LAN');
+}
+assert.equal(elements.weatherKey.disabled, true);
+assert.equal(elements.weatherKeySave.disabled, true);
+assert.equal(elements.weatherKeyHint.hidden, false);
+elements.weatherKey.value = 'never-send-weather-key-over-lan';
+const beforeLanWeatherKey = writes.length;
+await elements.weatherKeyForm.onsubmit({preventDefault() {}, target: elements.weatherKeyForm});
+assert.equal(writes.length, beforeLanWeatherKey);
+assert.equal(elements.weatherKey.value, 'never-send-weather-key-over-lan');
+elements.weatherApiHost.value = 'lan.qweatherapi.com';
+elements.weatherProvince.value = '1';
+elements.weatherCity.value = '1';
+confirmed = false;
+await elements.weatherForm.onsubmit({preventDefault() {}, target: elements.weatherForm});
+assert.equal(writes.length, beforeLanWeatherKey, 'initial enable requires consent');
+confirmed = true;
+await elements.weatherForm.onsubmit({preventDefault() {}, target: elements.weatherForm});
+assert.equal(lastPath, '/api/weather/preferences');
+assert.deepEqual([...new URLSearchParams(lastBody).keys()], ['enabled', 'api_host', 'province', 'city']);
+assert.equal(state.weather.enabled, true);
+assert.equal(state.weather.api_host, 'lan.qweatherapi.com');
+assert.equal(elements.weatherKey.value, 'never-send-weather-key-over-lan');
+const savedLanWeather = structuredClone(state.weather);
+elements.weatherApiHost.value = 'failed.qweatherapi.com';
+failPost = true;
+await elements.weatherForm.onsubmit({preventDefault() {}, target: elements.weatherForm});
+failPost = false;
+assert.deepEqual(state.weather, savedLanWeather);
+assert.equal(elements.weatherApiHost.value, 'failed.qweatherapi.com');
+assert.equal(elements.weatherMessage.textContent, '保存失败');
+assert.equal(elements.weatherSave.disabled, false);
+
+// An expired token blocks mutation. Authorizing again only reads session
+// status; it must not replay weather writes or replace the pending draft.
+unauthorized = true;
+const weatherWritesBefore401 = writes.filter(item => item.path === '/api/weather/preferences').length;
+await elements.weatherForm.onsubmit({preventDefault() {}, target: elements.weatherForm});
+assert.deepEqual(state.weather, savedLanWeather);
+assert.equal(writes.filter(item => item.path === '/api/weather/preferences').length, weatherWritesBefore401 + 1);
+assert.match(elements.weatherMessage.textContent, /重新授权/);
+assert.equal(elements.weatherSave.disabled, true);
+elements.pairCode.value = 'abc12345';
+await elements.pairForm.onsubmit({preventDefault() {}});
+assert.equal(writes.filter(item => item.path === '/api/weather/preferences').length, weatherWritesBefore401 + 1);
+assert.equal(elements.weatherApiHost.value, 'failed.qweatherapi.com');
+assert.equal(elements.weatherKey.value, 'never-send-weather-key-over-lan');
+assert.equal(elements.weatherSave.disabled, false);
+
+const beforeCancelledWeatherClear = writes.length;
+confirmed = false;
+await elements.weatherClear.onclick();
+assert.equal(writes.length, beforeCancelledWeatherClear);
+assert.match(lastConfirmation, /未保存的天气设置也会清空/);
+assert.deepEqual(state.weather, savedLanWeather);
+confirmed = true;
+failPost = true;
+await elements.weatherClear.onclick();
+failPost = false;
+assert.deepEqual(state.weather, savedLanWeather);
+assert.equal(elements.weatherApiHost.value, 'failed.qweatherapi.com');
+assert.equal(elements.weatherKey.value, 'never-send-weather-key-over-lan');
+await elements.weatherClear.onclick();
+assert.equal(lastPath, '/api/weather/clear');
+assert.equal(lastBody, 'confirm=CLEAR_WEATHER');
+assert.equal(state.weather.key_saved, false);
+assert.equal(state.weather.enabled, false);
+assert.equal(elements.weatherEnabled.value, 'off');
+assert.equal(elements.weatherApiHost.value, '');
+assert.equal(elements.weatherProvince.value, '');
+assert.equal(elements.weatherCity.value, '');
+assert.equal(elements.weatherKey.value, '');
+assert.equal(elements.weatherCredentials.open, true);
+assert.equal(elements.weatherKeySave.disabled, true);
+
+// Disabled weather may save partial non-secret setup even before the key is
+// provisioned. Enabling it still checks the separately saved key, not a draft.
+elements.weatherApiHost.value = 'partial.qweatherapi.com';
+await elements.weatherForm.onsubmit({preventDefault() {}, target: elements.weatherForm});
+assert.equal(lastPath, '/api/weather/preferences');
+assert.equal(state.weather.enabled, false);
+assert.equal(state.weather.key_saved, false);
+assert.equal(state.weather.api_host, 'partial.qweatherapi.com');
+assert.equal(new URLSearchParams(lastBody).get('province'), '0');
+assert.equal(new URLSearchParams(lastBody).get('city'), '0');
+elements.weatherEnabled.value = 'on';
+elements.weatherProvince.value = '1';
+elements.weatherCity.value = '1';
+const beforeUnkeyedEnable = writes.length;
+await elements.weatherForm.onsubmit({preventDefault() {}, target: elements.weatherForm});
+assert.equal(writes.length, beforeUnkeyedEnable);
+assert.match(elements.weatherMessage.textContent, /先连接设备热点.*保存 API Key/);
+state.local_network = false;
+await vm.runInContext("load('session')", context);
+
+// Failed province/city reads must not leave half-loaded settings submittable.
+// Saving or re-reading only the API Key cannot bypass the settings-ready gate.
+for (const failedRegionPath of ['/api/weather/regions', '/api/weather/regions?province=1']) {
+  state.weather.province_id = 1;
+  state.weather.city_id = 1;
+  failedGets.set(failedRegionPath, '地区列表读取失败');
+  elements.weatherKey.value = 'keep-key-on-region-failure';
+  await vm.runInContext("load('weatherPreferences')", context);
+  assert.equal(elements.weatherSave.disabled, true);
+  assert.equal(elements.weatherKeySave.disabled, false, 'directory failure does not prevent provisioning the key');
+  assert.equal(elements.weatherKey.value, 'keep-key-on-region-failure');
+  const beforeIncompleteWeatherSave = writes.length;
+  await elements.weatherForm.onsubmit({preventDefault() {}, target: elements.weatherForm});
+  assert.equal(writes.length, beforeIncompleteWeatherSave);
+  const beforeKeyWhileRegionsFailGets = getRequests.length;
+  await elements.weatherKeyForm.onsubmit({preventDefault() {}, target: elements.weatherKeyForm});
+  assert.equal(lastPath, '/api/weather/key');
+  assert.equal(elements.weatherSave.disabled, true, 'key save/reload cannot unlock incomplete preferences');
+  assert.ok(getRequests.slice(beforeKeyWhileRegionsFailGets).every(item => item.path === '/api/state'));
+  elements.weatherKey.value = 'retain-after-region-retry';
+  failedGets.delete(failedRegionPath);
+  const beforeRegionRetryWrites = writes.length;
+  await elements.retryLoads.onclick();
+  assert.equal(writes.length, beforeRegionRetryWrites, 'retry only fetches the failed directory/settings');
+  assert.equal(elements.weatherSave.disabled, false);
+  assert.equal(elements.weatherKey.value, 'retain-after-region-retry');
+}
+elements.weatherApiHost.value = 'keep-city-retry.qweatherapi.com';
+elements.weatherProvince.value = '1';
+failedGets.set('/api/weather/regions?province=1', '城市列表读取失败');
+await elements.weatherProvince.onchange();
+assert.equal(elements.weatherSave.disabled, true);
+assert.equal(elements.weatherKeySave.disabled, false);
+await vm.runInContext("load('weatherKey')", context);
+assert.equal(elements.weatherSave.disabled, true, 'key status read also cannot unlock a failed city selection');
+assert.equal(elements.weatherApiHost.value, 'keep-city-retry.qweatherapi.com');
+failedGets.delete('/api/weather/regions?province=1');
+await elements.retryLoads.onclick();
+assert.equal(elements.weatherSave.disabled, false);
+assert.equal(elements.weatherApiHost.value, 'keep-city-retry.qweatherapi.com');
+
 // An initial read failure leaves safe, non-submittable forms, then the same
 // page can recover without a reload. Use separate elements and lexical state.
 const freshElements = Object.fromEntries(ids.map(id => [id, new Element()]));
@@ -796,7 +1415,7 @@ const beforeInitialToggle = getRequests.length;
 freshElements.musicSection.ontoggle();
 assert.equal(getRequests.length, beforeInitialToggle, 'native initial open-toggle cannot start media before state loads');
 await new Promise(resolve => setImmediate(resolve));
-for (const id of ['volume','alarmVolume','updates','pagesSave','musicMode','setTime','upload','wifiEdit']) assert.equal(freshElements[id].disabled, true, id + ' remains unavailable before initial state');
+for (const id of ['volume','alarmVolume','updates','pagesSave','musicMode','conversationPreferencesSave','conversationSave','weatherSave','weatherKeySave','setTime','upload','wifiEdit']) assert.equal(freshElements[id].disabled, true, id + ' remains unavailable before initial state');
 assert.equal(freshElements.loadNotice.hidden, false);
 const beforeUnreadySave = writes.length;
 await freshElements.settings.onsubmit({preventDefault() {}, target: freshElements.settings});
@@ -806,6 +1425,8 @@ failedGets.delete('/api/state');
 await freshElements.retryLoads.onclick();
 assert.equal(freshElements.volume.disabled, false);
 assert.equal(freshElements.musicMode.disabled, false);
+assert.equal(freshElements.conversationPreferencesSave.disabled, true, 'fresh unconfigured state still requires credentials');
+assert.equal(freshElements.conversationSave.disabled, false, 'fresh AP session can configure credentials');
 assert.equal(freshElements.loadNotice.hidden, true);
 
 // OTA has its own upload deadline. An ambiguous disconnect is not success and
@@ -826,4 +1447,4 @@ assert.equal(elements.upload.disabled, true, 'unrelated reads do not unlock ambi
 elements.upload.onclick();
 assert.equal(request, otaRequest);
 assert.equal(timers.size, 0);
-console.log('Settings portal: isolated forms/music timer, partial-read retries/timeouts, initial readiness, OTA uncertainty, page masks, weather and media guards passed.');
+console.log('Settings portal: isolated AI/weather preferences and AP-only keys, LAN confirmation/auth, directory recovery, music/media guards and OTA uncertainty passed.');

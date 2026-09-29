@@ -1,4 +1,5 @@
 #include "weather_config_model.h"
+#include "weather_location_catalog.h"
 
 #include <limits.h>
 #include <string.h>
@@ -423,6 +424,203 @@ static bool parse_u32_decimal(const char *text, uint32_t *value)
     }
     *value = parsed;
     return true;
+}
+
+static weather_config_result_t validate_preferences(
+    const weather_preferences_t *preferences)
+{
+    if (preferences->api_host[0] != '\0' &&
+        !weather_api_host_is_allowed(preferences->api_host)) {
+        return WEATHER_CONFIG_RESULT_INVALID_API_HOST;
+    }
+    if ((preferences->province_id == 0U && preferences->city_id != 0U) ||
+        (preferences->province_id != 0U &&
+         weather_location_province_by_id(preferences->province_id) == NULL) ||
+        (preferences->city_id != 0U &&
+         !weather_location_selection_is_valid(preferences->province_id,
+                                               preferences->city_id))) {
+        return WEATHER_CONFIG_RESULT_INVALID_LOCATION;
+    }
+    if (preferences->enabled && preferences->api_host[0] == '\0') {
+        return WEATHER_CONFIG_RESULT_INVALID_API_HOST;
+    }
+    if (preferences->enabled &&
+        (preferences->province_id == 0U || preferences->city_id == 0U)) {
+        return WEATHER_CONFIG_RESULT_LOCATION_REQUIRED;
+    }
+    return WEATHER_CONFIG_RESULT_OK;
+}
+
+weather_config_result_t weather_config_apply_preferences(
+    const weather_config_t *current,
+    const weather_preferences_t *preferences, weather_config_t *candidate)
+{
+    weather_config_result_t result = WEATHER_CONFIG_RESULT_INVALID_ARGUMENT;
+    weather_config_t resolved;
+    weather_config_defaults(&resolved);
+    if (current != NULL && preferences != NULL && candidate != NULL &&
+        current->schema_version == WEATHER_CONFIG_SCHEMA_VERSION) {
+        result = validate_preferences(preferences);
+        if (result == WEATHER_CONFIG_RESULT_OK) {
+            resolved.enabled = preferences->enabled;
+            resolved.province_id = preferences->province_id;
+            resolved.city_id = preferences->city_id;
+            if (!copy_bounded_string(resolved.api_key, sizeof(resolved.api_key),
+                                      current->api_key)) {
+                result = WEATHER_CONFIG_RESULT_INVALID_API_KEY;
+            } else if (!copy_lower_ascii(resolved.api_host, sizeof(resolved.api_host),
+                                         preferences->api_host)) {
+                result = WEATHER_CONFIG_RESULT_INVALID_API_HOST;
+            } else {
+                /* Starting from defaults also removes any legacy district. */
+                result = weather_config_validate(&resolved);
+            }
+        }
+    }
+    if (result == WEATHER_CONFIG_RESULT_OK) {
+        *candidate = resolved;
+    } else if (candidate != NULL && candidate != current) {
+        weather_config_reset(candidate);
+    }
+    weather_config_clear_sensitive(&resolved, sizeof(resolved));
+    return result;
+}
+
+weather_config_result_t weather_config_apply_api_key_update(
+    const weather_config_t *current,
+    const weather_api_key_update_t *update, weather_config_t *candidate)
+{
+    weather_config_result_t result = WEATHER_CONFIG_RESULT_INVALID_ARGUMENT;
+    weather_config_t resolved;
+    weather_config_defaults(&resolved);
+    if (current != NULL && update != NULL && candidate != NULL) {
+        if (!visible_ascii_string(update->api_key, WEATHER_API_KEY_MAX_LENGTH, true)) {
+            result = WEATHER_CONFIG_RESULT_INVALID_API_KEY;
+        } else {
+            resolved = *current;
+            if (update->api_key[0] != '\0') {
+                weather_config_clear_sensitive(resolved.api_key, sizeof(resolved.api_key));
+                (void)copy_bounded_string(resolved.api_key, sizeof(resolved.api_key),
+                                          update->api_key);
+            }
+            result = weather_config_validate(&resolved);
+        }
+    }
+    if (result == WEATHER_CONFIG_RESULT_OK) {
+        *candidate = resolved;
+    } else if (candidate != NULL && candidate != current) {
+        weather_config_reset(candidate);
+    }
+    weather_config_clear_sensitive(&resolved, sizeof(resolved));
+    return result;
+}
+
+/* Independent forms deliberately do not share the permissive legacy full
+ * form parser. Unknown fields are rejected before their values are decoded. */
+static weather_config_result_t parse_independent_form(
+    const char *form, size_t form_length,
+    weather_preferences_t *preferences, weather_api_key_update_t *key_update)
+{
+    const bool key_only = key_update != NULL;
+    const size_t limit = key_only ? WEATHER_API_KEY_FORM_MAX_LENGTH
+                                  : WEATHER_PREFERENCES_FORM_MAX_LENGTH;
+    if (form == NULL || form_length == 0U || form_length > limit ||
+        form[form_length - 1U] == '&') {
+        return WEATHER_CONFIG_RESULT_INVALID_FORM;
+    }
+    unsigned seen = 0U;
+    for (size_t position = 0U; position < form_length;) {
+        size_t end = position;
+        while (end < form_length && form[end] != '&') ++end;
+        size_t equals = position;
+        while (equals < end && form[equals] != '=') ++equals;
+        if (equals == position || equals == end) {
+            return WEATHER_CONFIG_RESULT_INVALID_FORM;
+        }
+        char field[16] = {0};
+        const form_decode_result_t decoded_field = decode_form_component(
+            form + position, equals - position, field, sizeof(field));
+        if (decoded_field != FORM_DECODE_OK) {
+            return decoded_field == FORM_DECODE_INVALID
+                ? WEATHER_CONFIG_RESULT_INVALID_ENCODING
+                : WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD;
+        }
+        const unsigned bit = key_only
+            ? (strcmp(field, "api_key") == 0 ? 1U : 0U)
+            : (strcmp(field, "enabled") == 0 ? 1U
+               : strcmp(field, "api_host") == 0 ? 2U
+               : strcmp(field, "province") == 0 ? 4U
+               : strcmp(field, "city") == 0 ? 8U : 0U);
+        if (bit == 0U) return WEATHER_CONFIG_RESULT_UNEXPECTED_FIELD;
+        if ((seen & bit) != 0U) return WEATHER_CONFIG_RESULT_DUPLICATE_FIELD;
+        seen |= bit;
+        for (size_t i = equals + 1U; i < end; ++i) {
+            if (form[i] == '=') return WEATHER_CONFIG_RESULT_INVALID_FORM;
+        }
+        char small[16] = {0};
+        char *const destination = key_only ? key_update->api_key
+            : bit == 2U ? preferences->api_host : small;
+        const size_t capacity = key_only ? sizeof(key_update->api_key)
+            : bit == 2U ? sizeof(preferences->api_host) : sizeof(small);
+        const form_decode_result_t decoded_value = decode_form_component(
+            form + equals + 1U, end - equals - 1U, destination, capacity);
+        if (decoded_value == FORM_DECODE_INVALID) {
+            return WEATHER_CONFIG_RESULT_INVALID_ENCODING;
+        }
+        if (decoded_value == FORM_DECODE_TOO_LONG) {
+            return key_only ? WEATHER_CONFIG_RESULT_INVALID_API_KEY
+                : bit == 2U ? WEATHER_CONFIG_RESULT_INVALID_API_HOST
+                : bit == 1U ? WEATHER_CONFIG_RESULT_INVALID_FORM
+                            : WEATHER_CONFIG_RESULT_INVALID_LOCATION;
+        }
+        if (!key_only) {
+            if (bit == 1U) {
+                if (strcmp(small, "on") != 0 && strcmp(small, "off") != 0) {
+                    return WEATHER_CONFIG_RESULT_INVALID_FORM;
+                }
+                preferences->enabled = strcmp(small, "on") == 0;
+            } else if ((bit == 4U || bit == 8U) &&
+                       !parse_u32_decimal(small, bit == 4U
+                           ? &preferences->province_id : &preferences->city_id)) {
+                return WEATHER_CONFIG_RESULT_INVALID_LOCATION;
+            }
+        }
+        position = end + 1U;
+    }
+    if (seen != (key_only ? 1U : 15U)) {
+        return WEATHER_CONFIG_RESULT_MISSING_FIELD;
+    }
+    if (key_only) {
+        return visible_ascii_string(key_update->api_key, WEATHER_API_KEY_MAX_LENGTH, true)
+            ? WEATHER_CONFIG_RESULT_OK : WEATHER_CONFIG_RESULT_INVALID_API_KEY;
+    }
+    return validate_preferences(preferences);
+}
+
+weather_config_result_t weather_config_parse_preferences_form(
+    const char *form, size_t form_length, weather_preferences_t *preferences)
+{
+    if (preferences == NULL) return WEATHER_CONFIG_RESULT_INVALID_ARGUMENT;
+    memset(preferences, 0, sizeof(*preferences));
+    const weather_config_result_t result = parse_independent_form(
+        form, form_length, preferences, NULL);
+    if (result != WEATHER_CONFIG_RESULT_OK) {
+        weather_config_clear_sensitive(preferences, sizeof(*preferences));
+    }
+    return result;
+}
+
+weather_config_result_t weather_config_parse_api_key_form(
+    const char *form, size_t form_length, weather_api_key_update_t *update)
+{
+    if (update == NULL) return WEATHER_CONFIG_RESULT_INVALID_ARGUMENT;
+    weather_config_clear_sensitive(update, sizeof(*update));
+    const weather_config_result_t result = parse_independent_form(
+        form, form_length, NULL, update);
+    if (result != WEATHER_CONFIG_RESULT_OK) {
+        weather_config_clear_sensitive(update, sizeof(*update));
+    }
+    return result;
 }
 
 weather_config_result_t weather_config_parse_form(

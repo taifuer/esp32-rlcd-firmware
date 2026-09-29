@@ -102,11 +102,6 @@ static inline const char *display_interaction_status_footer(void)
     return "BOOT: HOME | KEY: SETTINGS | HOLD KEY 2s: SYNC TIME";
 }
 
-static inline const char *display_interaction_chat_footer(void)
-{
-    return "BOOT: HOME | KEY: SETTINGS";
-}
-
 static inline const char *display_interaction_chat_next_turn_footer(void)
 {
     return "KEY: NEXT TURN | BOOT: CANCEL";

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" role="img" aria-labelledby="title description">
+  <title id="title">AI 对话失败后的手动重试</title>
+  <desc id="description">连接资源已释放后的示意：KEY 重新发起对话，BOOT 返回；不会自动重连。</desc>
+  <rect width="400" height="300" fill="#000"/>
+  <g fill="#fff" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif">
+    <text x="200" y="32" font-size="24" font-weight="700">CHAT</text>
+    <path d="M12 44H388M12 250H388" fill="none" stroke="#fff" shape-rendering="crispEdges"/>
+    <text x="200" y="112" font-size="24" font-weight="700">CHAT FAILED</text>
+    <text x="200" y="174" font-size="18" font-weight="700">Check network and retry</text>
+    <text x="200" y="280" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">KEY: RETRY | BOOT: BACK</text>
+  </g>
+</svg>

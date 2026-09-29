@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define APP_SETTINGS_SCHEMA_VERSION 10U
+#define APP_SETTINGS_SCHEMA_VERSION 11U
 #define APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES 480
 #define APP_SETTINGS_MIN_UTC_OFFSET_MINUTES (-720)
 #define APP_SETTINGS_MAX_UTC_OFFSET_MINUTES 840
@@ -36,6 +36,25 @@ extern "C" {
 #define APP_DAILY_PAGE_MUSIC (1U << 4U)
 #define APP_DAILY_PAGE_CHAT (1U << 5U)
 #define APP_DAILY_PAGES_ALL_MASK 0x3fU
+#define APP_DAILY_PAGE_COUNT 6U
+/* Stable IDs deliberately match visibility bits, not the UI page enum. */
+#define APP_DAILY_PAGES_DEFAULT_ORDER { APP_DAILY_PAGE_WEATHER, \
+    APP_DAILY_PAGE_MARKET, APP_DAILY_PAGE_CALENDAR, APP_DAILY_PAGE_IMAGE, \
+    APP_DAILY_PAGE_MUSIC, APP_DAILY_PAGE_CHAT }
+
+static inline bool app_daily_pages_order_valid(const uint8_t *order)
+{
+    if (order == NULL) return false;
+    uint8_t seen = 0U;
+    for (size_t index = 0U; index < APP_DAILY_PAGE_COUNT; ++index) {
+        const uint8_t id = order[index];
+        if (id == 0U || (id & (id - 1U)) != 0U ||
+            (id & (uint8_t)~APP_DAILY_PAGES_ALL_MASK) != 0U ||
+            (seen & id) != 0U) return false;
+        seen |= id;
+    }
+    return seen == APP_DAILY_PAGES_ALL_MASK;
+}
 
 typedef enum {
     APP_TEMPERATURE_UNIT_CELSIUS = 0,
@@ -72,6 +91,7 @@ typedef struct {
     uint8_t alarm_minute;
     uint8_t alarm_weekdays;
     uint8_t daily_pages_mask;
+    uint8_t daily_pages_order[APP_DAILY_PAGE_COUNT];
     app_music_mode_t music_mode;
 } app_settings_t;
 
@@ -90,7 +110,8 @@ bool app_settings_format_posix_tz(int16_t utc_offset_minutes,
                                   char *buffer, size_t capacity);
 /* Apply a scoped (section=general|alarm|updates|pages|music) or legacy complete form.
  * Unrelated fields, including the device-side manual saving request,
- * are preserved from the latest validated base record. */
+ * are preserved from the latest validated base record. Pages requires both
+ * daily_pages_mask and a complete daily_pages_order CSV, including hidden IDs. */
 bool app_settings_parse_form(const char *body, size_t length,
                              const app_settings_t *base,
                              app_settings_t *settings);

@@ -66,6 +66,8 @@ struct conversation_client {
     bool finish_in_progress;
     bool stop_sent;
     conversation_model_t model;
+    conversation_voice_t voice;
+    conversation_reply_style_t reply_style;
     char endpoint[CONVERSATION_ENDPOINT_MAX_LENGTH + 1U];
     conversation_caption_sync_t caption;
     conversation_client_status_t status;
@@ -785,6 +787,8 @@ esp_err_t conversation_client_create(
         return ESP_ERR_INVALID_ARG;
     }
     client->model = snapshot->config.model;
+    client->voice = snapshot->config.voice;
+    client->reply_style = snapshot->config.reply_style;
     conversation_caption_sync_reset(&client->caption);
     conversation_turn_state_init(&client->turn);
     client->status.phase = CONVERSATION_CLIENT_PHASE_IDLE;
@@ -879,7 +883,7 @@ esp_err_t conversation_client_send_start(conversation_client_t *client)
         !conversation_protocol_build_session_update(
             client->outgoing_message,
             CONVERSATION_PROTOCOL_MESSAGE_CAPACITY, event_id,
-            client->model, &length)) {
+            client->model, client->voice, client->reply_style, &length)) {
         secure_wipe(event_id, sizeof(event_id));
         return ESP_ERR_INVALID_ARG;
     }

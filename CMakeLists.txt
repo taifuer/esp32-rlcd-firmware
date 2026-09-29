@@ -42,7 +42,7 @@ list(APPEND EXTRA_COMPONENT_DIRS "${QRCODE_COMPONENT_DIR}")
 
 foreach(speech_dependency_var
         RLCD_ESP_SR_DIR RLCD_ESP_DSP_DIR RLCD_DL_FFT_DIR RLCD_CJSON_DIR
-        RLCD_ESP_WEBSOCKET_CLIENT_DIR RLCD_ESP_AUDIO_CODEC_DIR)
+        RLCD_ESP_AUDIO_CODEC_DIR)
     if(NOT DEFINED ENV{${speech_dependency_var}})
         message(FATAL_ERROR
             "Missing ${speech_dependency_var}; source scripts/common.sh or "
@@ -58,6 +58,21 @@ foreach(speech_dependency_var
     list(APPEND EXTRA_COMPONENT_DIRS "${speech_dependency_path}")
 endforeach()
 
+# ESP WebSocket Client 1.8.0 follows server-provided redirects internally.
+# Build a generated copy with only that redirect branch disabled, while
+# keeping the pinned external checkout untouched.
+if(NOT DEFINED ENV{RLCD_ESP_WEBSOCKET_CLIENT_DIR})
+    message(FATAL_ERROR
+        "Missing RLCD_ESP_WEBSOCKET_CLIENT_DIR; source scripts/common.sh or "
+        "build through ./scripts/build.sh")
+endif()
+file(TO_CMAKE_PATH "$ENV{RLCD_ESP_WEBSOCKET_CLIENT_DIR}"
+     RLCD_WEBSOCKET_SOURCE_DIR)
+set(RLCD_WEBSOCKET_OUTPUT_DIR
+    "${CMAKE_BINARY_DIR}/generated-components/esp_websocket_client")
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/prepare_esp_websocket_client.cmake")
+list(APPEND EXTRA_COMPONENT_DIRS "${RLCD_WEBSOCKET_OUTPUT_DIR}")
+
 set(RLCD_PROJECT_VERSION "" CACHE STRING
     "SemVer embedded in the firmware image; empty selects the repository default")
 if(NOT "${RLCD_PROJECT_VERSION}" STREQUAL "")
@@ -66,7 +81,7 @@ elseif(DEFINED ENV{RLCD_PROJECT_VERSION} AND
        NOT "$ENV{RLCD_PROJECT_VERSION}" STREQUAL "")
     set(PROJECT_VER "$ENV{RLCD_PROJECT_VERSION}")
 else()
-    set(PROJECT_VER "0.31.0")
+    set(PROJECT_VER "0.32.0")
 endif()
 set(COMPONENTS app)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

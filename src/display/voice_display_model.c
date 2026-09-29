@@ -114,6 +114,12 @@ const char *voice_display_feedback_footer(void)
     return "RETURNING TO CHAT...";
 }
 
+const char *voice_display_failure_footer(bool retry_ready, bool retry_available)
+{
+    return !retry_ready ? "PLEASE WAIT..." : retry_available
+        ? "KEY: RETRY | BOOT: BACK" : "BOOT: BACK";
+}
+
 bool voice_display_format_turn(char *buffer, size_t capacity,
                                uint8_t turn_number, uint8_t max_turns)
 {

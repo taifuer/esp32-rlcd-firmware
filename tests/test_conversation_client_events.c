@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "conversation_client.h"
+#include "conversation_protocol.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -41,6 +42,7 @@ static TickType_t now;
 static struct test_websocket *websocket;
 static char captured_logs[4096];
 static size_t log_length;
+static char last_sent_message[CONVERSATION_PROTOCOL_MESSAGE_CAPACITY];
 
 typedef enum {
     SEND_EVENT_NONE = 0,
@@ -313,6 +315,8 @@ int esp_websocket_client_send_text(esp_websocket_client_handle_t client,
     assert(message != NULL && length > 0 && timeout <= 500U);
     assert((size_t)length == strlen(message));
     assert(strstr(message, "sk-fixture-only-no-network") == NULL);
+    assert((size_t)length < sizeof(last_sent_message));
+    memcpy(last_sent_message, message, (size_t)length + 1U);
     ++text_sends;
     const synchronous_send_event_t event = synchronous_send_event;
     synchronous_send_event = SEND_EVENT_NONE;
@@ -687,6 +691,27 @@ static void test_partial_allocation_failures_clean_up(void)
     }
 }
 
+static void test_configured_voice_and_style_reach_session_update(void)
+{
+    reset_fixture();
+    conversation_config_snapshot_t snapshot = fixture_configuration();
+    snapshot.config.voice = CONVERSATION_VOICE_LONGANLUFENG;
+    snapshot.config.reply_style = CONVERSATION_REPLY_STYLE_ENGLISH_PRACTICE;
+    conversation_client_t *client = NULL;
+    assert(conversation_client_create(&snapshot, &client) == ESP_OK);
+    /* The real worker erases the snapshot; the client must retain only the
+     * non-secret options needed by its later session.update. */
+    conversation_config_clear_sensitive(&snapshot, sizeof(snapshot));
+    assert(conversation_client_start_transport(client) == ESP_OK);
+    ready_client(client);
+    assert(strstr(last_sent_message, "\"voice\":\"longanlufeng\"") != NULL);
+    assert(strstr(last_sent_message, "英语口语练习伙伴") != NULL);
+    const unsigned sends = text_sends;
+    emit_json("{\"type\":\"session.created\"}");
+    assert(text_sends == sends); /* voice is only sent with the first setup */
+    destroy_client(client);
+}
+
 int main(void)
 {
     test_early_close_and_finish_fail_immediately();
@@ -699,6 +724,7 @@ int main(void)
     test_synchronous_send_callbacks_keep_newer_state();
     test_close_reason_is_not_treated_as_text_or_error_message();
     test_partial_allocation_failures_clean_up();
+    test_configured_voice_and_style_reach_session_update();
     puts("conversation client event integration tests passed");
     return 0;
 }
