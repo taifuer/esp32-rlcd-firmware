@@ -12,6 +12,8 @@ static app_settings_t make_settings(uint8_t volume,
 {
     app_settings_t settings;
     app_settings_defaults(&settings);
+    const uint8_t legacy_order[] = APP_DAILY_PAGES_LEGACY_ORDER;
+    memcpy(settings.daily_pages_order, legacy_order, sizeof(legacy_order));
     settings.manual_saving_requested = true;
     settings.utc_offset_minutes = -300;
     settings.temperature_unit = APP_TEMPERATURE_UNIT_FAHRENHEIT;
@@ -44,6 +46,7 @@ static void assert_settings_equal(const app_settings_t *actual,
     assert(memcmp(actual->daily_pages_order, expected->daily_pages_order,
                   sizeof(actual->daily_pages_order)) == 0);
     assert(actual->music_mode == expected->music_mode);
+    assert(actual->timer_minutes == expected->timer_minutes);
 }
 
 static void test_codec_round_trip_and_layout(void)
@@ -58,7 +61,7 @@ static void test_codec_round_trip_and_layout(void)
     assert(encoded[1] == 'C');
     assert(encoded[2] == 'F');
     assert(encoded[3] == 'G');
-    assert(encoded[4] == 10U && encoded[5] == 0U);
+    assert(encoded[4] == 11U && encoded[5] == 0U);
     assert(encoded[6] == SETTINGS_RECORD_ENCODED_SIZE &&
            encoded[7] == 0U);
     assert(encoded[8] == 0x12U && encoded[9] == 0x34U &&
@@ -80,7 +83,8 @@ static void test_codec_round_trip_and_layout(void)
     assert(encoded[27] == APP_DAILY_PAGES_ALL_MASK);
     assert(encoded[28] == APP_MUSIC_MODE_SEQUENTIAL);
     assert(memcmp(encoded + 29U, settings.daily_pages_order, APP_DAILY_PAGE_COUNT) == 0);
-    assert(encoded[35] == 0U);
+    assert(encoded[36] == APP_SETTINGS_DEFAULT_TIMER_MINUTES);
+    assert(encoded[37] == 0U && encoded[38] == 0U && encoded[39] == 0U);
 
     settings_record_t decoded = {0};
     assert(settings_record_decode(encoded, sizeof(encoded), &decoded));
@@ -172,7 +176,7 @@ static void test_schema6_and_dev1_compatibility(void)
         /* dev.1 used 0=CLOCK, 1=WEATHER, 2=IMAGE. Ignore only this preference,
          * retaining every real setting and the record generation. */
         encoded[25] = value;
-        put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+        put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
         settings_record_t decoded = {0};
         assert(settings_record_decode(encoded, sizeof(encoded), &decoded));
         assert_settings_equal(&decoded.settings, &settings);
@@ -181,7 +185,7 @@ static void test_schema6_and_dev1_compatibility(void)
         assert(encoded[25] == 0U);
         assert(!settings_record_decode_schema6(encoded, sizeof(encoded), &decoded));
         encoded[25] = 3U;
-        put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+        put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
         assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
         /* v0.25.0 record: format 5, schema 6, reserved byte must not become
          * a display preference. Every existing setting is retained. */
@@ -241,7 +245,7 @@ static void test_schema5_record_migration(void)
         assert(settings_record_encode(decoded.generation,
                                       &decoded.settings, canonical,
                                       sizeof(canonical)));
-        assert(canonical[4] == 10U);
+        assert(canonical[4] == 11U);
         assert(canonical[12] == APP_SETTINGS_SCHEMA_VERSION);
         assert(canonical[14] ==
                (expected_manual[legacy_power] ? 1U : 0U));
@@ -282,9 +286,9 @@ static void test_schema8_migration_and_daily_page_mask(void)
         assert_settings_equal(&decoded.settings, &settings);
         assert(!settings_record_decode_schema8(encoded, sizeof(encoded), &decoded));
     }
-    for (unsigned mask = 64U; mask <= UINT8_MAX; ++mask) {
+    for (unsigned mask = 128U; mask <= UINT8_MAX; ++mask) {
         encoded[27] = (uint8_t)mask;
-        put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+        put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
         assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
     }
     settings.daily_pages_mask = APP_DAILY_PAGES_ALL_MASK;
@@ -324,7 +328,7 @@ static void test_schema9_migration_and_music_mode(void)
     }
     for (unsigned mode = 3U; mode <= UINT8_MAX; ++mode) {
         encoded[28] = (uint8_t)mode;
-        put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+        put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
         assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
     }
     settings.music_mode = APP_MUSIC_MODE_REPEAT_ALL;
@@ -336,6 +340,7 @@ static void test_schema9_migration_and_music_mode(void)
     encoded[12] = 9U;
     put_legacy_u32(encoded, 28U, legacy_checksum(encoded, 28U));
     settings.music_mode = APP_MUSIC_MODE_SEQUENTIAL;
+    settings.daily_pages_mask |= APP_DAILY_PAGE_TIMER;
     assert(settings_record_decode_schema9(encoded, SETTINGS_RECORD_SCHEMA9_ENCODED_SIZE, &decoded));
     assert_settings_equal(&decoded.settings, &settings);
     assert(decoded.generation == 71U);
@@ -363,7 +368,7 @@ static void test_schema10_migration_and_page_order(void)
     settings.alarm_volume = 91U;
     settings.daily_pages_mask = APP_DAILY_PAGE_MUSIC | APP_DAILY_PAGE_CHAT;
     settings.music_mode = APP_MUSIC_MODE_REPEAT_ALL;
-    const uint8_t reverse[] = {32U, 16U, 8U, 4U, 2U, 1U};
+    const uint8_t reverse[] = {32U, 16U, 8U, 4U, 2U, 1U, 64U};
     memcpy(settings.daily_pages_order, reverse, sizeof(reverse));
     uint8_t encoded[SETTINGS_RECORD_ENCODED_SIZE];
     settings_record_t decoded;
@@ -374,7 +379,7 @@ static void test_schema10_migration_and_page_order(void)
         for (unsigned id = 0U; id <= UINT8_MAX; ++id) {
             assert(settings_record_encode(72U, &settings, encoded, sizeof(encoded)));
             encoded[29U + index] = (uint8_t)id;
-            put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+            put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
             assert(settings_record_decode(encoded, sizeof(encoded), &decoded) ==
                    (id == reverse[index]));
         }
@@ -386,9 +391,10 @@ static void test_schema10_migration_and_page_order(void)
     encoded[12] = 10U;
     memset(encoded + 29U, 0, 3U);
     put_legacy_u32(encoded, 32U, legacy_checksum(encoded, 32U));
-    const uint8_t defaults[] = APP_DAILY_PAGES_DEFAULT_ORDER;
+    const uint8_t defaults[] = APP_DAILY_PAGES_LEGACY_ORDER;
     memcpy(settings.daily_pages_order, defaults, sizeof(defaults));
     assert(settings_record_decode_schema10(encoded, SETTINGS_RECORD_SCHEMA10_ENCODED_SIZE, &decoded));
+    settings.daily_pages_mask |= APP_DAILY_PAGE_TIMER;
     assert_settings_equal(&decoded.settings, &settings);
     assert(decoded.generation == 72U);
     assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
@@ -403,6 +409,82 @@ static void test_schema10_migration_and_page_order(void)
     put_legacy_u32(encoded, 32U, legacy_checksum(encoded, 32U));
     encoded[18] ^= 1U;
     assert(!settings_record_decode_schema10(encoded, SETTINGS_RECORD_SCHEMA10_ENCODED_SIZE, &decoded));
+}
+
+static void make_schema11_record(uint8_t *encoded, uint8_t mask)
+{
+    app_settings_t settings = make_settings(21U, APP_UPDATE_CHANNEL_BETA);
+    settings.alarm_volume = 91U;
+    settings.music_mode = APP_MUSIC_MODE_REPEAT_ALL;
+    const uint8_t reverse[] = {32U, 16U, 8U, 4U, 2U, 1U, 64U};
+    memcpy(settings.daily_pages_order, reverse, sizeof(reverse));
+    assert(settings_record_encode(73U, &settings, encoded, SETTINGS_RECORD_ENCODED_SIZE));
+    encoded[4] = 10U;
+    encoded[6] = SETTINGS_RECORD_SCHEMA11_ENCODED_SIZE;
+    encoded[12] = 11U;
+    encoded[27] = mask;
+    encoded[35] = 0U; /* v11 reserved byte is not a seventh page ID. */
+    put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+}
+
+static void test_schema11_migration_and_timer_codec(void)
+{
+    uint8_t encoded[SETTINGS_RECORD_ENCODED_SIZE];
+    settings_record_t decoded = {0};
+    const uint8_t expected_order[] = {32U, 16U, 8U, 4U, 2U, 1U, 64U};
+    for (unsigned mask = 0U; mask <= UINT8_MAX; ++mask) {
+        make_schema11_record(encoded, (uint8_t)mask);
+        assert(settings_record_decode_schema11(encoded, SETTINGS_RECORD_SCHEMA11_ENCODED_SIZE,
+                                               &decoded) == (mask <= 63U));
+        if (mask > 63U) continue;
+        app_settings_t expected = make_settings(21U, APP_UPDATE_CHANNEL_BETA);
+        expected.alarm_volume = 91U;
+        expected.music_mode = APP_MUSIC_MODE_REPEAT_ALL;
+        expected.daily_pages_mask = mask == 0U ? 0U : (uint8_t)(mask | APP_DAILY_PAGE_TIMER);
+        memcpy(expected.daily_pages_order, expected_order, sizeof(expected_order));
+        assert_settings_equal(&decoded.settings, &expected);
+        assert(decoded.generation == 73U);
+    }
+    for (size_t index = 0U; index < 6U; ++index) {
+        for (unsigned id = 0U; id <= UINT8_MAX; ++id) {
+            make_schema11_record(encoded, 63U);
+            encoded[29U + index] = (uint8_t)id;
+            put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+            assert(settings_record_decode_schema11(encoded, SETTINGS_RECORD_SCHEMA11_ENCODED_SIZE,
+                                                   &decoded) == (id == expected_order[index]));
+        }
+    }
+    make_schema11_record(encoded, 63U);
+    assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
+    assert(!settings_record_decode_schema11(encoded, sizeof(encoded), &decoded));
+    assert(!settings_record_decode_schema11(NULL, SETTINGS_RECORD_SCHEMA11_ENCODED_SIZE, &decoded));
+    assert(!settings_record_decode_schema11(encoded, SETTINGS_RECORD_SCHEMA11_ENCODED_SIZE, NULL));
+    assert(!settings_record_decode_schema11(encoded, SETTINGS_RECORD_SCHEMA11_ENCODED_SIZE - 1U, &decoded));
+    encoded[18] ^= 1U;
+    assert(!settings_record_decode_schema11(encoded, SETTINGS_RECORD_SCHEMA11_ENCODED_SIZE, &decoded));
+
+    app_settings_t settings;
+    app_settings_defaults(&settings);
+    assert(SETTINGS_RECORD_ENCODED_SIZE == 44U);
+    for (unsigned minutes = 0U; minutes <= UINT8_MAX; ++minutes) {
+        assert(settings_record_encode(74U, &settings, encoded, sizeof(encoded)));
+        encoded[36] = (uint8_t)minutes;
+        put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
+        const bool valid = minutes >= 1U && minutes <= 180U;
+        assert(settings_record_decode(encoded, sizeof(encoded), &decoded) == valid);
+        if (valid) {
+            assert(decoded.settings.timer_minutes == minutes);
+            assert(settings_record_encode(75U, &decoded.settings, encoded, sizeof(encoded)));
+            assert(encoded[36] == minutes);
+        }
+    }
+    assert(settings_record_encode(76U, &settings, encoded, sizeof(encoded)));
+    /* Every byte of the new 44-byte record participates in integrity checks. */
+    for (size_t index = 0U; index < sizeof(encoded); ++index) {
+        encoded[index] ^= 1U;
+        assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
+        encoded[index] ^= 1U;
+    }
 }
 
 static void make_schema4_record(uint8_t legacy_power,
@@ -460,7 +542,7 @@ static void test_schema4_record_migration(void)
             assert(settings_record_encode(decoded.generation,
                                           &decoded.settings, canonical,
                                           sizeof(canonical)));
-            assert(canonical[4] == 10U);
+            assert(canonical[4] == 11U);
             assert(canonical[12] == APP_SETTINGS_SCHEMA_VERSION);
             assert(canonical[14] ==
                    (expected.manual_saving_requested ? 1U : 0U));
@@ -639,31 +721,31 @@ static void test_codec_rejects_invalid_input_and_corruption(void)
     assert(settings_record_encode(7U, &settings, encoded,
                                   sizeof(encoded)));
     encoded[20] = 2U;
-    put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+    put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
     assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
 
     assert(settings_record_encode(7U, &settings, encoded,
                                   sizeof(encoded)));
     encoded[21] = 24U;
-    put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+    put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
     assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
 
     assert(settings_record_encode(7U, &settings, encoded,
                                   sizeof(encoded)));
     encoded[23] = 0U;
-    put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+    put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
     assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
 
     assert(settings_record_encode(7U, &settings, encoded,
                                   sizeof(encoded)));
     encoded[14] = 2U;
-    put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+    put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
     assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
 
     assert(settings_record_encode(7U, &settings, encoded,
                                   sizeof(encoded)));
     encoded[24] = 3U;
-    put_legacy_u32(encoded, 36U, legacy_checksum(encoded, 36U));
+    put_legacy_u32(encoded, 40U, legacy_checksum(encoded, 40U));
     assert(!settings_record_decode(encoded, sizeof(encoded), &decoded));
 }
 
@@ -811,6 +893,7 @@ int main(void)
     test_schema8_migration_and_daily_page_mask();
     test_schema9_migration_and_music_mode();
     test_schema10_migration_and_page_order();
+    test_schema11_migration_and_timer_codec();
     test_codec_round_trip_and_layout();
     test_current_manual_saving_round_trip();
     test_schema5_record_migration();

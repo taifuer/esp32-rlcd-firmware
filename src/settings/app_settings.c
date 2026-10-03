@@ -33,9 +33,11 @@
 #define SETTINGS_SCHEMA9_RECORD_SLOT_B_KEY "cfg9_b"
 #define SETTINGS_SCHEMA10_RECORD_SLOT_A_KEY "cfg10_a"
 #define SETTINGS_SCHEMA10_RECORD_SLOT_B_KEY "cfg10_b"
-/* Preserve old records; commit both v11 slots before the schema marker. */
-#define SETTINGS_RECORD_SLOT_A_KEY "cfg11_a"
-#define SETTINGS_RECORD_SLOT_B_KEY "cfg11_b"
+#define SETTINGS_SCHEMA11_RECORD_SLOT_A_KEY "cfg11_a"
+#define SETTINGS_SCHEMA11_RECORD_SLOT_B_KEY "cfg11_b"
+/* Preserve old records; commit both v12 slots before the schema marker. */
+#define SETTINGS_RECORD_SLOT_A_KEY "cfg12_a"
+#define SETTINGS_RECORD_SLOT_B_KEY "cfg12_b"
 
 static const char *TAG = "app_settings";
 static SemaphoreHandle_t s_mutex;
@@ -56,9 +58,11 @@ static esp_err_t load_v1_fields(nvs_handle_t handle,
 {
     uint8_t value_u8 = 0U;
     int16_t value_i16 = 0;
+    bool legacy_found = false;
 
     esp_err_t error = nvs_get_u8(handle, SETTINGS_POWER_KEY, &value_u8);
     if (error == ESP_OK) {
+        legacy_found = true;
         bool manual_saving_requested = false;
         if (app_manual_saving_from_legacy_power(
                 1U, value_u8, &manual_saving_requested)) {
@@ -70,6 +74,7 @@ static esp_err_t load_v1_fields(nvs_handle_t handle,
     }
 
     error = nvs_get_i16(handle, SETTINGS_UTC_OFFSET_KEY, &value_i16);
+    legacy_found = legacy_found || error == ESP_OK;
     if (error == ESP_OK &&
         value_i16 >= APP_SETTINGS_MIN_UTC_OFFSET_MINUTES &&
         value_i16 <= APP_SETTINGS_MAX_UTC_OFFSET_MINUTES &&
@@ -80,6 +85,7 @@ static esp_err_t load_v1_fields(nvs_handle_t handle,
     }
 
     error = nvs_get_u8(handle, SETTINGS_TEMPERATURE_UNIT_KEY, &value_u8);
+    legacy_found = legacy_found || error == ESP_OK;
     if (error == ESP_OK && value_u8 <= APP_TEMPERATURE_UNIT_FAHRENHEIT) {
         settings->temperature_unit = (app_temperature_unit_t)value_u8;
     } else if (!recoverable_field_error(error) && error != ESP_OK) {
@@ -87,6 +93,7 @@ static esp_err_t load_v1_fields(nvs_handle_t handle,
     }
 
     error = nvs_get_u8(handle, SETTINGS_AUDIO_VOLUME_KEY, &value_u8);
+    legacy_found = legacy_found || error == ESP_OK;
     if (error == ESP_OK && value_u8 <= 100U) {
         settings->audio_playback_volume = value_u8;
         settings->alarm_volume = value_u8;
@@ -94,6 +101,10 @@ static esp_err_t load_v1_fields(nvs_handle_t handle,
         return error;
     }
 
+    if (legacy_found) {
+        const uint8_t order[] = APP_DAILY_PAGES_LEGACY_ORDER;
+        memcpy(settings->daily_pages_order, order, sizeof(order));
+    }
     return ESP_OK;
 }
 
@@ -543,6 +554,29 @@ static esp_err_t recover_legacy_settings(nvs_handle_t handle,
                                          app_settings_t *settings,
                                          uint16_t maximum_schema)
 {
+    if (maximum_schema >= 11U) {
+        settings_record_t records[2] = {0};
+        bool valid[2] = {false, false};
+        const char *keys[] = {SETTINGS_SCHEMA11_RECORD_SLOT_A_KEY,
+                              SETTINGS_SCHEMA11_RECORD_SLOT_B_KEY};
+        for (size_t index = 0U; index < 2U; ++index) {
+            uint8_t encoded[SETTINGS_RECORD_SCHEMA11_ENCODED_SIZE];
+            size_t size = sizeof(encoded);
+            const esp_err_t error = nvs_get_blob(handle, keys[index], encoded, &size);
+            if (error == ESP_OK) {
+                valid[index] = settings_record_decode_schema11(encoded, size, &records[index]);
+            } else if (!recoverable_field_error(error) &&
+                       error != ESP_ERR_NVS_INVALID_LENGTH) {
+                return error;
+            }
+        }
+        const settings_record_slot_t latest = settings_record_select_latest(
+            valid[0] ? &records[0] : NULL, valid[1] ? &records[1] : NULL);
+        if (latest != SETTINGS_RECORD_SLOT_NONE) {
+            *settings = records[latest == SETTINGS_RECORD_SLOT_A ? 0 : 1].settings;
+            return ESP_OK;
+        }
+    }
     if (maximum_schema >= 10U) {
         settings_record_t records[2] = {0};
         bool valid[2] = {false, false};
@@ -728,7 +762,7 @@ static esp_err_t recover_settings_without_schema(
     if (!current_found) {
         *active_slot = SETTINGS_RECORD_SLOT_NONE;
         *generation = 0U;
-        return recover_legacy_settings(handle, settings, 10U);
+        return recover_legacy_settings(handle, settings, 11U);
     }
     return ESP_OK;
 }
@@ -852,7 +886,8 @@ static bool settings_equal(const app_settings_t *left,
            left->daily_pages_mask == right->daily_pages_mask &&
            memcmp(left->daily_pages_order, right->daily_pages_order,
                   sizeof(left->daily_pages_order)) == 0 &&
-           left->music_mode == right->music_mode;
+           left->music_mode == right->music_mode &&
+           left->timer_minutes == right->timer_minutes;
 }
 
 static esp_err_t migrate_to_current_schema(
@@ -966,9 +1001,11 @@ esp_err_t app_settings_init(void)
                 handle, &loaded, &active_slot, &generation);
             needs_migration = error == ESP_OK;
         } else if (error == ESP_OK && schema == 1U) {
+            const uint8_t order[] = APP_DAILY_PAGES_LEGACY_ORDER;
+            memcpy(loaded.daily_pages_order, order, sizeof(order));
             error = load_v1_fields(handle, &loaded);
             needs_migration = error == ESP_OK;
-        } else if (error == ESP_OK && schema >= 2U && schema <= 10U) {
+        } else if (error == ESP_OK && schema >= 2U && schema <= 11U) {
             error = recover_legacy_settings(handle, &loaded, schema);
             needs_migration = error == ESP_OK;
         } else if (error == ESP_OK &&
@@ -987,7 +1024,7 @@ esp_err_t app_settings_init(void)
                 error = load_current_schema(handle, &loaded, &active_slot,
                                             &generation);
             } else if (error == ESP_OK) {
-                error = recover_legacy_settings(handle, &loaded, 10U);
+                error = recover_legacy_settings(handle, &loaded, 11U);
                 needs_migration = error == ESP_OK;
             }
         }

@@ -34,6 +34,7 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "firmware_update.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -52,6 +53,9 @@
 #include "sd_image.h"
 #include "shtc3.h"
 #include "settings_power_policy.h"
+#include "timing.h"
+#include "timing_controls.h"
+#include "timing_notice.h"
 #include "usb_commands.h"
 #include "voice_command_policy.h"
 #include "voice_backend_policy.h"
@@ -87,6 +91,8 @@ typedef enum {
     APP_DISPLAY_CALENDAR,
     APP_DISPLAY_MONOCHROME_IMAGE,
     APP_DISPLAY_MUSIC,
+    APP_DISPLAY_TIMING,
+    APP_DISPLAY_TIMING_DONE,
     APP_DISPLAY_HOLD_PROMPT,
     APP_DISPLAY_IMAGE_DELETE_CONFIRMATION,
     APP_DISPLAY_IMAGE_DELETE_STATUS,
@@ -220,6 +226,8 @@ static const char *page_name(app_page_t page)
         return "image";
     case APP_PAGE_MUSIC:
         return "music";
+    case APP_PAGE_TIMER:
+        return "timer";
     case APP_PAGE_STATUS:
         return "status";
     case APP_PAGE_VOICE:
@@ -1679,10 +1687,27 @@ void app_main(void)
     bool ota_confirmation_attempted = false;
     bool boot_health_marked = false;
     uint32_t cycle = 0;
+    timing_t timing;
+    timing_init(&timing, TIMING_COUNTDOWN_DEFAULT_MINUTES);
+    uint16_t timing_preference_minutes = settings.timer_minutes;
+    bool timing_stopwatch_selected = false;
+    timing_notice_t timing_notice = {0};
 
     boot_recovery_set_phase(BOOT_RECOVERY_PHASE_MAIN_LOOP);
     while (true) {
         const TickType_t now = xTaskGetTickCount();
+        const uint64_t timing_now_ms = (uint64_t)esp_timer_get_time() / 1000U;
+        const timing_snapshot_t timing_before = timing_snapshot(&timing);
+        timing_update(&timing, timing_now_ms);
+        const timing_snapshot_t timing_current = timing_snapshot(&timing);
+        const bool timing_data_changed = timing_stopwatch_selected
+            ? timing_current.stopwatch_state != timing_before.stopwatch_state ||
+              timing_current.stopwatch_elapsed_seconds != timing_before.stopwatch_elapsed_seconds
+            : timing_current.countdown_state != timing_before.countdown_state ||
+              timing_current.countdown_remaining_seconds != timing_before.countdown_remaining_seconds;
+        if (!recovery_mode && timing_take_countdown_notification(&timing)) {
+            timing_notice_offer(&timing_notice, timing_now_ms);
+        }
         const uint32_t button_elapsed_ms =
             (uint32_t)(now - last_button_update) * portTICK_PERIOD_MS;
         last_button_update = now;
@@ -2082,6 +2107,11 @@ void app_main(void)
                 app_settings_get_snapshot(&snapshot);
             if (snapshot_error == ESP_OK &&
                 snapshot.generation != settings_generation) {
+                if (timing_preference_minutes != snapshot.settings.timer_minutes) {
+                    timing_preference_minutes = snapshot.settings.timer_minutes;
+                    /* Custom preference changes a choice, never the current run. */
+                    render_requested = true;
+                }
                 /* Visibility has no network/audio ownership requirements.
                  * Apply it from the newest persisted record even if another
                  * preference still waits for a running transaction. Modal
@@ -2475,6 +2505,38 @@ void app_main(void)
             alarm_was_ringing || alarm_started_this_loop ||
             alarm_gate_was_blocking;
 
+        /* A brief preview is lower priority than a real RTC alarm. Cancelling
+         * it never cancels a normal alarm queued/ringing on the same worker. */
+        const bool timing_notice_blocked = recovery_mode || alarm_modal_active ||
+            alarm_button_events_suppressed || voice_session_active ||
+            firmware_update_ui_active || gallery_download_ui_active ||
+            online_update_busy || online_update_confirmation_active ||
+            quick_settings.active || manual_sync_ui != MANUAL_SYNC_UI_NONE ||
+            power_setting_ui != POWER_SETTING_UI_NONE ||
+            app_image_delete_ui_is_active(&image_delete_ui) ||
+            dual_button_release_gate || voice_button_release_gate ||
+            image_delete_wait_for_button_release ||
+            previous_display_mode == APP_DISPLAY_NETWORK_SETUP;
+        const timing_notice_result_t timing_notice_result = timing_notice_update(
+            &timing_notice, timing_now_ms, timing_notice_blocked,
+            key_pressed_or_debounced || boot_pressed_or_debounced,
+            key_event == BUTTON_EVENT_SHORT_PRESS || boot_event == BUTTON_EVENT_SHORT_PRESS);
+        if (timing_notice_result.started) {
+            /* A muted reminder must not stop background music. */
+            if (settings.alarm_volume > 0U) {
+                const esp_err_t sound_error = audio_alert_preview(settings.alarm_volume);
+                if (sound_error != ESP_OK) {
+                    ESP_LOGI(TAG, "timer finished without sound: %s", esp_err_to_name(sound_error));
+                }
+            }
+            render_requested = true;
+        }
+        if (timing_notice_result.stopped) {
+            audio_alert_cancel_preview();
+            dual_button_release_gate = key_pressed_or_debounced || boot_pressed_or_debounced;
+            render_requested = true;
+        }
+
         if (alarm_started_this_loop && quick_settings.active) {
             quick_settings_close(&quick_settings);
             render_requested = true;
@@ -2497,7 +2559,7 @@ void app_main(void)
                      "image delete confirmation cancelled by alarm");
         }
 
-        if (alarm_button_events_suppressed) {
+        if (alarm_button_events_suppressed || timing_notice_result.consume_input) {
             key_event = BUTTON_EVENT_NONE;
             boot_event = BUTTON_EVENT_NONE;
         } else if (dual_button_release_gate) {
@@ -2812,7 +2874,14 @@ void app_main(void)
                     previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
                     latest_sd_image_status.state == SD_IMAGE_STATE_READY &&
                     latest_sd_image_status.image_count > 1U;
-                if (input_page == APP_PAGE_MUSIC && previous_display_mode != APP_DISPLAY_NETWORK_SETUP) {
+                if (input_page == APP_PAGE_TIMER && previous_display_mode != APP_DISPLAY_NETWORK_SETUP) {
+                    const uint64_t action_ms = (uint64_t)esp_timer_get_time() / 1000U;
+                    timing_key_short(&timing, timing_stopwatch_selected,
+                                     timing_preference_minutes, action_ms);
+                    if (timing_snapshot(&timing).countdown_state == TIMING_IDLE) {
+                        timing_notice.waiting = false;
+                    }
+                } else if (input_page == APP_PAGE_MUSIC && previous_display_mode != APP_DISPLAY_NETWORK_SETUP) {
                     (void)audio_music_toggle();
                 } else if (image_next_available) {
                     const size_t current_image =
@@ -2867,7 +2936,18 @@ void app_main(void)
         } else if (key_event == BUTTON_EVENT_LONG_PRESS) {
             const app_page_action_t key_action =
                 app_page_key_hold_action(input_page);
-            if (key_action == APP_PAGE_ACTION_NEXT_TRACK &&
+            if (key_action == APP_PAGE_ACTION_TIMER_RESET &&
+                previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
+                manual_sync_ui == MANUAL_SYNC_UI_NONE && !firmware_update_ui_active &&
+                !gallery_download_ui_active && !online_update_busy &&
+                !online_update_confirmation_active && !boot_pressed_or_debounced) {
+                timing_key_hold(&timing, timing_stopwatch_selected,
+                                (uint64_t)esp_timer_get_time() / 1000U);
+                if (timing_snapshot(&timing).countdown_state == TIMING_IDLE) {
+                    timing_notice.waiting = false;
+                }
+                render_requested = true;
+            } else if (key_action == APP_PAGE_ACTION_NEXT_TRACK &&
                 previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
                 manual_sync_ui == MANUAL_SYNC_UI_NONE && !firmware_update_ui_active &&
                 !gallery_download_ui_active && !online_update_busy && !online_update_confirmation_active &&
@@ -3107,7 +3187,14 @@ void app_main(void)
             const app_page_action_t boot_action =
                 recovery_mode ? APP_PAGE_ACTION_NONE
                               : app_page_boot_hold_action(input_page);
-            if (boot_action == APP_PAGE_ACTION_MUSIC_VOLUME &&
+            if (boot_action == APP_PAGE_ACTION_TIMER_MODE &&
+                previous_display_mode != APP_DISPLAY_NETWORK_SETUP &&
+                manual_sync_ui == MANUAL_SYNC_UI_NONE && !firmware_update_ui_active &&
+                !gallery_download_ui_active && !online_update_busy &&
+                !online_update_confirmation_active && !key_pressed_or_debounced) {
+                timing_stopwatch_selected = !timing_stopwatch_selected;
+                render_requested = true;
+            } else if (boot_action == APP_PAGE_ACTION_MUSIC_VOLUME &&
                 manual_sync_ui == MANUAL_SYNC_UI_NONE && !firmware_update_ui_active &&
                 !gallery_download_ui_active && !online_update_busy && !online_update_confirmation_active &&
                 !key_pressed_or_debounced) {
@@ -3206,7 +3293,8 @@ void app_main(void)
         const app_hold_prompt_context_t hold_prompt_context = {
             .buttons_ready = buttons_ready,
             .alarm_input_blocked =
-                alarm_button_events_suppressed || alarm_modal_active,
+                alarm_button_events_suppressed || alarm_modal_active || timing_notice.visible ||
+                timing_notice_result.consume_input,
             .dual_button_release_gate = dual_button_release_gate,
             .voice_button_release_gate = voice_button_release_gate,
             .image_delete_release_gate =
@@ -3280,6 +3368,13 @@ void app_main(void)
             ? "OPEN WEB SETTINGS"
             : app_hold_prompt_title(active_hold_action, hold_update_intent,
                                     settings.manual_saving_requested);
+        if (active_hold_action == APP_PAGE_ACTION_TIMER_RESET) {
+            hold_title = timing_stopwatch_selected ? "RESET STOPWATCH" :
+                timing_snapshot(&timing).countdown_state == TIMING_IDLE
+                    ? "START TIMER" : "RESET TIMER";
+        } else if (active_hold_action == APP_PAGE_ACTION_TIMER_MODE) {
+            hold_title = timing_stopwatch_selected ? "SHOW TIMER" : "SHOW STOPWATCH";
+        }
 
         const bool button_interaction_active =
             key_pressed || boot_pressed ||
@@ -3838,7 +3933,7 @@ void app_main(void)
             ++cycle;
         }
 
-        if (!recovery_mode && !quick_settings.active &&
+        if (!recovery_mode && !quick_settings.active && !timing_notice.visible &&
             automatic_update_check_pending &&
             power_policy.automatic_network &&
             online_update_error == ESP_OK &&
@@ -3873,7 +3968,7 @@ void app_main(void)
             const bool market_visible = active_page == APP_PAGE_MARKET &&
                 !recovery_mode && !firmware_update_ui_active &&
                 !gallery_download_ui_active && !online_update_busy &&
-                !online_update_confirmation_active && !alarm_modal_active &&
+                !online_update_confirmation_active && !alarm_modal_active && !timing_notice.visible &&
                 !quick_settings.active && manual_sync_ui == MANUAL_SYNC_UI_NONE &&
                 power_setting_ui == POWER_SETTING_UI_NONE &&
                 !voice_session_state_is_active(&voice_session);
@@ -3891,6 +3986,12 @@ void app_main(void)
                 display_show_alarm(&alarm_status);
             }
             previous_display_mode = APP_DISPLAY_ALARM;
+            previous_portal_seconds = 0U;
+        } else if (display_ready && timing_notice.visible) {
+            if (render_requested || previous_display_mode != APP_DISPLAY_TIMING_DONE) {
+                display_show_timing_done();
+            }
+            previous_display_mode = APP_DISPLAY_TIMING_DONE;
             previous_portal_seconds = 0U;
         } else if (display_ready && quick_settings.active) {
             const bool quick_hold_prompt = !quick_settings.release_required &&
@@ -4435,6 +4536,8 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_MARKET ||
                     previous_display_mode == APP_DISPLAY_MONOCHROME_IMAGE ||
                     previous_display_mode == APP_DISPLAY_MUSIC ||
+                    previous_display_mode == APP_DISPLAY_TIMING ||
+                    previous_display_mode == APP_DISPLAY_TIMING_DONE ||
                     previous_display_mode == APP_DISPLAY_HOLD_PROMPT ||
                     previous_display_mode ==
                         APP_DISPLAY_IMAGE_DELETE_CONFIRMATION ||
@@ -4461,6 +4564,8 @@ void app_main(void)
                 display_mode = APP_DISPLAY_MONOCHROME_IMAGE;
             } else if (active_page == APP_PAGE_MUSIC) {
                 display_mode = APP_DISPLAY_MUSIC;
+            } else if (active_page == APP_PAGE_TIMER) {
+                display_mode = APP_DISPLAY_TIMING;
             }
             if (show_setup) {
                 display_mode = APP_DISPLAY_NETWORK_SETUP;
@@ -4496,6 +4601,23 @@ void app_main(void)
                 if (display_mode != previous_display_mode ||
                     render_requested || calendar_data_changed) {
                     display_show_calendar(&dashboard, next_daily_page);
+                }
+            } else if (display_mode == APP_DISPLAY_TIMING) {
+                if (display_mode != previous_display_mode || render_requested || timing_data_changed) {
+                    const timing_snapshot_t current = timing_snapshot(&timing);
+                    const timing_state_t state = timing_stopwatch_selected
+                        ? current.stopwatch_state : current.countdown_state;
+                    const display_timing_status_t timing_status = {
+                        .stopwatch = timing_stopwatch_selected,
+                        .running = state == TIMING_RUNNING,
+                        .paused = state == TIMING_PAUSED,
+                        .finished = state == TIMING_FINISHED,
+                        .seconds = timing_stopwatch_selected ? current.stopwatch_elapsed_seconds
+                            : current.countdown_remaining_seconds,
+                        .duration_minutes = current.countdown_duration_minutes,
+                        .custom_minutes = timing_preference_minutes,
+                    };
+                    display_show_timing(&timing_status, next_daily_page);
                 }
             } else if (display_mode == APP_DISPLAY_MONOCHROME_IMAGE) {
                 if (display_mode != previous_display_mode ||

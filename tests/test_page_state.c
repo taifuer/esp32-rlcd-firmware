@@ -37,6 +37,7 @@ static app_page_t page_for_id(uint8_t id)
     case APP_DAILY_PAGE_IMAGE: return APP_PAGE_IMAGE;
     case APP_DAILY_PAGE_MUSIC: return APP_PAGE_MUSIC;
     case APP_DAILY_PAGE_CHAT: return APP_PAGE_VOICE;
+    case APP_DAILY_PAGE_TIMER: return APP_PAGE_TIMER;
     default: assert(false); return APP_PAGE_HOME;
     }
 }
@@ -99,8 +100,8 @@ static void test_reordering_preserves_current_and_rejects_invalid(void)
     app_page_state_set_music_available(&state, true);
     const uint8_t order[] = {APP_DAILY_PAGE_CHAT, APP_DAILY_PAGE_MUSIC,
         APP_DAILY_PAGE_IMAGE, APP_DAILY_PAGE_CALENDAR, APP_DAILY_PAGE_MARKET,
-        APP_DAILY_PAGE_WEATHER};
-    for (app_page_t page = APP_PAGE_HOME; page <= APP_PAGE_ONLINE_UPDATE; ++page) {
+        APP_DAILY_PAGE_WEATHER, APP_DAILY_PAGE_TIMER};
+    for (app_page_t page = APP_PAGE_HOME; page <= APP_PAGE_TIMER; ++page) {
         /* Voice navigation and modal restore target IDs, not old positions. */
         assert(app_page_state_open_page(&state, page));
         assert(app_page_state_set_daily_pages_order(&state, order));
@@ -140,7 +141,7 @@ static void test_reordering_preserves_current_and_rejects_invalid(void)
 static void test_every_visibility_and_availability_combination(void)
 {
     const app_page_t daily[] = {APP_PAGE_HOME, APP_PAGE_WEATHER, APP_PAGE_MARKET,
-        APP_PAGE_CALENDAR, APP_PAGE_IMAGE, APP_PAGE_MUSIC, APP_PAGE_VOICE};
+        APP_PAGE_CALENDAR, APP_PAGE_TIMER, APP_PAGE_IMAGE, APP_PAGE_MUSIC, APP_PAGE_VOICE};
     const app_page_t system[] = {APP_PAGE_SETTINGS, APP_PAGE_ONLINE_UPDATE, APP_PAGE_STATUS};
     for (unsigned mask = 0U; mask <= APP_DAILY_PAGES_ALL_MASK; ++mask) {
         for (unsigned flags = 0U; flags < 16U; ++flags) {
@@ -156,12 +157,13 @@ static void test_every_visibility_and_availability_combination(void)
                 (mask & APP_DAILY_PAGE_WEATHER) && (flags & 1U),
                 (mask & APP_DAILY_PAGE_MARKET) && (flags & 2U),
                 (mask & APP_DAILY_PAGE_CALENDAR) != 0U,
+                (mask & APP_DAILY_PAGE_TIMER) != 0U,
                 (mask & APP_DAILY_PAGE_IMAGE) && (flags & 4U),
                 (mask & APP_DAILY_PAGE_MUSIC) && (flags & 8U),
                 (mask & APP_DAILY_PAGE_CHAT) != 0U};
-            app_page_t ring[7];
+            app_page_t ring[APP_DAILY_PAGE_COUNT + 1U];
             size_t count = 0U;
-            for (size_t i = 0U; i < 7U; ++i) {
+            for (size_t i = 0U; i < APP_DAILY_PAGE_COUNT + 1U; ++i) {
                 assert(app_page_state_page_available(&state, daily[i]) == available[i]);
                 if (available[i]) ring[count++] = daily[i];
             }
@@ -176,7 +178,7 @@ static void test_every_visibility_and_availability_combination(void)
                     assert(app_page_state_current(&state) == next);
                 }
             }
-            for (size_t i = 0U; i < 7U; ++i) {
+            for (size_t i = 0U; i < APP_DAILY_PAGE_COUNT + 1U; ++i) {
                 app_page_state_go_home(&state);
                 /* Voice and late asynchronous requests use this same guard. */
                 assert(app_page_state_open_page(&state, daily[i]) == available[i]);
@@ -195,7 +197,8 @@ static void test_every_visibility_and_availability_combination(void)
                 assert(app_page_state_current(&state) == APP_PAGE_HOME);
                 assert(app_page_state_open_page(&state, daily[i]));
                 app_page_state_key_short_press(&state);
-                assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
+                assert(app_page_state_current(&state) ==
+                       (daily[i] == APP_PAGE_TIMER ? APP_PAGE_TIMER : APP_PAGE_SETTINGS));
             }
             for (size_t i = 0U; i < 3U; ++i) {
                 assert(app_page_state_open_page(&state, system[i]));
@@ -209,7 +212,7 @@ static void test_every_visibility_and_availability_combination(void)
             }
             app_page_state_set_recovery_mode(&state, true);
             app_page_state_set_daily_pages_mask(&state, (uint8_t)mask);
-            for (size_t i = 0U; i < 7U; ++i) assert(!app_page_state_open_page(&state, daily[i]));
+            for (size_t i = 0U; i < APP_DAILY_PAGE_COUNT + 1U; ++i) assert(!app_page_state_open_page(&state, daily[i]));
             for (unsigned i = 0U; i < 4U; ++i) {
                 const app_page_t before = app_page_state_current(&state);
                 assert(app_page_state_next_daily_page(&state) == before);
@@ -236,7 +239,7 @@ static void test_browsing_stays_and_background_discovery_never_navigates(void)
     assert(app_page_state_current(&state) == APP_PAGE_HOME);
     /* There is intentionally no clock/tick API in the page model. Repeated
      * background availability updates must also preserve every chosen page. */
-    for (app_page_t page = APP_PAGE_HOME; page <= APP_PAGE_ONLINE_UPDATE; ++page) {
+    for (app_page_t page = APP_PAGE_HOME; page <= APP_PAGE_TIMER; ++page) {
         assert(app_page_state_open_page(&state, page));
         for (unsigned poll = 0U; poll < 3600U; ++poll) {
             app_page_state_set_weather_enabled(&state, true);
@@ -269,7 +272,7 @@ int main(void)
 {
     uint8_t order[] = APP_DAILY_PAGES_DEFAULT_ORDER;
     test_page_permutations(order, 0U);
-    assert(tested_orders == 720U);
+    assert(tested_orders == 5040U);
     test_reordering_preserves_current_and_rejects_invalid();
     test_every_visibility_and_availability_combination();
     test_browsing_stays_and_background_discovery_never_navigates();
@@ -285,6 +288,14 @@ int main(void)
     assert(app_page_key_hold_threshold_ms(APP_PAGE_MARKET) == 2000U);
     assert(app_page_boot_hold_action(APP_PAGE_MARKET) == APP_PAGE_ACTION_NONE);
     assert(app_page_is_daily(APP_PAGE_CALENDAR));
+    assert(APP_PAGE_TIMER == 10); /* All existing enum IDs remain unchanged. */
+    assert(app_page_is_daily(APP_PAGE_TIMER));
+    assert(!app_page_is_system(APP_PAGE_TIMER));
+    assert(strcmp(app_page_daily_label(APP_PAGE_TIMER), "TIMER") == 0);
+    assert(app_page_key_hold_action(APP_PAGE_TIMER) == APP_PAGE_ACTION_TIMER_RESET);
+    assert(app_page_key_hold_threshold_ms(APP_PAGE_TIMER) == 2000U);
+    assert(app_page_boot_hold_action(APP_PAGE_TIMER) == APP_PAGE_ACTION_TIMER_MODE);
+    assert(app_page_boot_hold_threshold_ms(APP_PAGE_TIMER) == 2000U);
     assert(app_page_is_daily(APP_PAGE_IMAGE));
     assert(!app_page_is_daily(APP_PAGE_STATUS));
     assert(app_page_is_system(APP_PAGE_STATUS));
@@ -368,11 +379,12 @@ int main(void)
         app_page_state_set_image_available(&state, (flags & 2U) != 0U);
         app_page_state_set_music_available(&state, (flags & 4U) != 0U);
         app_page_state_set_market_enabled(&state, (flags & 8U) != 0U);
-        app_page_t ring[7] = {APP_PAGE_HOME};
+        app_page_t ring[APP_DAILY_PAGE_COUNT + 1U] = {APP_PAGE_HOME};
         unsigned count = 1U;
         if (flags & 1U) ring[count++] = APP_PAGE_WEATHER;
         if (flags & 8U) ring[count++] = APP_PAGE_MARKET;
         ring[count++] = APP_PAGE_CALENDAR;
+        ring[count++] = APP_PAGE_TIMER;
         if (flags & 2U) ring[count++] = APP_PAGE_IMAGE;
         if (flags & 4U) ring[count++] = APP_PAGE_MUSIC;
         ring[count++] = APP_PAGE_VOICE;
@@ -386,7 +398,8 @@ int main(void)
         for (unsigned index = 0U; index < count; ++index) {
             assert(app_page_state_open_page(&state, ring[index]));
             app_page_state_key_short_press(&state);
-            assert(app_page_state_current(&state) == APP_PAGE_SETTINGS);
+            assert(app_page_state_current(&state) ==
+                   (ring[index] == APP_PAGE_TIMER ? APP_PAGE_TIMER : APP_PAGE_SETTINGS));
         }
         const app_page_t system[] = {APP_PAGE_SETTINGS, APP_PAGE_ONLINE_UPDATE, APP_PAGE_STATUS};
         for (unsigned repeat = 0U; repeat < 3U; ++repeat)
@@ -400,7 +413,7 @@ int main(void)
             }
     }
     assert(!app_page_state_open_page(&state, (app_page_t)-1));
-    assert(!app_page_state_open_page(&state, (app_page_t)(APP_PAGE_ONLINE_UPDATE + 1)));
+    assert(!app_page_state_open_page(&state, (app_page_t)(APP_PAGE_TIMER + 1)));
     assert(!app_page_is_system((app_page_t)-1));
     assert(!app_page_is_daily((app_page_t)-1));
     assert(app_page_state_open_page(&state, APP_PAGE_MARKET));

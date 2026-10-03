@@ -17,6 +17,7 @@ int main(void)
     app_settings_t saved;
     app_settings_defaults(&saved);
     saved.audio_playback_volume = 68U;
+    saved.timer_minutes = 180U;
     quick_settings_t menu = {0};
     assert(!quick_settings_open_volume(NULL, &saved));
     assert(!quick_settings_open_volume(&menu, NULL));
@@ -56,6 +57,7 @@ int main(void)
     assert(saved.alarm_volume == APP_SETTINGS_DEFAULT_AUDIO_PLAYBACK_VOLUME);
     assert(saved.update_channel == APP_UPDATE_CHANNEL_STABLE);
     assert(saved.alarm_hour == 7U && saved.alarm_minute == 30U);
+    assert(saved.timer_minutes == 180U);
 
     assert(quick_settings_open_volume(&menu, &saved));
     release(&menu);

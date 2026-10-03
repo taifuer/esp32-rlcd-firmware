@@ -17,6 +17,7 @@ enum {
     FORM_FIELD_DAILY_PAGES = 1U << 9,
     FORM_FIELD_MUSIC_MODE = 1U << 10,
     FORM_FIELD_DAILY_ORDER = 1U << 11,
+    FORM_FIELD_TIMER_MINUTES = 1U << 12,
     FORM_FIELD_ALL = FORM_FIELD_TIMEZONE | FORM_FIELD_UNIT |
                      FORM_FIELD_VOLUME |
                      FORM_FIELD_UPDATES | FORM_FIELD_ALARM |
@@ -47,6 +48,7 @@ void app_settings_defaults(app_settings_t *settings)
         .daily_pages_mask = APP_DAILY_PAGES_ALL_MASK,
         .daily_pages_order = APP_DAILY_PAGES_DEFAULT_ORDER,
         .music_mode = APP_MUSIC_MODE_SEQUENTIAL,
+        .timer_minutes = APP_SETTINGS_DEFAULT_TIMER_MINUTES,
     };
 }
 
@@ -77,6 +79,8 @@ bool app_settings_validate(const app_settings_t *settings)
            (settings->daily_pages_mask &
             (uint8_t)~APP_DAILY_PAGES_ALL_MASK) == 0U &&
            app_daily_pages_order_valid(settings->daily_pages_order) &&
+           settings->timer_minutes >= APP_SETTINGS_MIN_TIMER_MINUTES &&
+           settings->timer_minutes <= APP_SETTINGS_MAX_TIMER_MINUTES &&
            (settings->music_mode == APP_MUSIC_MODE_SEQUENTIAL ||
             settings->music_mode == APP_MUSIC_MODE_REPEAT_ONE ||
             settings->music_mode == APP_MUSIC_MODE_REPEAT_ALL);
@@ -352,6 +356,15 @@ static bool assign_form_field(const char *key, const char *value,
         if (!parse_daily_pages_order(value, settings->daily_pages_order)) {
             return false;
         }
+    } else if (strcmp(key, "timer_minutes") == 0) {
+        field = FORM_FIELD_TIMER_MINUTES;
+        int minutes = 0;
+        if (value[0] < '0' || value[0] > '9' ||
+            !parse_decimal(value, APP_SETTINGS_MIN_TIMER_MINUTES,
+                           APP_SETTINGS_MAX_TIMER_MINUTES, &minutes)) {
+            return false;
+        }
+        settings->timer_minutes = (uint8_t)minutes;
     } else if (strcmp(key, "music_mode") == 0) {
         field = FORM_FIELD_MUSIC_MODE;
         if (strcmp(value, "sequential") == 0) {
@@ -433,6 +446,8 @@ bool app_settings_parse_form(const char *body, size_t length,
                 section_fields = FORM_FIELD_DAILY_PAGES | FORM_FIELD_DAILY_ORDER;
             } else if (strcmp(value, "music") == 0) {
                 section_fields = FORM_FIELD_MUSIC_MODE;
+            } else if (strcmp(value, "timer") == 0) {
+                section_fields = FORM_FIELD_TIMER_MINUTES;
             } else {
                 return false;
             }

@@ -99,3 +99,34 @@ assert.match(retryAction, /!cloud_voice_status.running[\s\S]*audio_conversation_
 assert.doesNotMatch(retryAction, /audio_voice_start|audio_conversation_continue|audio_conversation_release_key/,
   'retry starts new cloud intent, never replays old audio or bypasses capture-release gate');
 console.log('Page ordering and cloud retry: persisted order, explicit input, cleanup and release gating passed.');
+
+const timerAdvance = main.split('const uint64_t timing_now_ms =')[1]
+  .split('const uint32_t button_elapsed_ms')[0];
+assert.match(timerAdvance, /esp_timer_get_time\(\) \/ 1000U/);
+assert.match(timerAdvance, /timing_update\(&timing, timing_now_ms\)/);
+assert.doesNotMatch(timerAdvance, /APP_PAGE_TIMER|dashboard.time_valid|network_status/,
+  'both timers advance independently of visible page, RTC and network');
+assert.match(timerAdvance, /timing_stopwatch_selected\s*\?/,
+  'only the selected timing mode contributes display changes');
+assert.match(refresh, /timing_preference_minutes = snapshot.settings.timer_minutes/);
+assert.doesNotMatch(refresh, /timing_countdown_set_duration/,
+  'saving a custom choice must not change the selection or active run');
+assert.match(main, /timing_init\(&timing, TIMING_COUNTDOWN_DEFAULT_MINUTES\)/,
+  'boot starts at the five-minute choice, even with a legacy custom preference');
+assert.match(main, /timing_key_short\(&timing, timing_stopwatch_selected,/);
+assert.match(main, /timing_key_hold\(&timing, timing_stopwatch_selected,/);
+assert.match(main, /display_show_timing\(&timing_status, next_daily_page\)/);
+const timerModal = main.split('const bool timing_notice_blocked =')[1]
+  .split('if (alarm_started_this_loop && quick_settings.active)')[0];
+for (const gate of ['alarm_modal_active', 'voice_session_active', 'firmware_update_ui_active',
+  'gallery_download_ui_active', 'online_update_busy', 'online_update_confirmation_active',
+  'quick_settings.active', 'manual_sync_ui', 'power_setting_ui', 'image_delete_ui']) {
+  assert(timerModal.includes(gate), `timer notice must respect ${gate}`);
+}
+assert.match(timerModal, /if \(settings.alarm_volume > 0U\)\s*\{\s*const esp_err_t sound_error = audio_alert_preview/,
+  'silent notices must not acquire the audio worker or stop music');
+assert.match(timerModal, /audio_alert_cancel_preview\(\)/);
+assert.doesNotMatch(timerModal, /audio_alert_start\(|audio_alert_stop\(/,
+  'timer cleanup cannot cancel a real RTC alarm');
+assert.match(main, /if \(alarm_button_events_suppressed \|\| timing_notice_result.consume_input\)/);
+console.log('Timing integration: background monotonic clock, hot preference, modal priority, muted sound and input gates passed.');

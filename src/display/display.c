@@ -5,10 +5,12 @@
 
 #include "board_pins.h"
 #include "calendar_month.h"
+#include "calendar_empty_display_layout.h"
 #include "display_interaction_model.h"
 #include "music_display_model.h"
 #include "market_display_layout.h"
 #include "settings_display_layout.h"
+#include "timing_display_layout.h"
 #include "network_credentials.h"
 #include "qrcode.h"
 #include "u8g2.h"
@@ -1198,14 +1200,19 @@ void display_show_calendar(const display_dashboard_t *dashboard,
     if (s_u8g2 == NULL || dashboard == NULL) {
         return;
     }
-    if (!dashboard->time_valid) {
-        display_show_status("CALENDAR", "Time is not set");
-        return;
-    }
-
     calendar_month_info_t month = {0};
-    if (!calendar_month_info(dashboard->year, dashboard->month, &month)) {
-        display_show_status("CALENDAR", "Date is out of range");
+    if (!dashboard->time_valid ||
+        !calendar_month_info(dashboard->year, dashboard->month, &month) ||
+        dashboard->day == 0U || dashboard->day > month.days) {
+        calendar_empty_display_line_t lines[CALENDAR_EMPTY_DISPLAY_LINE_COUNT];
+        calendar_empty_display_lines(dashboard->time_valid, next_daily_page, lines);
+        draw_system_header(lines[0].text, 0U);
+        for (size_t i = 1U; i < CALENDAR_EMPTY_DISPLAY_LINE_COUNT - 1U; ++i) {
+            u8g2_SetFont(s_u8g2, lines[i].font);
+            draw_centered(lines[i].baseline_y, lines[i].text);
+        }
+        draw_daily_footer(lines[CALENDAR_EMPTY_DISPLAY_LINE_COUNT - 1U].text);
+        u8g2_SendBuffer(s_u8g2);
         return;
     }
 
@@ -1371,6 +1378,38 @@ void display_show_music(const display_music_t *music)
     }
     draw_centered(294, "HOLD KEY 2s: NEXT | HOLD BOOT 2s: VOLUME");
     u8g2_SendBuffer(s_u8g2);
+}
+
+static void draw_timing_lines(
+    const timing_display_line_t lines[TIMING_DISPLAY_LINE_COUNT])
+{
+    draw_system_header(lines[0].text, 0U);
+    for (size_t i = 1U; i < TIMING_DISPLAY_LINE_COUNT; ++i) {
+        timing_display_draw_line(s_u8g2, &lines[i]);
+    }
+    u8g2_DrawHLine(s_u8g2, DAILY_SIDE_MARGIN, DAILY_FOOTER_DIVIDER_Y,
+                   BOARD_DISPLAY_WIDTH - 2 * DAILY_SIDE_MARGIN);
+    u8g2_SendBuffer(s_u8g2);
+}
+
+void display_show_timing(const display_timing_status_t *status,
+                         const char *next_daily_page)
+{
+    if (s_u8g2 == NULL || status == NULL) return;
+    timing_display_line_t lines[TIMING_DISPLAY_LINE_COUNT];
+    timing_display_lines(status->stopwatch, status->running, status->paused,
+                         status->finished, status->seconds,
+                         status->duration_minutes, status->custom_minutes,
+                         next_daily_page, lines);
+    draw_timing_lines(lines);
+}
+
+void display_show_timing_done(void)
+{
+    if (s_u8g2 == NULL) return;
+    timing_display_line_t lines[TIMING_DISPLAY_LINE_COUNT];
+    timing_display_done_lines(lines);
+    draw_timing_lines(lines);
 }
 
 void display_show_image_delete_confirmation(

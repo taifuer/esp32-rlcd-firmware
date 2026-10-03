@@ -10,6 +10,22 @@ trap 'rm -rf -- "${RLCD_TEST_TMP}"' EXIT
 cd "${RLCD_PROJECT_DIR}"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/timer/include src/timer/timing.c tests/test_timing.c \
+  -o "${RLCD_TEST_TMP}/test_timing"
+"${RLCD_TEST_TMP}/test_timing"
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/app tests/test_timing_notice.c -o "${RLCD_TEST_TMP}/test_timing_notice"
+"${RLCD_TEST_TMP}/test_timing_notice"
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/app -Isrc/timer/include -Isrc/input/include \
+  src/timer/timing.c src/input/button_state.c tests/test_timing_controls.c \
+  -o "${RLCD_TEST_TMP}/test_timing_controls"
+"${RLCD_TEST_TMP}/test_timing_controls"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/audio/include tests/test_audio_alert_policy.c -o "${RLCD_TEST_TMP}/test_audio_alert_policy"
 "${RLCD_TEST_TMP}/test_audio_alert_policy"
 
@@ -184,6 +200,16 @@ cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
   "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" \
   "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
   -o "${RLCD_TEST_TMP}/test_music_layout"
+
+cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -I"${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc" -Isrc/display -Isrc/timer/include \
+  tests/test_timing_display.c \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_font.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
+  -o "${RLCD_TEST_TMP}/test_timing_display"
+"${RLCD_TEST_TMP}/test_timing_display"
 
 cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
   -I"${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc" \

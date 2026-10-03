@@ -21,6 +21,8 @@ static void assert_common_gate_blocks(
 {
     assert(!app_hold_prompt_allowed(
         context, APP_PAGE_ACTION_START_VOICE, false));
+    assert(!app_hold_prompt_allowed(context, APP_PAGE_ACTION_TIMER_RESET, false));
+    assert(!app_hold_prompt_allowed(context, APP_PAGE_ACTION_TIMER_MODE, false));
     assert(!app_hold_prompt_allowed(
         context, APP_PAGE_ACTION_REFRESH_MARKET, false));
     assert(!app_hold_prompt_allowed(
@@ -41,6 +43,8 @@ static void test_all_actions_and_other_button_gate(void)
         APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING,
         APP_PAGE_ACTION_NEXT_TRACK,
         APP_PAGE_ACTION_MUSIC_VOLUME,
+        APP_PAGE_ACTION_TIMER_RESET,
+        APP_PAGE_ACTION_TIMER_MODE,
     };
     for (size_t index = 0U;
          index < sizeof(actions) / sizeof(actions[0]); ++index) {

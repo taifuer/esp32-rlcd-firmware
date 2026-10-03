@@ -235,16 +235,20 @@ done
 expected_fonts="$(printf '%s\n' \
     u8g2_font_5x8_tf \
     u8g2_font_6x13_tf \
+    u8g2_font_helvB10_tf \
+    u8g2_font_helvB12_tf \
     u8g2_font_helvB14_tf \
     u8g2_font_helvB18_tf \
     u8g2_font_helvB24_tf \
+    u8g2_font_helvR12_tf \
     u8g2_font_logisoso16_tf \
     u8g2_font_logisoso20_tf \
     u8g2_font_logisoso42_tf \
+    u8g2_font_logisoso62_tn \
     u8g2_font_logisoso78_tn \
     u8g2_font_wqy16_t_gb2312)"
-actual_fonts="$(grep -oE 'u8g2_font_[A-Za-z0-9_]+' \
-    "${RLCD_PROJECT_DIR}/src/display/display.c" | sort -u)"
+actual_fonts="$(grep -rhoE --include='*.c' --include='*.h' \
+    'u8g2_font_[A-Za-z0-9_]+' "${RLCD_PROJECT_DIR}/src/display" | sort -u)"
 if [[ "${actual_fonts}" != "${expected_fonts}" ]]; then
     echo "显示字体清单已变化，请同步更新 NOTICE.md 和 LICENSES/" >&2
     diff -u <(printf '%s\n' "${expected_fonts}") <(printf '%s\n' "${actual_fonts}") || true

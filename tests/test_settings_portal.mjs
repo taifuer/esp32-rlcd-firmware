@@ -29,6 +29,7 @@ for (const [, closing, tag] of markup.matchAll(/<(\/?)([a-z][a-z0-9]*)\b[^>]*>/g
 assert.deepEqual(stack, []);
 for (const [id, expected] of Object.entries({
   settings: ['section', 'timezone', 'unit', 'volume'],
+  timerForm: ['section', 'timer_minutes'],
   alarmForm: ['section', 'alarm_volume', 'alarm', 'alarm_hour', 'alarm_minute', 'alarm_days'],
   updatesForm: ['section', 'updates'],
   pagesForm: ['section', 'daily_pages_mask', 'daily_pages_order'],
@@ -53,6 +54,15 @@ assert.match(html, /Qwen Audio 3\.0 Realtime Flash（默认）/);
 assert.match(html, /保存配置不会自动连接或发起收费测试/);
 assert.match(html, /<details><summary class="section-toggle">市场看板/);
 assert.match(html, /<details><summary class="section-toggle">显示页面/);
+assert.match(html, /<details><summary class="section-toggle">计时设置/);
+assert.match(html, /<label for="timerMinutes">自定义时长（分钟）<\/label>/);
+assert.match(html, /id="timerMinutes" name="timer_minutes" type="number" min="1" max="180" step="1" value="5" required/);
+const timerMarkup = html.split('<form id="timerForm">')[1].split('</form>')[0];
+assert.match(timerMarkup, /自定义 1—180 分钟，默认 5 分钟/);
+assert.match(timerMarkup, /与设备 1\/5\/10\/30 分钟不重复时增加为第 5 档/);
+assert.match(timerMarkup, /保存不改当前选中时长或正在进行的计时，也不自动开始/);
+assert.match(timerMarkup, /设备未开始时短按 KEY 选时长，按住 KEY 2 秒开始/);
+assert.doesNotMatch(timerMarkup, /下次重置|新计时|默认 25|按 KEY 开始/);
 assert.match(html, /隐藏只跳过页面，不停用功能，也不删除配置或文件/);
 assert.match(html, /保存后可继续修改其他设置/);
 assert.doesNotMatch(html, /保存并获取天气|随后将关闭热点并获取天气/);
@@ -60,6 +70,9 @@ assert.match(html, /报价时间为北京时间（UTC\+8）/);
 assert.equal((html.match(/<details(?:\s[^>]*)?>/g) || []).length, (html.match(/<\/details>/g) || []).length);
 assert.doesNotMatch(javascript, /localStorage|sessionStorage|navigator\.clipboard|execCommand/);
 const serverDefinition = source.split('static esp_err_t start_web_server(void)')[1].split('static void stop_web_server')[0];
+assert.doesNotMatch(serverDefinition, /\.uri\s*=\s*"\/api\/timer/, 'no remote countdown control API');
+assert.ok(source.includes('"\\"timer_minutes\\":%u') || source.includes('\\"timer_minutes\\":%u'), 'state includes the saved duration');
+assert.match(source, /settings\.timer_minutes/);
 const routeCount = [...serverDefinition.matchAll(/\.uri\s*=/g)].length;
 assert.ok(routeCount <= Number(serverDefinition.match(/max_uri_handlers\s*=\s*(\d+)/)[1]), 'all portal routes fit the server handler limit');
 for (const route of ['/api/conversation/key', '/api/conversation/preferences', '/api/conversation/clear',
@@ -81,6 +94,11 @@ class Element {
   get firstChild() { return this.children[0] || null; }
   attributes = {}; controls = [];
   setAttribute(name, value) { this.attributes[name] = value; }
+  pointerCaptures = new Set();
+  getBoundingClientRect() { return {left: 0, top: 0, width: 200, height: 150}; }
+  setPointerCapture(id) { this.pointerCaptures.add(id); }
+  hasPointerCapture(id) { return this.pointerCaptures.has(id); }
+  releasePointerCapture(id) { this.pointerCaptures.delete(id); }
   focus() {}
   querySelectorAll() { return this.controls; }
 }
@@ -88,6 +106,7 @@ const elements = Object.fromEntries(ids.map(id => [id, new Element()]));
 const days = [1, 2, 4, 8, 16, 32, 64].map(bit => Object.assign(new Element(), {dataset: {bit: String(bit)}}));
 const forms = {
   settings: {section: 'general', names: {timezone: 'timezone', unit: 'unit', volume: 'volume'}},
+  timerForm: {section: 'timer', names: {timerMinutes: 'timer_minutes'}},
   alarmForm: {section: 'alarm', names: {alarmVolume: 'alarm_volume', alarm: 'alarm', alarmHour: 'alarm_hour', alarmMinute: 'alarm_minute', alarmDays: 'alarm_days'}},
   updatesForm: {section: 'updates', names: {updates: 'updates'}},
   pagesForm: {section: 'pages', names: {dailyPagesMask: 'daily_pages_mask', dailyPagesOrder: 'daily_pages_order'}},
@@ -99,15 +118,16 @@ const forms = {
 };
 for (const [id, form] of Object.entries(forms)) elements[id].controls = Object.keys(form.names).map(name => elements[name]);
 elements.alarmForm.controls.push(elements.alarmTime, elements.alarmPreview, ...days);
-const pageIds = ['pageWeather', 'pageMarket', 'pageCalendar', 'pageImage', 'pageMusic', 'pageChat'];
+elements.timerForm.controls.push(elements.timerSave);
+const pageIds = ['pageWeather', 'pageMarket', 'pageCalendar', 'pageImage', 'pageMusic', 'pageChat', 'pageTimer'];
 elements.pagesForm.controls.push(...pageIds.flatMap(id => [elements[id], elements[id+'Up'], elements[id+'Down']]), elements.pagesSave);
 elements.panelNetwork.hidden = elements.panelMedia.hidden = elements.panelMaintenance.hidden = true;
 elements.musicSection.open = true;
 elements.musicSleep.value = '15';
 elements.wifiForm.hidden = true;
 let state = {
-  token: 'test-token', timezone: 480, unit: 'c', volume: 50, alarm_volume: 68, updates: 'stable',
-  daily_pages_mask: 63, daily_pages_order: [1,2,4,8,16,32], music_mode: 'sequential',
+  token: 'test-token', timezone: 480, unit: 'c', volume: 50, alarm_volume: 68, timer_minutes: 5, updates: 'stable',
+  daily_pages_mask: 127, daily_pages_order: [1,2,4,64,8,16,32], music_mode: 'sequential',
   alarm: 'off', alarm_hour: 7, alarm_minute: 30, alarm_days: 62,
   wifi_configured: true, wifi_ssid: 'Test Wi-Fi', sd_state: 'ready', image_count: 0,
   weather: {available: true, enabled: false, configured: false, key_saved: false,
@@ -123,7 +143,8 @@ let market = {enabled: false, ids: [0, 3, 7, 9, 11],
 let failPost = false, lastBody = '', pendingPost;
 let disconnectedPost = false;
 let unauthorized = false;
-const failedGets = new Map(), writes = [], timers = new Map();
+const failedGets = new Map(), writes = [], timers = new Map(), frames = new Map(), windowEvents = new Map();
+let nextFrame = 0;
 let nextTimer = 0, hangRead = false, hangPost = false, hangBody = false;
 const abortWait = signal => new Promise((resolve, reject) => {
   signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), {name: 'AbortError'})), {once: true});
@@ -140,6 +161,7 @@ class FakeRequest {
   send(body) { this.body = body; }
 }
 const context = vm.createContext({
+  window: {addEventListener(name, listener) { windowEvents.set(name, listener); }},
   document: {
     getElementById(id) { assert.ok(elements[id], 'missing element ' + id); return elements[id]; },
     querySelectorAll(selector) { assert.equal(selector, '.alarm-day'); return days; },
@@ -166,8 +188,9 @@ const context = vm.createContext({
           state.daily_pages_order = fields.get('daily_pages_order').split(',').map(Number);
         }
         if (fields.get('section') === 'music') state.music_mode = fields.get('music_mode');
+        if (fields.get('section') === 'timer') state.timer_minutes = Number(fields.get('timer_minutes'));
       }
-      if (path === '/api/settings/defaults' && !failPost) { state.daily_pages_mask = 63; state.daily_pages_order = [1,2,4,8,16,32]; state.music_mode = 'sequential'; }
+      if (path === '/api/settings/defaults' && !failPost) { state.daily_pages_mask = 127; state.daily_pages_order = [1,2,4,64,8,16,32]; state.music_mode = 'sequential'; state.timer_minutes = 5; }
       if (path === '/api/conversation/key' && !failPost) {
         const fields = new URLSearchParams(options.body);
         state.conversation = {...state.conversation,
@@ -238,8 +261,12 @@ const context = vm.createContext({
   setTimeout(callback, ms) { const id = ++nextTimer; timers.set(id, {callback, ms}); return id; },
   clearTimeout(id) { timers.delete(id); },
   AbortController, XMLHttpRequest: FakeRequest,
+  Blob,
+  requestAnimationFrame(callback) { const id = ++nextFrame; frames.set(id, callback); return id; },
+  cancelAnimationFrame(id) { frames.delete(id); },
 });
 vm.runInContext(javascript, context);
+const imagePagehide = windowEvents.get('pagehide');
 await new Promise(resolve => setImmediate(resolve));
 // Reading/rendering AI state never tests a paid endpoint or starts a session.
 const aiWritesBefore = writes.length;
@@ -295,6 +322,7 @@ assert.equal(elements.conversationPreferencesSave.disabled, true);
 renderConversation({});
 assert.equal(writes.length, aiWritesBefore, 'state display must not generate a mutation or cloud test');
 assert.equal(elements.volume.value, 50);
+assert.equal(elements.timerMinutes.value, 5);
 assert.ok(pageIds.every(id => elements[id].checked), 'migration/default all pages are offered');
 assert.equal(elements.marketChoices.children.length, 15);
 assert.equal(elements.marketCount.textContent, '5 / 5');
@@ -680,7 +708,7 @@ confirmed = true;
 await elements.useHotspot.onclick();
 assert.equal(lastPath, '/api/hotspot');
 assert.equal(lastBody, 'confirm=HOTSPOT');
-const originalHandlers = Object.fromEntries(ids.map(id => [id, Object.fromEntries(['onclick','onsubmit','onchange','oninput','ontoggle'].map(event => [event,elements[id][event]]))]));
+const originalHandlers = Object.fromEntries(ids.map(id => [id, Object.fromEntries(['onclick','onsubmit','onchange','oninput','ontoggle','onpointerdown','onpointermove','onpointerup','onpointercancel','onlostpointercapture'].map(event => [event,elements[id][event]]))]));
 const originalDefaultsHandler = elements.defaults.onclick;
 const qrContext = vm.createContext({...context,
   location: {hash: '#' + sessionToken, pathname: '/'},
@@ -706,11 +734,11 @@ elements.alarmVolume.value = 31;
 elements.conversationKey.value = 'keep-ai-draft';
 elements.weatherKey.value = 'keep-weather-draft';
 const marketDraft = selectedMarket();
-for (let mask = 0; mask <= 63; mask++) {
+for (let mask = 0; mask <= 127; mask++) {
   pageIds.forEach((id, index) => { elements[id].checked = (mask & (1 << index)) !== 0; });
   await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
   assert.equal(lastPath, '/api/settings');
-  assert.equal(lastBody, 'section=pages&daily_pages_mask=' + mask + '&daily_pages_order=1%2C2%2C4%2C8%2C16%2C32');
+  assert.equal(lastBody, 'section=pages&daily_pages_mask=' + mask + '&daily_pages_order=1%2C2%2C4%2C64%2C8%2C16%2C32');
   assert.equal(state.daily_pages_mask, mask);
   assert.equal(elements.volume.value, 43);
   assert.equal(elements.alarmVolume.value, 31);
@@ -725,7 +753,7 @@ elements.volume.value = 43;
 failPost = true;
 await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
 assert.equal(elements.pageCalendar.checked, false, 'failed save preserves page draft');
-assert.equal(state.daily_pages_mask, 63);
+assert.equal(state.daily_pages_mask, 127);
 assert.equal(elements.pagesMessage.textContent, '保存失败');
 assert.equal(elements.pagesSave.disabled, false);
 failPost = false;
@@ -738,7 +766,7 @@ assert.equal(elements.volume.disabled, false);
 finishPagesPost();
 await pagesSubmission;
 pendingPost = null;
-state.daily_pages_mask = 64;
+state.daily_pages_mask = 128;
 await vm.runInContext("load('pages')", context);
 assert.equal(elements.pagesSave.disabled, true, 'unsupported mask is not silently truncated');
 state.daily_pages_mask = 0;
@@ -817,7 +845,7 @@ await elements.weatherForm.onsubmit({preventDefault() {}, target: elements.weath
 assert.equal(state.weather.enabled, false);
 assert.equal(elements.weatherSave.disabled, false);
 assert.equal(elements.pageMusic.checked, true);
-assert.match(html, /恢复时区、单位、音量、显示页面、音乐播放方式、闹钟与更新偏好/);
+assert.match(html, /恢复时区、单位、音量、显示页面、计时时长、音乐播放方式、闹钟与更新偏好/);
 let finishDefaultsPost;
 pendingPost = new Promise(resolve => { finishDefaultsPost = resolve; });
 const defaultsSubmission = elements.defaults.onclick();
@@ -832,7 +860,7 @@ assert.equal(elements.pagesSave.disabled, false);
 assert.equal(elements.conversationKey.value, 'keep-ai-draft');
 assert.equal(elements.weatherApiHost.value, 'next.qweatherapi.com');
 const recoveryMarkup = source.split('static const char RECOVERY_SETTINGS_PAGE[] =')[1].split('static const char SETTINGS_PAGE[] =')[0];
-assert.doesNotMatch(recoveryMarkup, /pagesForm|daily_pages_mask/);
+assert.doesNotMatch(recoveryMarkup, /pagesForm|daily_pages_mask|timerForm|timer_minutes|imageFit/);
 assert.ok(serverDefinition.includes('if (error == ESP_OK && !recovery_mode) {\n        error = httpd_register_uri_handler(s_http_server, &settings_uri);'));
 
 // Music preferences are independent of catalog polling and of the temporary
@@ -971,31 +999,31 @@ assert.equal(elements.musicMode.value, state.music_mode, 'explicit retry shows a
 assert.equal(elements.musicSettingsMessage.textContent, '', 'successful verification clears stale uncertain message');
 assert.equal(elements.loadNotice.hidden, true);
 
-// Ordering keeps the six stable IDs, preserves hidden pages and independent
+// Ordering keeps the seven stable IDs, preserves hidden pages and independent
 // drafts, and changes only after explicit save. Invalid server data blocks it.
-state.daily_pages_order = [1,2,4,8,16,32];
+state.daily_pages_order = [1,2,4,64,8,16,32];
 await vm.runInContext("load('pages')", context);
 assert.equal(elements.pageWeatherUp.disabled, true);
 assert.equal(elements.pageChatDown.disabled, true);
 elements.pageChatUp.onclick();
 const orderedBits = () => Array.from(vm.runInContext('dailyPageOrder', context));
-assert.deepEqual(orderedBits(), [1,2,4,8,32,16]);
-assert.deepEqual(state.daily_pages_order, [1,2,4,8,16,32]);
+assert.deepEqual(orderedBits(), [1,2,4,64,8,32,16]);
+assert.deepEqual(state.daily_pages_order, [1,2,4,64,8,16,32]);
 elements.pageChat.checked = false;
 await vm.runInContext("load('settings')", context);
 elements.navNetwork.onclick(); elements.navGeneral.onclick();
-assert.deepEqual(orderedBits(), [1,2,4,8,32,16]);
+assert.deepEqual(orderedBits(), [1,2,4,64,8,32,16]);
 assert.equal(elements.pageChat.checked, false);
 await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
-assert.deepEqual(state.daily_pages_order, [1,2,4,8,32,16]);
-assert.equal(elements.pageOrder.children[4], elements.pageChatRow);
+assert.deepEqual(state.daily_pages_order, [1,2,4,64,8,32,16]);
+assert.equal(elements.pageOrder.children[5], elements.pageChatRow);
 failPost = true;
 elements.pageChatUp.onclick();
 await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
-assert.deepEqual(orderedBits(), [1,2,4,32,8,16], 'failed save retains ordered draft');
-assert.deepEqual(state.daily_pages_order, [1,2,4,8,32,16]);
+assert.deepEqual(orderedBits(), [1,2,4,64,32,8,16], 'failed save retains ordered draft');
+assert.deepEqual(state.daily_pages_order, [1,2,4,64,8,32,16]);
 failPost = false;
-for (const invalid of [undefined, [], [1,1,4,8,16,32], [1,2,4,8,16,64], ['1',2,4,8,16,32]]) {
+for (const invalid of [undefined, [], [1,2,4,8,16,32], [1,1,4,64,8,16,32], [1,2,4,8,16,64,128], ['1',2,4,64,8,16,32]]) {
   state.daily_pages_order = invalid;
   await vm.runInContext("load('pages')", context);
   assert.equal(elements.pagesSave.disabled, true);
@@ -1003,7 +1031,7 @@ for (const invalid of [undefined, [], [1,1,4,8,16,32], [1,2,4,8,16,64], ['1',2,4
   elements.pageChatUp.onclick();
   assert.deepEqual(orderedBits(), previous);
 }
-state.daily_pages_order = [1,2,4,8,16,32];
+state.daily_pages_order = [1,2,4,64,8,16,32];
 await vm.runInContext("load('pages')", context);
 
 // Daily AI preferences and service credentials are separate forms and trust
@@ -1398,11 +1426,343 @@ await elements.retryLoads.onclick();
 assert.equal(elements.weatherSave.disabled, false);
 assert.equal(elements.weatherApiHost.value, 'keep-city-retry.qweatherapi.com');
 
+// Countdown configuration saves only a custom option, on AP or authorized
+// LAN. Independent drafts survive reads, errors and reauthorization.
+await vm.runInContext("load('timer')", context);
+elements.timerMinutes.value = '45';
+elements.volume.value = 57;
+elements.weatherKey.value = 'keep-timer-test-secret';
+elements.navNetwork.onclick(); elements.navGeneral.onclick();
+await vm.runInContext("load('settings')", context);
+assert.equal(elements.timerMinutes.value, '45');
+elements.volume.value = 57;
+const timerWritesBefore = writes.length;
+let finishTimerPost;
+pendingPost = new Promise(resolve => { finishTimerPost = resolve; });
+const timerSubmission = elements.timerForm.onsubmit({preventDefault() {}, target: elements.timerForm});
+assert.equal(lastBody, 'section=timer&timer_minutes=45');
+assert.equal(elements.timerSave.disabled, true);
+assert.equal(elements.timerMinutes.disabled, true);
+assert.equal(elements.volume.disabled, false);
+assert.equal(elements.pagesSave.disabled, false);
+assert.equal(elements.defaults.disabled, true, 'defaults cannot race a duration save');
+finishTimerPost(); await timerSubmission; pendingPost = null;
+assert.equal(state.timer_minutes, 45);
+assert.equal(elements.timerMinutes.value, 45);
+assert.equal(elements.volume.value, 57);
+assert.equal(elements.weatherKey.value, 'keep-timer-test-secret');
+assert.ok(writes.slice(timerWritesBefore).every(item => item.path === '/api/settings'), 'duration never starts a timer remotely');
+for (const invalid of ['', '0', '181', '-1', '1.5', '1e2', 'NaN']) {
+  const before = writes.length;
+  elements.timerMinutes.value = invalid;
+  await elements.timerForm.onsubmit({preventDefault() {}, target: elements.timerForm});
+  assert.equal(writes.length, before, 'invalid duration remains local: ' + invalid);
+  assert.match(elements.timerMessage.textContent, /1—180/);
+}
+state.local_network = true;
+await vm.runInContext("load('session')", context);
+for (const value of ['1', '180']) {
+  elements.timerMinutes.value = value;
+  await elements.timerForm.onsubmit({preventDefault() {}, target: elements.timerForm});
+  assert.equal(lastBody, 'section=timer&timer_minutes=' + value);
+  assert.equal(state.timer_minutes, Number(value));
+}
+elements.timerMinutes.value = '26'; failPost = true;
+await elements.timerForm.onsubmit({preventDefault() {}, target: elements.timerForm});
+failPost = false;
+assert.equal(state.timer_minutes, 180);
+assert.equal(elements.timerMinutes.value, '26');
+assert.equal(elements.timerSave.disabled, false);
+assert.equal(elements.timerMessage.textContent, '保存失败');
+hangPost = true;
+const timerBeforeTimeout = writes.length;
+const timerTimeout = elements.timerForm.onsubmit({preventDefault() {}, target: elements.timerForm});
+expireRequest(45000); await timerTimeout;
+assert.match(elements.timerMessage.textContent, /结果尚未确认/);
+assert.equal(elements.timerMinutes.value, '26');
+assert.match(elements.loadMessage.textContent, /计时设置/);
+await elements.retryLoads.onclick();
+assert.equal(writes.length, timerBeforeTimeout + 1, 'verification never replays the timer save');
+assert.equal(elements.timerMinutes.value, 180);
+assert.equal(elements.volume.value, 57);
+elements.timerMinutes.value = '27'; unauthorized = true;
+await elements.timerForm.onsubmit({preventDefault() {}, target: elements.timerForm});
+const timerUnauthorizedWrites = writes.length;
+assert.equal(elements.timerSave.disabled, true);
+assert.equal(elements.timerMinutes.value, '27');
+elements.pairCode.value = 'abc12345';
+await elements.pairForm.onsubmit({preventDefault() {}});
+assert.equal(writes.length, timerUnauthorizedWrites + 1, 'only the explicit pair request is sent');
+assert.equal(elements.timerMinutes.value, '27');
+assert.equal(elements.timerSave.disabled, false);
+for (const invalid of [undefined, 0, 181, 1.5, '25', null]) {
+  state.timer_minutes = invalid;
+  await vm.runInContext("load('timer')", context);
+  assert.equal(elements.timerSave.disabled, true, 'invalid duration state blocks the form');
+  assert.equal(elements.timerMinutes.value, '27', 'bad reads keep the draft');
+  const before = writes.length;
+  await elements.timerForm.onsubmit({preventDefault() {}, target: elements.timerForm});
+  assert.equal(writes.length, before);
+}
+state.timer_minutes = 30;
+await elements.retryLoads.onclick();
+assert.equal(elements.timerMinutes.value, 30);
+assert.equal(elements.timerSave.disabled, false);
+state.local_network = false;
+await vm.runInContext("load('session')", context);
+elements.timerMinutes.value = '44';
+await elements.defaults.onclick();
+assert.equal(state.timer_minutes, 5);
+assert.equal(elements.timerMinutes.value, 5, 'defaults explicitly clears custom duration drafts');
+assert.equal(elements.weatherKey.value, 'keep-timer-test-secret');
+assert.match(lastConfirmation, /当前选中时长、正在进行的计时.*不变/);
+state.daily_pages_mask = 64;
+await vm.runInContext("load('pages')", context);
+assert.equal(elements.pageTimer.checked, true);
+assert.ok(pageIds.filter(id => id !== 'pageTimer').every(id => !elements[id].checked));
+elements.pageTimerUp.onclick();
+assert.deepEqual(orderedBits(), [1,2,64,4,8,16,32]);
+await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
+assert.equal(state.daily_pages_mask, 64);
+assert.deepEqual(state.daily_pages_order, [1,2,64,4,8,16,32]);
+
+// Pure geometry runs the firmware functions, including extreme aspect ratios,
+// contain compatibility and source-bound clamping in every drag direction.
+assert.match(html, /<option value="contain" selected>完整显示/);
+assert.match(html, /<option value="cover">铺满裁剪/);
+assert.match(html, /#imageCanvas\[data-fit=cover\]\{touch-action:none/);
+const geometry = (width, height, mode, focus) => context.imageGeometry(width, height, mode, focus);
+const plain = value => JSON.parse(JSON.stringify(value));
+assert.deepEqual(plain(geometry(800, 500, 'cover')), {
+  sx: 0, sy: 0, sw: 800, sh: 500, dx: 0, dy: 0, dw: 400, dh: 250, scale: .5, maxX: 0, maxY: 0,
+});
+assert.deepEqual(plain(geometry(400, 800, 'contain')), {
+  sx: 0, sy: 0, sw: 400, sh: 800, dx: 137, dy: 0, dw: 125, dh: 250, scale: .3125, maxX: 0, maxY: 0,
+});
+assert.equal(geometry(1000, 250, 'cover').sx, 300);
+assert.equal(geometry(400, 1000, 'cover').sy, 375);
+for (const [width, height] of [[400,250],[800,600],[300,800],[1,40000000],[40000000,1],[1,1],[777,333]]) {
+  const contain = geometry(width, height, 'contain');
+  assert.equal(contain.sw, width); assert.equal(contain.sh, height);
+  assert.ok(contain.dx >= 0 && contain.dy >= 0 && contain.dx + contain.dw <= 400 && contain.dy + contain.dh <= 250);
+  for (const x of [-100, 0, .25, .5, 1, 100, NaN]) for (const y of [-100, 0, .5, 1, 100, NaN]) {
+    const crop = geometry(width, height, 'cover', {x, y});
+    assert.ok(crop.sx >= 0 && crop.sy >= 0);
+    assert.ok(crop.sx + crop.sw <= width + 1e-8 && crop.sy + crop.sh <= height + 1e-8);
+    assert.equal(crop.dw, 400); assert.equal(crop.dh, 250);
+    assert.ok(Math.abs(crop.sw / crop.sh - 1.6) < 1e-9);
+    for (const delta of [-1e10, 0, 1e10]) {
+      const focus = context.imagePan(crop, delta, -delta);
+      assert.ok(focus.x >= 0 && focus.x <= 1 && focus.y >= 0 && focus.y <= 1);
+      const moved = geometry(width, height, 'cover', focus);
+      assert.ok(moved.sx + moved.sw <= width + 1e-8 && moved.sy + moved.sh <= height + 1e-8);
+    }
+  }
+}
+for (const [width, height] of [[0, 10], [-1, 20], [NaN, 1], [1, Infinity]]) {
+  assert.throws(() => geometry(width, height, 'cover'), /尺寸/);
+}
+assert.equal(context.imagePan(geometry(1000,250,'cover'), 100, 0).x, 1 / 3, 'drag right moves image right / source window left');
+
+// A tiny host canvas is sufficient to verify binary packing and reserved rows.
+// Browser decoding stays mocked: these tests make no network or image upload.
+const canvas = {
+  pixels: new Uint8ClampedArray(400 * 300 * 4), draws: [], fail: false,
+  fillRect() { this.pixels.fill(0); for (let i = 3; i < this.pixels.length; i += 4) this.pixels[i] = 255; },
+  drawImage(bitmap, sx, sy, sw, sh, dx, dy, dw, dh) {
+    if (this.fail) throw new Error('测试绘制失败');
+    assert.equal(bitmap.closed || 0, 0, 'closed image resources are never reused');
+    this.draws.push({bitmap, sx, sy, sw, sh, dx, dy, dw, dh});
+    assert.ok(dy + dh <= 250, 'all source rendering leaves the footer untouched');
+    for (let y = dy; y < dy + dh; y++) for (let x = dx; x < dx + dw; x++) {
+      const value = bitmap.sample ? bitmap.sample(sx + (x-dx)*sw/dw, sy + (y-dy)*sh/dh) : 180;
+      const offset = (y*400+x)*4;
+      this.pixels[offset] = this.pixels[offset+1] = this.pixels[offset+2] = value;
+    }
+  },
+  getImageData() { return {data: this.pixels.slice()}; },
+  createImageData(width, height) { return {data: new Uint8ClampedArray(width*height*4)}; },
+  putImageData(preview) { this.preview = preview; },
+};
+elements.imageCanvas.getContext = () => canvas;
+elements.threshold.value = '128'; elements.dither.checked = false;
+const bitmap = (width, height, sample) => ({width, height, sample, closed: 0, close() { ++this.closed; }});
+context.createImageBitmap = async (file, options) => {
+  assert.equal(options.imageOrientation, 'from-image');
+  return file.promise || file.bitmap;
+};
+context.window.createImageBitmap = context.createImageBitmap;
+const selectImage = file => {
+  elements.imageFile.files = file ? [file] : [];
+  elements.imageFile.value = file?.name || '';
+  return elements.imageFile.onchange({target: elements.imageFile});
+};
+const fileFor = (source, name='test.png') => ({name, type:'image/png', size:100, bitmap:source});
+const flushFrames = () => {
+  for (const [id, callback] of [...frames]) { frames.delete(id); callback(); }
+};
+const currentPbm = async () => new Uint8Array(await vm.runInContext('imagePbm', context).arrayBuffer());
+const imageWritesBefore = writes.length, imageReadsBefore = getRequests.length;
+request = null;
+const firstBitmap = bitmap(1000, 250, x => x % 256);
+await selectImage(fileFor(firstBitmap));
+assert.equal(elements.imagePreview.hidden, false);
+assert.equal(elements.imageFit.value, 'contain');
+assert.equal(elements.imageUpload.disabled, false);
+assert.equal(firstBitmap.closed, 0, 'current source is retained for recropping');
+const containBytes = await currentPbm();
+assert.equal(containBytes.length, 15011);
+assert.equal(new TextDecoder().decode(containBytes.slice(0, 11)), 'P4\n400 300\n');
+assert.ok(containBytes.slice(11+50*250).every(value => value === 255), '50 reserved rows are packed black');
+elements.imageFit.value = 'cover'; elements.imageFit.onchange();
+assert.equal(elements.imageUpload.disabled, true, 'pending geometry cannot upload an obsolete preview');
+flushFrames();
+assert.equal(elements.imageCanvas.dataset.fit, 'cover');
+assert.equal(elements.imageCenter.hidden, false);
+assert.equal(canvas.draws.at(-1).sx, 300);
+assert.notDeepEqual(await currentPbm(), containBytes);
+const pointer = (overrides={}) => ({pointerId:1, button:0, clientX:100, clientY:50, preventDefault() {}, ...overrides});
+elements.imageCanvas.onpointerdown(pointer({clientY:140}));
+assert.equal(elements.imageCanvas.pointerCaptures.size, 0, 'footer cannot initiate a crop');
+elements.imageCanvas.onpointerdown(pointer({button:2}));
+assert.equal(elements.imageCanvas.pointerCaptures.size, 0, 'secondary button does not pan');
+elements.imageCanvas.onpointerdown(pointer({pointerType:'touch'}));
+assert.equal(elements.imageCanvas.hasPointerCapture(1), true);
+elements.imageCanvas.onpointermove(pointer({pointerId:2, clientX:200}));
+assert.equal(frames.size, 0, 'other touches cannot replace the active pointer');
+elements.imageCanvas.onpointermove(pointer({clientX:200}));
+elements.imageCanvas.onpointermove(pointer({clientX:250}));
+assert.equal(frames.size, 1, 'drag frames are coalesced');
+flushFrames();
+assert.equal(canvas.draws.at(-1).sx, 0, 'CSS-scaled drag is converted to canvas units and clamped');
+elements.imageCanvas.onpointermove(pointer({clientX:-1000})); flushFrames();
+assert.equal(canvas.draws.at(-1).sx, 600);
+elements.imageCanvas.onpointercancel(pointer());
+assert.equal(elements.imageCanvas.pointerCaptures.size, 0);
+elements.imageCenter.onclick(); flushFrames();
+assert.equal(canvas.draws.at(-1).sx, 300);
+elements.imageCanvas.onpointerdown(pointer());
+elements.imageFit.value = 'contain'; elements.imageFit.onchange(); flushFrames();
+assert.equal(elements.imageCanvas.pointerCaptures.size, 0, 'mode change releases an active drag');
+elements.imageCanvas.onpointerdown(pointer());
+assert.equal(elements.imageCanvas.pointerCaptures.size, 0, 'contain is not draggable');
+
+// Compare exact PBM conversion with the pre-existing threshold/dither math.
+for (const dither of [false, true]) for (const threshold of [1, 128, 254]) {
+  elements.threshold.value = String(threshold); elements.dither.checked = dither;
+  elements.threshold.oninput(); flushFrames();
+  const gray = new Float32Array(vm.runInContext('imageGray', context)), expected = new Uint8Array(15000);
+  expected.fill(255, 250*50);
+  for (let y=0; y<250; y++) for (let x=0; x<400; x++) {
+    const i=y*400+x, next=gray[i]>=threshold?255:0, error=gray[i]-next;
+    if (!next) expected[i>>3] |= 1 << (7-(i&7));
+    if (dither) {
+      if (x+1<400) gray[i+1] += error*7/16;
+      if (y+1<250) {
+        if (x>0) gray[i+399] += error*3/16;
+        gray[i+400] += error*5/16;
+        if (x+1<400) gray[i+401] += error/16;
+      }
+    }
+  }
+  assert.deepEqual((await currentPbm()).slice(11), expected);
+}
+assert.equal(writes.length, imageWritesBefore);
+assert.equal(getRequests.length, imageReadsBefore);
+assert.equal(request, null, 'selection, crop and dither do not upload anything');
+confirmed = false; elements.imageUpload.onclick();
+assert.equal(request, null, 'a cancelled confirmation sends nothing');
+confirmed = true; elements.imageUpload.onclick();
+assert.equal(request.path, '/api/images/upload');
+assert.equal(request.headers['Content-Type'], 'application/octet-stream');
+assert.equal(request.headers['X-RLCD-Token'], state.token);
+assert.equal(request.body.size, 15011, 'only the final PBM, never the source file, is sent');
+assert.equal(request.body, vm.runInContext('imagePbm', context));
+assert.equal(elements.imageFile.disabled, true, 'explicit upload locks file changes');
+request.status = 409; request.responseText = '写入失败'; request.onload();
+assert.equal(elements.imageFile.disabled, false);
+assert.equal(firstBitmap.closed, 0, 'a failed upload preserves the local crop for inspection');
+request = null;
+
+// Rapid file changes and page teardown must close stale decoded resources,
+// without allowing an older result or error to replace the newest selection.
+let finishOld, finishNew;
+const staleBitmap = bitmap(800,600), newBitmap = bitmap(300,900);
+const oldPromise = selectImage({...fileFor(staleBitmap,'old.png'), promise:new Promise(resolve => { finishOld=resolve; })});
+assert.equal(firstBitmap.closed, 1);
+assert.equal(elements.imageFile.disabled, false, 'another selection is allowed while decoding');
+assert.equal(elements.imageUpload.disabled, true);
+const newPromise = selectImage({...fileFor(newBitmap,'new.png'), promise:new Promise(resolve => { finishNew=resolve; })});
+finishNew(newBitmap); await newPromise;
+const newPreview = await currentPbm();
+finishOld(staleBitmap); await oldPromise;
+assert.equal(staleBitmap.closed, 1);
+assert.equal(newBitmap.closed, 0);
+assert.deepEqual(await currentPbm(), newPreview);
+assert.equal(elements.imageFile.value, 'new.png');
+let finishInvalid;
+const invalidBitmap = bitmap(40000001,1);
+const invalidPromise = selectImage({...fileFor(invalidBitmap,'invalid.png'), promise:new Promise(resolve => { finishInvalid=resolve; })});
+const newestBitmap = bitmap(400,250);
+await selectImage(fileFor(newestBitmap,'newest.png'));
+finishInvalid(invalidBitmap); await invalidPromise;
+assert.equal(invalidBitmap.closed, 1);
+assert.equal(elements.imageFile.value, 'newest.png', 'stale errors never clear the newest file');
+assert.match(elements.imageMessage.textContent, /黑白预览已生成/);
+canvas.fail = true;
+const failedBitmap = bitmap(10,10);
+await selectImage(fileFor(failedBitmap)); canvas.fail = false;
+assert.equal(newestBitmap.closed, 1);
+assert.equal(failedBitmap.closed, 1, 'raster failure frees its decoded source');
+assert.equal(elements.imagePreview.hidden, true);
+assert.equal(elements.imageUpload.disabled, true);
+for (const file of [{...fileFor(bitmap(1,1)),size:0}, {...fileFor(bitmap(1,1)),size:32*1024*1024+1}, {name:'bad.gif',type:'image/gif',size:10}]) {
+  await selectImage(file);
+  assert.equal(elements.imagePreview.hidden, true);
+  assert.equal(elements.imageUpload.disabled, true);
+}
+let finishClosed;
+const closingBitmap = bitmap(800,500);
+const closingPromise = selectImage({...fileFor(closingBitmap), promise:new Promise(resolve => { finishClosed=resolve; })});
+imagePagehide(); finishClosed(closingBitmap); await closingPromise;
+assert.equal(closingBitmap.closed, 1);
+assert.equal(elements.imagePreview.hidden, true);
+const visibleBitmap = bitmap(400,1000);
+await selectImage(fileFor(visibleBitmap));
+elements.imageFit.value = 'cover'; elements.imageFit.onchange(); flushFrames();
+elements.imageCanvas.onpointerdown(pointer());
+elements.imageCanvas.onpointermove(pointer({clientY:-1000})); flushFrames();
+assert.equal(canvas.draws.at(-1).sy, 750, 'portrait drag clamps vertically');
+elements.threshold.oninput(); imagePagehide();
+assert.equal(visibleBitmap.closed, 1);
+assert.equal(frames.size, 0);
+assert.equal(elements.imageCanvas.pointerCaptures.size, 0);
+imagePagehide(); assert.equal(visibleBitmap.closed, 1, 'cleanup is idempotent');
+
+// The object-URL fallback follows the same ownership contract.
+const revokedUrls = [], fallbackSources = [];
+context.window.createImageBitmap = undefined;
+context.URL = {createObjectURL() { return 'blob:local-' + fallbackSources.length; }, revokeObjectURL(url) { revokedUrls.push(url); }};
+context.Image = class { constructor() { this.naturalWidth=400; this.naturalHeight=250; fallbackSources.push(this); } };
+const fallbackPromise = selectImage(fileFor(null));
+fallbackSources.at(-1).onload(); await fallbackPromise;
+assert.equal(revokedUrls.length, 0);
+await selectImage(null);
+assert.deepEqual(revokedUrls, ['blob:local-0']);
+assert.equal(fallbackSources[0].src, '');
+const fallbackFailure = selectImage(fileFor(null));
+fallbackSources.at(-1).onerror(); await fallbackFailure;
+assert.deepEqual(revokedUrls, ['blob:local-0','blob:local-1']);
+assert.equal(elements.imagePreview.hidden, true);
+assert.equal(writes.length, imageWritesBefore);
+assert.equal(request, null);
+
 // An initial read failure leaves safe, non-submittable forms, then the same
 // page can recover without a reload. Use separate elements and lexical state.
 const freshElements = Object.fromEntries(ids.map(id => [id, new Element()]));
 for (const [id, form] of Object.entries(forms)) freshElements[id].controls = Object.keys(form.names).map(name => freshElements[name]);
 freshElements.alarmForm.controls.push(freshElements.alarmTime, freshElements.alarmPreview);
+freshElements.timerForm.controls.push(freshElements.timerSave);
 freshElements.pagesForm.controls.push(...pageIds.map(id => freshElements[id]), freshElements.pagesSave);
 freshElements.wifiForm.hidden = true;
 failedGets.set('/api/state', '暂时无法读取');
@@ -1415,16 +1775,18 @@ const beforeInitialToggle = getRequests.length;
 freshElements.musicSection.ontoggle();
 assert.equal(getRequests.length, beforeInitialToggle, 'native initial open-toggle cannot start media before state loads');
 await new Promise(resolve => setImmediate(resolve));
-for (const id of ['volume','alarmVolume','updates','pagesSave','musicMode','conversationPreferencesSave','conversationSave','weatherSave','weatherKeySave','setTime','upload','wifiEdit']) assert.equal(freshElements[id].disabled, true, id + ' remains unavailable before initial state');
+for (const id of ['volume','alarmVolume','timerMinutes','timerSave','updates','pagesSave','musicMode','conversationPreferencesSave','conversationSave','weatherSave','weatherKeySave','setTime','upload','wifiEdit']) assert.equal(freshElements[id].disabled, true, id + ' remains unavailable before initial state');
 assert.equal(freshElements.loadNotice.hidden, false);
 const beforeUnreadySave = writes.length;
 await freshElements.settings.onsubmit({preventDefault() {}, target: freshElements.settings});
 await freshElements.musicSettingsForm.onsubmit({preventDefault() {}, target: freshElements.musicSettingsForm});
+await freshElements.timerForm.onsubmit({preventDefault() {}, target: freshElements.timerForm});
 assert.equal(writes.length, beforeUnreadySave);
 failedGets.delete('/api/state');
 await freshElements.retryLoads.onclick();
 assert.equal(freshElements.volume.disabled, false);
 assert.equal(freshElements.musicMode.disabled, false);
+assert.equal(freshElements.timerSave.disabled, false);
 assert.equal(freshElements.conversationPreferencesSave.disabled, true, 'fresh unconfigured state still requires credentials');
 assert.equal(freshElements.conversationSave.disabled, false, 'fresh AP session can configure credentials');
 assert.equal(freshElements.loadNotice.hidden, true);
@@ -1447,4 +1809,4 @@ assert.equal(elements.upload.disabled, true, 'unrelated reads do not unlock ambi
 elements.upload.onclick();
 assert.equal(request, otaRequest);
 assert.equal(timers.size, 0);
-console.log('Settings portal: isolated AI/weather preferences and AP-only keys, LAN confirmation/auth, directory recovery, music/media guards and OTA uncertainty passed.');
+console.log('Settings portal: seven-page order, independent timer preferences, bounded browser crop/drag and decoder cleanup, AI/weather isolation, LAN auth, media guards and OTA uncertainty passed.');

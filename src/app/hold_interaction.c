@@ -38,6 +38,8 @@ bool app_hold_prompt_allowed(const app_hold_prompt_context_t *context,
     case APP_PAGE_ACTION_START_VOICE:
     case APP_PAGE_ACTION_NEXT_TRACK:
     case APP_PAGE_ACTION_MUSIC_VOLUME:
+    case APP_PAGE_ACTION_TIMER_RESET:
+    case APP_PAGE_ACTION_TIMER_MODE:
     case APP_PAGE_ACTION_OPEN_SETTINGS:
     case APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING:
         return context->manual_sync_idle &&
@@ -67,6 +69,10 @@ const char *app_hold_prompt_title(app_page_action_t action,
         return "EDIT VOLUME";
     case APP_PAGE_ACTION_SYNC_TIME:
         return "SYNC TIME";
+    case APP_PAGE_ACTION_TIMER_RESET:
+        return "RESET TIMER";
+    case APP_PAGE_ACTION_TIMER_MODE:
+        return "CHANGE TIMER MODE";
     case APP_PAGE_ACTION_START_VOICE:
         return "START CHAT";
     case APP_PAGE_ACTION_OPEN_SETTINGS:

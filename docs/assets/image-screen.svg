@@ -41,6 +41,6 @@
 
   <rect x="0" y="250" width="400" height="50" fill="#090b0a"/>
   <path d="M12 250H388" fill="none" stroke="#eef3e8" stroke-width="1" shape-rendering="crispEdges"/>
-  <text x="200" y="270" fill="#eef3e8" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: CHAT | KEY: NEXT IMAGE | 2/6</text>
+  <text x="200" y="270" fill="#eef3e8" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">BOOT: MUSIC | KEY: NEXT IMAGE | 2/6</text>
   <text x="200" y="294" fill="#eef3e8" text-anchor="middle" font-family="DejaVu Sans Mono, Consolas, monospace" font-size="12">HOLD KEY 2s: DELETE IMAGE</text>
 </svg>

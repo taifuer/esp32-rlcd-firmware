@@ -12,6 +12,7 @@ static uint8_t daily_page_bit(app_page_t page)
     case APP_PAGE_IMAGE: return APP_DAILY_PAGE_IMAGE;
     case APP_PAGE_MUSIC: return APP_DAILY_PAGE_MUSIC;
     case APP_PAGE_VOICE: return APP_DAILY_PAGE_CHAT;
+    case APP_PAGE_TIMER: return APP_DAILY_PAGE_TIMER;
     default: return 0U;
     }
 }
@@ -20,7 +21,7 @@ app_page_t app_page_state_next_daily_page(const app_page_state_t *state)
 {
     static const app_page_t pages[] = {
         APP_PAGE_WEATHER, APP_PAGE_MARKET, APP_PAGE_CALENDAR,
-        APP_PAGE_IMAGE, APP_PAGE_MUSIC, APP_PAGE_VOICE,
+        APP_PAGE_IMAGE, APP_PAGE_MUSIC, APP_PAGE_VOICE, APP_PAGE_TIMER,
     };
     if (state == NULL) return APP_PAGE_HOME;
     /* BOOT is inert in recovery, including when every daily page is hidden. */
@@ -52,6 +53,7 @@ const char *app_page_daily_label(app_page_t page)
     case APP_PAGE_IMAGE: return "IMAGE";
     case APP_PAGE_MUSIC: return "MUSIC";
     case APP_PAGE_VOICE: return "CHAT";
+    case APP_PAGE_TIMER: return "TIMER";
     default: return "HOME";
     }
 }
@@ -191,7 +193,8 @@ bool app_page_is_daily(app_page_t page)
     return page == APP_PAGE_HOME || page == APP_PAGE_WEATHER ||
            page == APP_PAGE_MARKET ||
            page == APP_PAGE_CALENDAR || page == APP_PAGE_IMAGE ||
-           page == APP_PAGE_MUSIC || page == APP_PAGE_VOICE;
+           page == APP_PAGE_MUSIC || page == APP_PAGE_VOICE ||
+           page == APP_PAGE_TIMER;
 }
 
 bool app_page_is_system(app_page_t page)
@@ -202,6 +205,7 @@ bool app_page_is_system(app_page_t page)
 
 app_page_action_t app_page_key_hold_action(app_page_t page)
 {
+    if (page == APP_PAGE_TIMER) return APP_PAGE_ACTION_TIMER_RESET;
     if (page == APP_PAGE_MUSIC) return APP_PAGE_ACTION_NEXT_TRACK;
     if (page == APP_PAGE_MARKET) return APP_PAGE_ACTION_REFRESH_MARKET;
     if (page == APP_PAGE_WEATHER) {
@@ -228,6 +232,8 @@ app_page_action_t app_page_key_hold_action(app_page_t page)
 uint32_t app_page_key_hold_threshold_ms(app_page_t page)
 {
     switch (app_page_key_hold_action(page)) {
+    case APP_PAGE_ACTION_TIMER_RESET:
+        return APP_PAGE_TIMER_HOLD_MS;
     case APP_PAGE_ACTION_REFRESH_MARKET:
         return APP_PAGE_MARKET_REFRESH_HOLD_MS;
     case APP_PAGE_ACTION_NEXT_TRACK:
@@ -261,6 +267,7 @@ uint32_t app_page_online_update_hold_threshold_ms(
 
 app_page_action_t app_page_boot_hold_action(app_page_t page)
 {
+    if (page == APP_PAGE_TIMER) return APP_PAGE_ACTION_TIMER_MODE;
     if (page == APP_PAGE_MUSIC) return APP_PAGE_ACTION_MUSIC_VOLUME;
     return page == APP_PAGE_SETTINGS
                ? APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING
@@ -269,6 +276,7 @@ app_page_action_t app_page_boot_hold_action(app_page_t page)
 
 uint32_t app_page_boot_hold_threshold_ms(app_page_t page)
 {
+    if (page == APP_PAGE_TIMER) return APP_PAGE_TIMER_HOLD_MS;
     if (page == APP_PAGE_MUSIC) return APP_PAGE_MUSIC_HOLD_MS;
     return app_page_boot_hold_action(page) ==
                    APP_PAGE_ACTION_TOGGLE_MANUAL_SAVING
@@ -298,6 +306,8 @@ void app_page_state_key_short_press(app_page_state_t *state)
                              : APP_PAGE_SETTINGS;
         return;
     }
+    /* TIMER short KEY is handled by its runtime, never system navigation. */
+    if (state->current == APP_PAGE_TIMER) return;
     state->current = app_page_is_system(state->current)
                          ? next_system_page(state->current)
                          : APP_PAGE_SETTINGS;

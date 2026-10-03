@@ -241,6 +241,20 @@ typedef struct {
     uint32_t sleep_remaining_seconds;
 } display_music_t;
 void display_show_music(const display_music_t *music);
+typedef struct {
+    bool stopwatch;
+    bool running;
+    bool paused;
+    bool finished;
+    /* Countdown: remaining seconds rounded up. Stopwatch: elapsed rounded down. */
+    uint32_t seconds;
+    uint16_t duration_minutes;
+    /* Additional preset only; saving it must not change the active selection. */
+    uint16_t custom_minutes;
+} display_timing_status_t;
+void display_show_timing(const display_timing_status_t *status,
+                         const char *next_daily_page);
+void display_show_timing_done(void);
 void display_show_image_delete_confirmation(
     const uint8_t bitmap[MONO_IMAGE_BITMAP_BYTES],
     size_t selected_index, size_t image_count, bool delete_ready);
