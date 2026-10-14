@@ -3,7 +3,9 @@
 #include <limits.h>
 
 #define SETTINGS_RECORD_MAGIC UINT32_C(0x47464352)
-#define SETTINGS_RECORD_FORMAT_VERSION 11U
+#define SETTINGS_RECORD_FORMAT_VERSION 13U
+#define SETTINGS_RECORD_SCHEMA13_FORMAT_VERSION 12U
+#define SETTINGS_RECORD_SCHEMA12_FORMAT_VERSION 11U
 #define SETTINGS_RECORD_SCHEMA11_FORMAT_VERSION 10U
 #define SETTINGS_RECORD_SCHEMA10_FORMAT_VERSION 9U
 #define SETTINGS_RECORD_SCHEMA9_FORMAT_VERSION 8U
@@ -43,7 +45,10 @@ enum {
     DAILY_PAGES_OFFSET = 27,
     MUSIC_MODE_OFFSET = 28,
     DAILY_ORDER_OFFSET = 29,
-    TIMER_MINUTES_OFFSET = 36,
+    SCHEMA12_TIMER_MINUTES_OFFSET = 36,
+    TIMER_MINUTES_OFFSET = 37,
+    ENVIRONMENT_HISTORY_OFFSET = 38,
+    ENVIRONMENT_ARCHIVE_OFFSET = 39,
     CHECKSUM_OFFSET = 40,
     SCHEMA11_CHECKSUM_OFFSET = 36,
     SCHEMA10_CHECKSUM_OFFSET = 32,
@@ -150,6 +155,8 @@ bool settings_record_encode(uint32_t generation,
         encoded[DAILY_ORDER_OFFSET + index] = settings->daily_pages_order[index];
     }
     encoded[TIMER_MINUTES_OFFSET] = settings->timer_minutes;
+    encoded[ENVIRONMENT_HISTORY_OFFSET] = settings->environment_history_save_enabled ? 1U : 0U;
+    encoded[ENVIRONMENT_ARCHIVE_OFFSET] = settings->environment_archive_save_enabled ? 1U : 0U;
     put_u32(encoded, CHECKSUM_OFFSET,
             record_checksum(encoded, CHECKSUM_OFFSET));
     return true;
@@ -175,6 +182,8 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
              : schema == 9U ? SETTINGS_RECORD_SCHEMA9_FORMAT_VERSION
              : schema == 10U ? SETTINGS_RECORD_SCHEMA10_FORMAT_VERSION
              : schema == 11U ? SETTINGS_RECORD_SCHEMA11_FORMAT_VERSION
+             : schema == 12U ? SETTINGS_RECORD_SCHEMA12_FORMAT_VERSION
+             : schema == 13U ? SETTINGS_RECORD_SCHEMA13_FORMAT_VERSION
                             : SETTINGS_RECORD_FORMAT_VERSION) ||
         get_u16(encoded, SCHEMA_OFFSET) != schema ||
         get_u16(encoded, SIZE_OFFSET) != expected_size ||
@@ -193,7 +202,10 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
         encoded[LEGACY_IMAGE_ROTATION_OFFSET] > 2U ||
         (schema >= 7U && encoded[LEGACY_DEFAULT_DISPLAY_OFFSET] > 2U) ||
         (schema >= 9U && schema < 12U &&
-         (encoded[DAILY_PAGES_OFFSET] & (uint8_t)~0x3fU) != 0U)) {
+         (encoded[DAILY_PAGES_OFFSET] & (uint8_t)~0x3fU) != 0U) ||
+        (schema == 12U && (encoded[DAILY_PAGES_OFFSET] & 0x80U) != 0U) ||
+        (schema >= 13U && encoded[ENVIRONMENT_HISTORY_OFFSET] > 1U) ||
+        (schema >= 14U && encoded[ENVIRONMENT_ARCHIVE_OFFSET] > 1U)) {
         return false;
     }
     app_settings_t settings = {
@@ -218,11 +230,14 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
         .music_mode = schema >= 10U
             ? (app_music_mode_t)encoded[MUSIC_MODE_OFFSET]
             : APP_MUSIC_MODE_SEQUENTIAL,
-        .timer_minutes = schema >= 12U ? encoded[TIMER_MINUTES_OFFSET]
+        .timer_minutes = schema >= 13U ? encoded[TIMER_MINUTES_OFFSET]
+                        : schema == 12U ? encoded[SCHEMA12_TIMER_MINUTES_OFFSET]
                                       : APP_SETTINGS_DEFAULT_TIMER_MINUTES,
+        .environment_history_save_enabled = schema >= 13U && encoded[ENVIRONMENT_HISTORY_OFFSET] == 1U,
+        .environment_archive_save_enabled = schema >= 14U && encoded[ENVIRONMENT_ARCHIVE_OFFSET] == 1U,
     };
     if (schema >= 11U) {
-        const size_t count = schema >= 12U ? APP_DAILY_PAGE_COUNT : 6U;
+        const size_t count = schema >= 13U ? APP_DAILY_PAGE_COUNT : schema == 12U ? 7U : 6U;
         for (size_t index = 0U; index < count; ++index) {
             settings.daily_pages_order[index] = encoded[DAILY_ORDER_OFFSET + index];
         }
@@ -231,6 +246,9 @@ static bool decode_recent_record(const uint8_t *encoded, size_t encoded_size,
      * changing any old page's visibility or relative position. */
     if (schema < 12U && settings.daily_pages_mask != 0U) {
         settings.daily_pages_mask |= APP_DAILY_PAGE_TIMER;
+    }
+    if (schema < 13U && settings.daily_pages_mask != 0U) {
+        settings.daily_pages_mask |= APP_DAILY_PAGE_ENVIRONMENT;
     }
     if (!app_settings_validate(&settings)) {
         return false;
@@ -248,6 +266,20 @@ bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
 {
     return decode_recent_record(encoded, encoded_size, record,
                                 APP_SETTINGS_SCHEMA_VERSION);
+}
+
+bool settings_record_decode_schema13(const uint8_t *encoded,
+                                     size_t encoded_size,
+                                     settings_record_t *record)
+{
+    return decode_recent_record(encoded, encoded_size, record, 13U);
+}
+
+bool settings_record_decode_schema12(const uint8_t *encoded,
+                                     size_t encoded_size,
+                                     settings_record_t *record)
+{
+    return decode_recent_record(encoded, encoded_size, record, 12U);
 }
 
 bool settings_record_decode_schema8(const uint8_t *encoded,

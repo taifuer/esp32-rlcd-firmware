@@ -28,6 +28,7 @@
 #include "driver/usb_serial_jtag.h"
 #include "environment_comfort.h"
 #include "environment_observation.h"
+#include "environment_service.h"
 #include "esp_app_desc.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
@@ -93,6 +94,7 @@ typedef enum {
     APP_DISPLAY_MUSIC,
     APP_DISPLAY_TIMING,
     APP_DISPLAY_TIMING_DONE,
+    APP_DISPLAY_ENVIRONMENT,
     APP_DISPLAY_HOLD_PROMPT,
     APP_DISPLAY_IMAGE_DELETE_CONFIRMATION,
     APP_DISPLAY_IMAGE_DELETE_STATUS,
@@ -112,6 +114,27 @@ typedef enum {
     APP_DISPLAY_FIRMWARE_UPDATE_RESULT,
     APP_DISPLAY_GALLERY_DOWNLOAD,
 } app_display_mode_t;
+
+static bool display_allows_home_shortcut(app_display_mode_t mode)
+{
+    switch (mode) {
+    case APP_DISPLAY_DASHBOARD:
+    case APP_DISPLAY_WEATHER:
+    case APP_DISPLAY_MARKET:
+    case APP_DISPLAY_CALENDAR:
+    case APP_DISPLAY_MONOCHROME_IMAGE:
+    case APP_DISPLAY_MUSIC:
+    case APP_DISPLAY_TIMING:
+    case APP_DISPLAY_ENVIRONMENT:
+    case APP_DISPLAY_STATUS:
+    case APP_DISPLAY_VOICE:
+    case APP_DISPLAY_SETTINGS:
+    case APP_DISPLAY_ONLINE_UPDATE:
+        return true;
+    default:
+        return false;
+    }
+}
 
 typedef enum {
     MANUAL_SYNC_UI_NONE = 0,
@@ -228,6 +251,8 @@ static const char *page_name(app_page_t page)
         return "music";
     case APP_PAGE_TIMER:
         return "timer";
+    case APP_PAGE_ENVIRONMENT:
+        return "environment";
     case APP_PAGE_STATUS:
         return "status";
     case APP_PAGE_VOICE:
@@ -1498,6 +1523,8 @@ void app_main(void)
     (void)gallery_download_get_status(&gallery_status);
     button_state_t key_button_state;
     button_state_t boot_button_state;
+    button_chord_t home_shortcut;
+    button_chord_init(&home_shortcut);
     button_state_init_custom(&key_button_state,
                              buttons_ready && board_key_is_pressed(),
                              BUTTON_HOLD_PROMPT_MS,
@@ -1593,6 +1620,20 @@ void app_main(void)
         const esp_err_t music_error = music_library_init();
         if (music_error != ESP_OK) ESP_LOGW(TAG, "music library unavailable: %s", esp_err_to_name(music_error));
     }
+    environment_history_snapshot_t *environment_view = NULL;
+    if (!recovery_mode) {
+        const esp_err_t history_error = environment_history_init();
+        if (history_error == ESP_OK) {
+            environment_view = heap_caps_calloc(1, sizeof(*environment_view),
+                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            environment_history_set_storage_enabled(settings.environment_history_save_enabled);
+            environment_history_set_archive_enabled(settings.environment_archive_save_enabled);
+        } else {
+            ESP_LOGW(TAG, "environment history unavailable: %s", esp_err_to_name(history_error));
+        }
+    }
+    uint64_t last_environment_render_ms = 0;
+    bool pending_music_toggle = false;
     uint32_t previous_music_revision = 0;
     uint32_t previous_music_library_revision = 0;
     uint8_t previous_music_count = 0;
@@ -2107,6 +2148,12 @@ void app_main(void)
                 app_settings_get_snapshot(&snapshot);
             if (snapshot_error == ESP_OK &&
                 snapshot.generation != settings_generation) {
+                if (!recovery_mode) {
+                    environment_history_set_storage_enabled(
+                        snapshot.settings.environment_history_save_enabled);
+                    environment_history_set_archive_enabled(
+                        snapshot.settings.environment_archive_save_enabled);
+                }
                 if (timing_preference_minutes != snapshot.settings.timer_minutes) {
                     timing_preference_minutes = snapshot.settings.timer_minutes;
                     /* Custom preference changes a choice, never the current run. */
@@ -2169,12 +2216,8 @@ void app_main(void)
                         audio_diagnostics_set_playback_volume(
                             snapshot.settings.audio_playback_volume);
                 }
-                if (apply_error == ESP_OK &&
-                    snapshot.settings.utc_offset_minutes !=
-                        settings.utc_offset_minutes) {
-                    apply_error = app_settings_apply_timezone(
-                        &snapshot.settings);
-                }
+                /* Saving applies TZ under the settings lock. Reapplying this
+                 * snapshot here could overwrite a more recent portal save. */
                 if (apply_error == ESP_OK &&
                     online_update_error == ESP_OK &&
                     snapshot.settings.update_channel !=
@@ -2340,6 +2383,12 @@ void app_main(void)
             key_pressed || key_debounced_pressed;
         const bool boot_pressed_or_debounced =
             boot_pressed || boot_debounced_pressed;
+        /* Revoke on actual input before dispatching short/long actions.
+         * Do not pulse the gate off on every idle loop: checkpoints in the
+         * bounded worker would otherwise cancel ordinary background writes. */
+        if (key_pressed_or_debounced || boot_pressed_or_debounced) {
+            (void)environment_history_set_io_allowed(false);
+        }
         if (cloud_session_selected && voice_session_state_arm_retry(
                 &voice_session, !cloud_voice_status.running,
                 !key_pressed_or_debounced && !boot_pressed_or_debounced)) {
@@ -2349,6 +2398,10 @@ void app_main(void)
             boot_event = BUTTON_EVENT_NONE;
             render_requested = true;
         }
+        /* Other workflows also use this gate. Only a gesture already tracked
+         * before the overlap may continue through its own dual-key gate. */
+        const bool home_shortcut_input_admitted =
+            !dual_button_release_gate || button_chord_is_tracking(&home_shortcut);
         if (key_pressed_or_debounced &&
             boot_pressed_or_debounced) {
             dual_button_release_gate = true;
@@ -2557,6 +2610,32 @@ void app_main(void)
             render_requested = true;
             ESP_LOGI(TAG,
                      "image delete confirmation cancelled by alarm");
+        }
+
+        /* Resolve modal priority before considering HOME. A modal appearing
+         * during a gesture invalidates it until both keys are released. */
+        const bool home_shortcut_allowed = buttons_ready && !recovery_mode &&
+            home_shortcut_input_admitted &&
+            display_allows_home_shortcut(previous_display_mode) &&
+            !alarm_modal_active && !alarm_button_events_suppressed &&
+            !timing_notice.visible && !timing_notice_result.consume_input &&
+            !voice_session_active && !voice_button_release_gate &&
+            !firmware_update_ui_active && !gallery_download_ui_active &&
+            !online_update_busy && !online_update_confirmation_active &&
+            !quick_settings.active && manual_sync_ui == MANUAL_SYNC_UI_NONE &&
+            power_setting_ui == POWER_SETTING_UI_NONE &&
+            !app_image_delete_ui_is_active(&image_delete_ui) &&
+            !image_delete_release_gate_was_active &&
+            !image_delete_wait_for_button_release;
+        const bool home_shortcut_triggered = button_chord_update(
+            &home_shortcut, &key_button_state, &boot_button_state,
+            home_shortcut_allowed, button_elapsed_ms);
+        if (home_shortcut_triggered) {
+            app_page_state_go_home(&page_state);
+            key_event = BUTTON_EVENT_NONE;
+            boot_event = BUTTON_EVENT_NONE;
+            render_requested = true;
+            ESP_LOGI(TAG, "BOOT + KEY short press: showing home page");
         }
 
         if (alarm_button_events_suppressed || timing_notice_result.consume_input) {
@@ -2882,7 +2961,11 @@ void app_main(void)
                         timing_notice.waiting = false;
                     }
                 } else if (input_page == APP_PAGE_MUSIC && previous_display_mode != APP_DISPLAY_NETWORK_SETUP) {
-                    (void)audio_music_toggle();
+                    if (environment_history_storage_busy()) {
+                        pending_music_toggle = !pending_music_toggle;
+                    } else {
+                        (void)audio_music_toggle();
+                    }
                 } else if (image_next_available) {
                     const size_t current_image =
                         sd_image_store_selected_index();
@@ -3686,9 +3769,15 @@ void app_main(void)
                 const uint32_t sensor_timestamp_ms =
                     (uint32_t)((uint64_t)now * portTICK_PERIOD_MS);
                 const esp_err_t error = shtc3_read(&measurement);
+                environment_history_record((int64_t)esp_timer_get_time() / 1000,
+                    dashboard.time_valid ? (int64_t)time(NULL) : 0,
+                    error == ESP_OK, measurement.temperature_c, measurement.humidity_percent);
                 if (error == ESP_OK) {
                     const bool had_measurement =
                         environment_observation.has_success;
+                    if (!had_measurement &&
+                        app_page_state_current(&page_state) == APP_PAGE_ENVIRONMENT)
+                        render_requested = true;
                     const uint8_t recovered_failure_count =
                         environment_observation.consecutive_failures;
                     const bool was_stale = environment_stale;
@@ -4538,6 +4627,7 @@ void app_main(void)
                     previous_display_mode == APP_DISPLAY_MUSIC ||
                     previous_display_mode == APP_DISPLAY_TIMING ||
                     previous_display_mode == APP_DISPLAY_TIMING_DONE ||
+                    previous_display_mode == APP_DISPLAY_ENVIRONMENT ||
                     previous_display_mode == APP_DISPLAY_HOLD_PROMPT ||
                     previous_display_mode ==
                         APP_DISPLAY_IMAGE_DELETE_CONFIRMATION ||
@@ -4566,6 +4656,8 @@ void app_main(void)
                 display_mode = APP_DISPLAY_MUSIC;
             } else if (active_page == APP_PAGE_TIMER) {
                 display_mode = APP_DISPLAY_TIMING;
+            } else if (active_page == APP_PAGE_ENVIRONMENT) {
+                display_mode = APP_DISPLAY_ENVIRONMENT;
             }
             if (show_setup) {
                 display_mode = APP_DISPLAY_NETWORK_SETUP;
@@ -4618,6 +4710,18 @@ void app_main(void)
                         .custom_minutes = timing_preference_minutes,
                     };
                     display_show_timing(&timing_status, next_daily_page);
+                }
+            } else if (display_mode == APP_DISPLAY_ENVIRONMENT) {
+                /* No second-by-second chart redraws. A minute also advances
+                 * the explicit recording-age label; sampling is unchanged. */
+                if (display_mode != previous_display_mode || render_requested ||
+                    timing_now_ms - last_environment_render_ms >= 60000U) {
+                    const bool has_snapshot = environment_view != NULL &&
+                        environment_history_snapshot(environment_view);
+                    display_show_environment(has_snapshot ? environment_view : NULL,
+                        settings.temperature_unit == APP_TEMPERATURE_UNIT_FAHRENHEIT,
+                        next_daily_page);
+                    last_environment_render_ms = timing_now_ms;
                 }
             } else if (display_mode == APP_DISPLAY_MONOCHROME_IMAGE) {
                 if (display_mode != previous_display_mode ||
@@ -4673,6 +4777,30 @@ void app_main(void)
             previous_portal_seconds = 0U;
         }
 
+        const bool history_foreground_busy = recovery_mode || alarm_modal_active ||
+            timing_notice.visible || voice_session_active || audio_alert_is_active() ||
+            firmware_update_ui_active || gallery_download_ui_active || online_update_busy ||
+            online_update_confirmation_active || quick_settings.active ||
+            manual_sync_ui != MANUAL_SYNC_UI_NONE || power_setting_ui != POWER_SETTING_UI_NONE ||
+            app_image_delete_ui_is_active(&image_delete_ui);
+        if (pending_music_toggle) {
+            if (history_foreground_busy ||
+                app_page_state_current(&page_state) != APP_PAGE_MUSIC) {
+                pending_music_toggle = false;
+            } else if (!environment_history_storage_busy()) {
+                pending_music_toggle = false;
+                (void)audio_music_toggle();
+            }
+        }
+        const app_page_t history_idle_page = app_page_state_current(&page_state);
+        /* Busy/interactive pages cannot race a new background mount. A music
+         * start arriving during an existing lease is deferred, not lost. */
+        (void)environment_history_set_io_allowed(!history_foreground_busy &&
+            !pending_music_toggle && !key_pressed_or_debounced && !boot_pressed_or_debounced &&
+            !music_status.busy && music_status.state != AUDIO_MUSIC_PLAYING &&
+            music_status.state != AUDIO_MUSIC_PAUSED &&
+            (history_idle_page == APP_PAGE_HOME || history_idle_page == APP_PAGE_CALENDAR ||
+             history_idle_page == APP_PAGE_ENVIRONMENT));
         vTaskDelay(pdMS_TO_TICKS(APP_LOOP_INTERVAL_MS));
     }
 }

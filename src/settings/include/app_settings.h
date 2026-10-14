@@ -2,6 +2,7 @@
 
 #include "esp_err.h"
 #include "settings_model.h"
+#include "settings_backup.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,7 +25,16 @@ esp_err_t app_settings_init(void);
 esp_err_t app_settings_get_snapshot(app_settings_snapshot_t *snapshot);
 /* Convenience wrapper for callers which do not need change detection. */
 esp_err_t app_settings_get(app_settings_t *settings);
+/* Intentional full replacement only (for example restore defaults). Do not
+ * use a previously read snapshot to implement a form or single-field edit. */
 esp_err_t app_settings_save(const app_settings_t *settings);
+/* Receive first, then parse and merge against the latest record under the
+ * same lock as persistence. saved may be NULL. Never replay a stale snapshot. */
+esp_err_t app_settings_save_form(const char *body, size_t length,
+                                app_settings_t *saved);
+esp_err_t app_settings_export_backup(char *buffer, size_t capacity, size_t *length);
+esp_err_t app_settings_import_backup(const char *json, size_t length,
+                                    app_settings_t *saved);
 /* Save exactly one device-editable field under the settings lock. */
 esp_err_t app_settings_save_field(app_setting_field_t field, uint8_t value);
 /* Atomically toggle only the persisted manual saving request while

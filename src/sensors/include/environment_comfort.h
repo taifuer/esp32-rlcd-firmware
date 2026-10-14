@@ -8,7 +8,7 @@ extern "C" {
 #endif
 
 enum {
-    ENVIRONMENT_COMFORT_SAMPLE_CAPACITY = 16,
+    ENVIRONMENT_COMFORT_SAMPLE_CAPACITY = 3,
 };
 
 typedef enum {
@@ -51,8 +51,9 @@ environment_comfort_level_t environment_comfort_update(
     float humidity_percent,
     uint32_t timestamp_ms);
 
-/* Return the median of valid samples collected during the current filter
- * window. This is the stable value intended for display. */
+/* Return the median of the latest three valid samples. Samples at least three
+ * minutes older than the latest reading are excluded, regardless of cadence.
+ * The first valid reading is immediately available for display. */
 bool environment_comfort_filtered_measurement(
     const environment_comfort_tracker_t *tracker,
     float *temperature_c,

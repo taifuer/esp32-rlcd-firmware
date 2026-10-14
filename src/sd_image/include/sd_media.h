@@ -8,6 +8,8 @@
 typedef struct sd_media_read sd_media_read_t;
 esp_err_t sd_media_begin_read(sd_media_read_t **session, uint32_t wait_ms);
 esp_err_t sd_media_end_read(sd_media_read_t *session);
+/* Query the mounted filesystem only while this task owns a valid lease. */
+esp_err_t sd_media_get_free_bytes(sd_media_read_t *session, uint64_t *free_bytes);
 /* Explicit user-requested write transaction; same mutex and task ownership.
  * Never formats a card. Caller validates targets and closes files first. */
 typedef struct sd_media_read sd_media_write_t;

@@ -13,6 +13,7 @@ static uint8_t daily_page_bit(app_page_t page)
     case APP_PAGE_MUSIC: return APP_DAILY_PAGE_MUSIC;
     case APP_PAGE_VOICE: return APP_DAILY_PAGE_CHAT;
     case APP_PAGE_TIMER: return APP_DAILY_PAGE_TIMER;
+    case APP_PAGE_ENVIRONMENT: return APP_DAILY_PAGE_ENVIRONMENT;
     default: return 0U;
     }
 }
@@ -22,6 +23,7 @@ app_page_t app_page_state_next_daily_page(const app_page_state_t *state)
     static const app_page_t pages[] = {
         APP_PAGE_WEATHER, APP_PAGE_MARKET, APP_PAGE_CALENDAR,
         APP_PAGE_IMAGE, APP_PAGE_MUSIC, APP_PAGE_VOICE, APP_PAGE_TIMER,
+        APP_PAGE_ENVIRONMENT,
     };
     if (state == NULL) return APP_PAGE_HOME;
     /* BOOT is inert in recovery, including when every daily page is hidden. */
@@ -54,6 +56,7 @@ const char *app_page_daily_label(app_page_t page)
     case APP_PAGE_MUSIC: return "MUSIC";
     case APP_PAGE_VOICE: return "CHAT";
     case APP_PAGE_TIMER: return "TIMER";
+    case APP_PAGE_ENVIRONMENT: return "ENVIRONMENT";
     default: return "HOME";
     }
 }
@@ -194,7 +197,7 @@ bool app_page_is_daily(app_page_t page)
            page == APP_PAGE_MARKET ||
            page == APP_PAGE_CALENDAR || page == APP_PAGE_IMAGE ||
            page == APP_PAGE_MUSIC || page == APP_PAGE_VOICE ||
-           page == APP_PAGE_TIMER;
+           page == APP_PAGE_TIMER || page == APP_PAGE_ENVIRONMENT;
 }
 
 bool app_page_is_system(app_page_t page)

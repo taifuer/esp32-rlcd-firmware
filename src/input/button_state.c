@@ -127,3 +127,68 @@ uint32_t button_state_hold_seconds_remaining(const button_state_t *state)
     const uint32_t remaining_ms = state->long_press_ms - state->hold_ms;
     return remaining_ms / 1000U + (remaining_ms % 1000U != 0U ? 1U : 0U);
 }
+
+void button_chord_init(button_chord_t *chord)
+{
+    if (chord == NULL) return;
+    memset(chord, 0, sizeof(*chord));
+    chord->release_required = true;
+}
+
+bool button_chord_is_tracking(const button_chord_t *chord)
+{
+    return chord != NULL && chord->tracking;
+}
+
+bool button_chord_update(button_chord_t *chord,
+                         const button_state_t *first,
+                         const button_state_t *second,
+                         bool eligible, uint32_t elapsed_ms)
+{
+    if (chord == NULL || first == NULL || second == NULL) return false;
+    const bool first_pressed = first->candidate_pressed || first->debounced_pressed;
+    const bool second_pressed = second->candidate_pressed || second->debounced_pressed;
+    const bool any_pressed = first_pressed || second_pressed;
+
+    if (chord->release_required) {
+        if (!any_pressed) chord->release_required = false;
+        return false;
+    }
+    if (!chord->tracking) {
+        if (!any_pressed) return false;
+        if (!eligible) {
+            chord->release_required = true;
+            return false;
+        }
+        chord->tracking = true;
+        chord->overlap_seen = false;
+        chord->cancelled = false;
+        chord->elapsed_ms = 0U;
+    } else {
+        chord->elapsed_ms = add_saturating(chord->elapsed_ms, elapsed_ms);
+    }
+
+    if (!eligible || chord->elapsed_ms >= BUTTON_CHORD_SHORT_PRESS_MS)
+        chord->cancelled = true;
+
+    /* Raw overlap alone may be bounce. Debounced overlap alone may be the
+     * release tail of an earlier, non-overlapping single-button press. */
+    if (first->candidate_pressed && second->candidate_pressed &&
+        first->debounced_pressed && second->debounced_pressed) {
+        const uint32_t onset_gap = first->hold_ms >= second->hold_ms
+            ? first->hold_ms - second->hold_ms
+            : second->hold_ms - first->hold_ms;
+        if (onset_gap <= BUTTON_CHORD_MAX_ONSET_MS)
+            chord->overlap_seen = true;
+        else
+            chord->cancelled = true;
+    }
+
+    if (any_pressed) return false;
+    const bool triggered = chord->overlap_seen && !chord->cancelled;
+    chord->tracking = false;
+    chord->overlap_seen = false;
+    chord->cancelled = false;
+    chord->elapsed_ms = 0U;
+    return triggered;
+}

@@ -18,13 +18,15 @@ enum {
     FORM_FIELD_MUSIC_MODE = 1U << 10,
     FORM_FIELD_DAILY_ORDER = 1U << 11,
     FORM_FIELD_TIMER_MINUTES = 1U << 12,
+    FORM_FIELD_ENVIRONMENT_HISTORY = 1U << 13,
+    FORM_FIELD_ENVIRONMENT_ARCHIVE = 1U << 14,
     FORM_FIELD_ALL = FORM_FIELD_TIMEZONE | FORM_FIELD_UNIT |
                      FORM_FIELD_VOLUME |
                      FORM_FIELD_UPDATES | FORM_FIELD_ALARM |
                      FORM_FIELD_ALARM_HOUR | FORM_FIELD_ALARM_MINUTE |
                      FORM_FIELD_ALARM_DAYS,
-    FORM_KEY_CAPACITY = 24,
-    FORM_VALUE_CAPACITY = 24,
+    FORM_KEY_CAPACITY = 40,
+    FORM_VALUE_CAPACITY = 32,
 };
 
 void app_settings_defaults(app_settings_t *settings)
@@ -49,6 +51,8 @@ void app_settings_defaults(app_settings_t *settings)
         .daily_pages_order = APP_DAILY_PAGES_DEFAULT_ORDER,
         .music_mode = APP_MUSIC_MODE_SEQUENTIAL,
         .timer_minutes = APP_SETTINGS_DEFAULT_TIMER_MINUTES,
+        .environment_history_save_enabled = false,
+        .environment_archive_save_enabled = false,
     };
 }
 
@@ -81,6 +85,8 @@ bool app_settings_validate(const app_settings_t *settings)
            app_daily_pages_order_valid(settings->daily_pages_order) &&
            settings->timer_minutes >= APP_SETTINGS_MIN_TIMER_MINUTES &&
            settings->timer_minutes <= APP_SETTINGS_MAX_TIMER_MINUTES &&
+           (!settings->environment_archive_save_enabled ||
+            settings->environment_history_save_enabled) &&
            (settings->music_mode == APP_MUSIC_MODE_SEQUENTIAL ||
             settings->music_mode == APP_MUSIC_MODE_REPEAT_ONE ||
             settings->music_mode == APP_MUSIC_MODE_REPEAT_ALL);
@@ -252,8 +258,9 @@ static bool parse_daily_pages_order(const char *value, uint8_t *order)
     for (size_t index = 0U; index < APP_DAILY_PAGE_COUNT; ++index) {
         if (*cursor < '1' || *cursor > '9') return false;
         unsigned id = (unsigned)(*cursor++ - '0');
-        if (*cursor >= '0' && *cursor <= '9') {
+        while (*cursor >= '0' && *cursor <= '9') {
             id = id * 10U + (unsigned)(*cursor++ - '0');
+            if (id > UINT8_MAX) return false;
         }
         parsed[index] = (uint8_t)id;
         if (index + 1U < APP_DAILY_PAGE_COUNT) {
@@ -365,6 +372,24 @@ static bool assign_form_field(const char *key, const char *value,
             return false;
         }
         settings->timer_minutes = (uint8_t)minutes;
+    } else if (strcmp(key, "environment_history_save_enabled") == 0) {
+        field = FORM_FIELD_ENVIRONMENT_HISTORY;
+        if (strcmp(value, "on") == 0) {
+            settings->environment_history_save_enabled = true;
+        } else if (strcmp(value, "off") == 0) {
+            settings->environment_history_save_enabled = false;
+        } else {
+            return false;
+        }
+    } else if (strcmp(key, "environment_archive_save_enabled") == 0) {
+        field = FORM_FIELD_ENVIRONMENT_ARCHIVE;
+        if (strcmp(value, "on") == 0) {
+            settings->environment_archive_save_enabled = true;
+        } else if (strcmp(value, "off") == 0) {
+            settings->environment_archive_save_enabled = false;
+        } else {
+            return false;
+        }
     } else if (strcmp(key, "music_mode") == 0) {
         field = FORM_FIELD_MUSIC_MODE;
         if (strcmp(value, "sequential") == 0) {
@@ -448,6 +473,9 @@ bool app_settings_parse_form(const char *body, size_t length,
                 section_fields = FORM_FIELD_MUSIC_MODE;
             } else if (strcmp(value, "timer") == 0) {
                 section_fields = FORM_FIELD_TIMER_MINUTES;
+            } else if (strcmp(value, "environment") == 0) {
+                section_fields = FORM_FIELD_ENVIRONMENT_HISTORY |
+                                 FORM_FIELD_ENVIRONMENT_ARCHIVE;
             } else {
                 return false;
             }
@@ -465,6 +493,16 @@ bool app_settings_parse_form(const char *body, size_t length,
         }
     }
 
+    /* Older history-only forms never opt into permanent retention. Turning
+     * history off also stops its archive; explicit inconsistent pairs fail. */
+    if (section_fields == (FORM_FIELD_ENVIRONMENT_HISTORY |
+                           FORM_FIELD_ENVIRONMENT_ARCHIVE) &&
+        seen_fields == FORM_FIELD_ENVIRONMENT_HISTORY) {
+        seen_fields |= FORM_FIELD_ENVIRONMENT_ARCHIVE;
+        if (!parsed.environment_history_save_enabled) {
+            parsed.environment_archive_save_enabled = false;
+        }
+    }
     /* Scoped forms cannot overwrite drafts/settings in another section.
      * Older full-form clients preserve the independent alarm volume. */
     if ((section_fields != 0U ? seen_fields != section_fields

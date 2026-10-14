@@ -33,6 +33,7 @@ typedef enum {
     APP_PAGE_SETTINGS,
     APP_PAGE_ONLINE_UPDATE,
     APP_PAGE_TIMER,
+    APP_PAGE_ENVIRONMENT,
 } app_page_t;
 
 typedef enum {

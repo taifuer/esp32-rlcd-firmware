@@ -6,14 +6,14 @@
 
 | 项目 | 说明 |
 | --- | --- |
-| 最新正式版 | [v0.33.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
+| 最新正式版 | [v0.34.0](https://github.com/taifuer/esp32-rlcd-firmware/releases/latest) |
 | 兼容硬件 | Waveshare ESP32-S3-RLCD-4.2 |
 | 开发框架 | ESP-IDF v5.5.3 |
 | 固件服务 | [mcu.taifua.com](https://mcu.taifua.com/) |
 
-v0.33.0 新增独立倒计时与秒表，图片导入支持铺满裁剪和拖动取景；日历未校时也能继续导航。
-倒计时开机默认选 5 分钟，短按 KEY 选时长，按住 2 秒开始；切页后继续计时。
-具体变化见[版本说明](dist/v0.33.0/README.md)。
+v0.34.0 新增温湿度趋势、可选的 microSD 月度记录和普通偏好备份，改进设置保存。
+普通页面同时短按 BOOT 和 KEY，松开后即可返回时钟，音乐与计时继续运行。
+具体变化见[版本说明](dist/v0.34.0/README.md)。
 
 ## 效果预览
 
@@ -22,8 +22,8 @@ v0.33.0 新增独立倒计时与秒表，图片导入支持铺满裁剪和拖动
 | 首屏 | 天气 |
 | :---: | :---: |
 | ![首屏效果图](docs/assets/home-screen.svg) | ![天气页效果图](docs/assets/weather.svg) |
-| 市场看板 | 状态 |
-| ![市场看板效果图](docs/assets/market-screen.svg) | ![状态页效果图](docs/assets/status.svg) |
+| 环境趋势 | 市场看板 |
+| ![环境趋势效果图](docs/assets/environment-screen.svg) | ![市场看板效果图](docs/assets/market-screen.svg) |
 | 月历 | microSD 图片 |
 | ![月历页效果图](docs/assets/calendar-screen.svg) | ![microSD 图片页效果图](docs/assets/image-screen.svg) |
 | 倒计时 | 秒表 |
@@ -32,18 +32,21 @@ v0.33.0 新增独立倒计时与秒表，图片导入支持铺满裁剪和拖动
 | ![音乐播放页效果图](docs/assets/music.svg) | ![AI 对话页效果图](docs/assets/voice.svg) |
 | 设置 | 在线更新 |
 | ![设置页效果图](docs/assets/settings.svg) | ![在线更新页效果图](docs/assets/online-update.svg) |
-| 音量调节 | 闹钟 |
-| ![音乐音量调节](docs/assets/volume.svg) | ![闹钟提醒](docs/assets/alarm.svg) |
+| 状态 | 闹钟 |
+| ![状态页效果图](docs/assets/status.svg) | ![闹钟提醒](docs/assets/alarm.svg) |
 
 效果图均为 400 × 300 黑底白字；全反射屏的实际观感会随环境光变化。
 
 ## 当前功能
 
-以下对应 v0.33.0。
+以下对应 v0.34.0。
 
 - 三段式首屏显示公历、农历、星期、温湿度、三态环境舒适度、电量和 Wi-Fi 连接状态；`NORMAL`
   等大显示 `HH:MM:SS`，`SAVING` 显示 `HH:MM`；
 - PCF85063 RTC、SHTC3、GPIO4 电池采样和 8 MB Octal PSRAM；
+- [环境趋势](docs/environment-history.md)显示最近 24 小时温湿度曲线与最低/最高值；正常模式
+  每 30 秒采样、省电每 60 秒，每 5 分钟汇总。无网络、无卡也可记录本次开机数据；
+  可在网页下载 CSV，或明确开启 microSD 近期恢复、月度长期保存，空间不足时停止写入而不删除历史；
 - 首次启动使用临时 WPA2 热点配网，凭据保存在 NVS，随后自动 SNTP 校时；
 - 网络不可用时继续使用 RTC、月历、传感器、按键和离线语音；`NORMAL` 保持家庭 Wi-Fi
   连接并在断线后后台退避重试，`SAVING` 空闲时保持离线；
@@ -70,12 +73,13 @@ v0.33.0 新增独立倒计时与秒表，图片导入支持铺满裁剪和拖动
   Workspace ID、App ID，也不使用唤醒词或后台监听。可选五种官方音色及“日常简洁 / 英语练习”；
   失败后可按屏幕提示重试，不自动重连或重复上传录音；
 - Chat 属于日常功能；系统页只留设置、在线更新和状态，页脚明确写出按键目的地；
-- 日常页与系统页停留在用户选中的页面，不自动返回；正常开机仍进入时钟；
+- 日常页与系统页停留在用户选中的页面，不自动返回；同时短按 BOOT 和 KEY 可直接回时钟，
+  不影响后台音乐与计时；对话、升级、提醒等临时操作仍按屏幕提示处理，正常开机仍进入时钟；
 - 倒计时与秒表独立运行，不依赖校时、网络或 microSD。倒计时可选 1/5/10/30 分钟及
   不重复的网页自定义值（1–180 分钟），最多五档；运行中短按 KEY 暂停/继续，长按 2 秒
   重置并保留所选时长。长按 BOOT 2 秒切模式，切页继续，重启清零；
-- 网页可选择显示天气、市场、月历、计时、图片、音乐和对话，并调整顺序；时钟固定第一位，维护入口始终保留，
-  隐藏页面不删除内容，也不停止后台服务；升级保留旧六页顺序，计时追加末尾，旧全隐藏配置不变；
+- 网页可选择显示天气、环境、市场、月历、计时、图片、音乐和对话，并调整顺序；时钟固定第一位，维护入口始终保留，
+  隐藏页面不删除内容，也不停止后台服务；升级保留旧七页顺序，环境追加末尾，旧全隐藏配置不变；
 - microSD 音乐：歌曲放入卡内的 rlcd/music/ 目录，支持 MP3 和
   16 位 PCM WAV；可播放、暂停、切歌及直接调音量，返回时钟后继续播放。
   设置门户可多选并依次上传歌曲、查看列表、在设备播放和确认删除，无需反复取卡或重启。
@@ -85,6 +89,8 @@ v0.33.0 新增独立倒计时与秒表，图片导入支持铺满裁剪和拖动
   无需二级菜单；网页按常用、联网、媒体、维护分区，支持时区、温度单位、播放音量、计时自定义值、单个每周闹钟、
   更新通道、手机校时、已保存 Wi-Fi 查看、安全更换与独立清除、天气、市场看板、microSD 图片管理
   和本地 OTA；读取失败可原地重试，保存时断线会提示核对结果，不自动重复提交；
+- 网页支持导出、预览和恢复普通偏好备份，不包含 Wi-Fi、API 凭据、外部服务配置或媒体，
+  不改变更新通道、手动省电及 SD 保存开关；各分区保存仅更新对应字段，恢复后无需重启；
 - 离线闹钟按 RTC 本地时间触发；到点播放提示音并显示大字提醒，音量独立于媒体播放，支持试听、停止、首次延后
   5 分钟和 60 秒自动停止，断网及 `SAVING` 模式不影响已保存规则；
 - `NORMAL` 保持 `HH:MM:SS` 和家庭 Wi-Fi 连接，并使用 ESP-IDF `WIFI_PS_MIN_MODEM`
@@ -121,7 +127,7 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 
 普通用户无需安装 ESP-IDF。首次安装、从 v0.6.0 或更早版本迁移以及故障恢复使用 Release
 中的 `-factory.bin`；已安装 v0.7.0 或更新版本后可使用 `-ota.bin`，但从 v0.16.0 或
-更早版本迁移到 v0.33.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
+更早版本迁移到 v0.34.0 时，若要使用自 v0.18.0 起提供的语音功能，还需同时写入
 `-model.bin`。离线更新位于“设置”门户。
 下载、校验、Windows、Linux 和 macOS 的完整步骤见
 [发布固件安装指南](docs/user-install.md)。
@@ -129,11 +135,11 @@ microSD 的 FAT32、固定目录、图片格式和关机插拔要求见
 Windows + WSL 的首次安装示例：
 
 ```bash
-cd dist/v0.33.0
+cd dist/v0.34.0
 sha256sum --check SHA256SUMS
 cd ../..
 ./scripts/flash.sh --port COM5 \
-  --firmware dist/v0.33.0/esp32-rlcd-firmware-v0.33.0-factory.bin \
+  --firmware dist/v0.34.0/esp32-rlcd-firmware-v0.34.0-factory.bin \
   --confirm
 ```
 
@@ -157,6 +163,7 @@ cd ../..
 │   ├── calendar/        # 公历月份与农历换算
 │   ├── conversation/    # 可选 AI 对话配置、多轮会话与安全传输
 │   ├── display/         # ST7305 界面
+│   ├── environment/     # 温湿度趋势、近期恢复与可选 SD 月度记录
 │   ├── gallery/         # 公共演示图清单与 HTTPS 下载
 │   ├── image/           # PBM/BMP 单色图片校验与解码
 │   ├── market/          # 指数预设、行情请求、配置与内存缓存
@@ -201,6 +208,7 @@ cd ../..
 - [自动配网与网络校时](docs/network-time.md)：配网、NVS、SNTP 与离线行为；
 - [界面与按键](docs/home-screen.md)：首屏、月历、计时、条件图片页、系统中心和实体按键；
 - [设备设置](docs/device-settings.md)：网页入口、设置分区、设备端操作与页面停留规则；
+- [环境记录与偏好备份](docs/environment-history.md)：采样、曲线、CSV、microSD 历史及偏好恢复；
 - [AI 对话 Beta](docs/cloud-voice.md)：API Key 获取、模型授权、多轮交互、离线回退、
   数据与费用边界；
 - [天气 Beta](docs/weather.md)：QWeather 凭据、级联选址、刷新、离线缓存和费用边界；

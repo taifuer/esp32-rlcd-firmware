@@ -18,6 +18,7 @@ idf_component_register(
         esp_netif
         esp_system
         esp_wifi
+        environment
         gallery
         cjson
         conversation

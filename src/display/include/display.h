@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "environment_history.h"
 #include "monochrome_image.h"
 #include "market_display_model.h"
 #include "quick_settings.h"
@@ -13,6 +14,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+void display_show_environment(const environment_history_snapshot_t *history,
+                              bool fahrenheit, const char *next_daily_page);
 
 typedef enum {
     DISPLAY_NETWORK_HIDDEN = 0,

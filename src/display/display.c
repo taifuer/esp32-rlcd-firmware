@@ -7,6 +7,7 @@
 #include "calendar_month.h"
 #include "calendar_empty_display_layout.h"
 #include "display_interaction_model.h"
+#include "environment_display_layout.h"
 #include "music_display_model.h"
 #include "market_display_layout.h"
 #include "settings_display_layout.h"
@@ -23,6 +24,16 @@ static u8g2_t *s_u8g2;
 static const char *const WEEKDAYS[] = {
     "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六",
 };
+
+void display_show_environment(const environment_history_snapshot_t *history,
+                              bool fahrenheit, const char *next_daily_page)
+{
+    if (s_u8g2 == NULL) return;
+    u8g2_ClearBuffer(s_u8g2);
+    u8g2_SetDrawColor(s_u8g2, 1);
+    environment_display_render(s_u8g2, history, fahrenheit, next_daily_page);
+    u8g2_SendBuffer(s_u8g2);
+}
 
 static const char *const CALENDAR_WEEKDAYS[] = {
     "一", "二", "三", "四", "五", "六", "日",

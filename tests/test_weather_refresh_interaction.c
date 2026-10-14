@@ -61,7 +61,7 @@ static void test_refresh_page(app_page_t target, app_page_action_t action)
     assert(app_page_state_open_page(&page, target));
     app_page_state_boot_short_press(&page);
     assert(app_page_state_current(&page) ==
-           (target == APP_PAGE_WEATHER ? APP_PAGE_MARKET : APP_PAGE_CALENDAR));
+           (target == APP_PAGE_WEATHER ? APP_PAGE_ENVIRONMENT : APP_PAGE_CALENDAR));
 }
 
 static void test_hidden_page_cannot_continue_a_hold(void)

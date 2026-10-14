@@ -11,6 +11,8 @@ extern "C" {
 #endif
 
 #define SETTINGS_RECORD_ENCODED_SIZE 44U
+#define SETTINGS_RECORD_SCHEMA13_ENCODED_SIZE 44U
+#define SETTINGS_RECORD_SCHEMA12_ENCODED_SIZE 44U
 #define SETTINGS_RECORD_SCHEMA11_ENCODED_SIZE 40U
 #define SETTINGS_RECORD_SCHEMA10_ENCODED_SIZE 36U
 #define SETTINGS_RECORD_SCHEMA9_ENCODED_SIZE 32U
@@ -54,6 +56,12 @@ bool settings_record_encode(uint32_t generation,
                             uint8_t *encoded, size_t encoded_size);
 bool settings_record_decode(const uint8_t *encoded, size_t encoded_size,
                             settings_record_t *record);
+bool settings_record_decode_schema13(const uint8_t *encoded,
+                                     size_t encoded_size,
+                                     settings_record_t *record);
+bool settings_record_decode_schema12(const uint8_t *encoded,
+                                     size_t encoded_size,
+                                     settings_record_t *record);
 bool settings_record_decode_schema11(const uint8_t *encoded,
                                      size_t encoded_size,
                                      settings_record_t *record);

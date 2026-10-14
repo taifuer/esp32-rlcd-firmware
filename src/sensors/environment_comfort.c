@@ -1,4 +1,5 @@
 #include "environment_comfort.h"
+#include "environment_observation.h"
 
 #include <limits.h>
 #include <math.h>
@@ -6,11 +7,13 @@
 #include <string.h>
 
 enum {
-    COMFORT_FILTER_WINDOW_MS = 60000U,
+    /* Three samples still reject one spike at 30 s / 60 s intervals, including
+     * scheduler jitter. Do not retain data past the display freshness window. */
+    COMFORT_FILTER_WINDOW_MS = ENVIRONMENT_OBSERVATION_STALE_WINDOW_MS,
     COMFORT_INITIAL_OBSERVATION_MS = 60000U,
     COMFORT_WORSEN_DELAY_MS = 30000U,
     COMFORT_RECOVER_DELAY_MS = 120000U,
-    COMFORT_MAX_SAMPLE_GAP_MS = 300000U,
+    COMFORT_MAX_SAMPLE_GAP_MS = ENVIRONMENT_OBSERVATION_STALE_WINDOW_MS,
     COMFORT_MAX_CANDIDATE_STEP_MS = 60000U,
 };
 
@@ -122,7 +125,7 @@ static void add_sample(environment_comfort_tracker_t *tracker,
                        uint32_t timestamp_ms)
 {
     while (tracker->sample_count > 0U &&
-           timestamp_ms - tracker->samples[0].timestamp_ms >
+           timestamp_ms - tracker->samples[0].timestamp_ms >=
                COMFORT_FILTER_WINDOW_MS) {
         remove_oldest_sample(tracker);
     }
@@ -284,7 +287,7 @@ environment_comfort_level_t environment_comfort_update(
     uint32_t sample_elapsed_ms = 0U;
     if (tracker->has_sample) {
         sample_elapsed_ms = timestamp_ms - tracker->last_sample_ms;
-        if (sample_elapsed_ms > COMFORT_MAX_SAMPLE_GAP_MS) {
+        if (sample_elapsed_ms >= COMFORT_MAX_SAMPLE_GAP_MS) {
             tracker->sample_count = 0U;
             tracker->has_sample = false;
             tracker->candidate_level = ENVIRONMENT_COMFORT_UNKNOWN;

@@ -132,7 +132,7 @@ static void test_formatting(void)
 static void test_states_and_navigation(u8g2_t *screen)
 {
     const char *destinations[] = {"HOME", "WEATHER", "MARKET", "CALENDAR",
-                                 "IMAGE", "MUSIC", "CHAT", "TIMER", NULL};
+                                 "IMAGE", "MUSIC", "CHAT", "TIMER", "ENVIRONMENT", NULL};
     const uint32_t values[] = {0U, 1U, 59U, 60U, 3599U, 3600U, 10800U,
                                359999U, UINT32_MAX};
     timing_display_line_t lines[TIMING_DISPLAY_LINE_COUNT];
@@ -227,7 +227,7 @@ static void test_preset_selection(u8g2_t *screen)
 static void test_calendar_empty(u8g2_t *screen)
 {
     const char *destinations[] = {"HOME", "WEATHER", "MARKET", "CALENDAR",
-                                 "IMAGE", "MUSIC", "CHAT", "TIMER", NULL};
+                                 "IMAGE", "MUSIC", "CHAT", "TIMER", "ENVIRONMENT", NULL};
     for (unsigned valid = 0U; valid <= 1U; ++valid) {
         for (size_t d = 0U; d < sizeof(destinations) / sizeof(destinations[0]); ++d) {
             calendar_empty_display_line_t lines[CALENDAR_EMPTY_DISPLAY_LINE_COUNT];

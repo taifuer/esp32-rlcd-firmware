@@ -32,7 +32,7 @@ static bool policy_for_effective_state(app_power_state_t state,
             .show_seconds = true,
             .automatic_network = true,
             .rtc_read_interval_ms = 1000U,
-            .sensor_read_interval_ms = 5000U,
+            .sensor_read_interval_ms = 30000U,
             .battery_read_interval_ms = 30000U,
         };
         return true;

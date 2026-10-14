@@ -3,5 +3,5 @@ idf_component_register(
          "network_screen_policy.c"
          "page_state.c" "usb_commands.c" "voice_backend_policy.c"
     INCLUDE_DIRS "."
-    REQUIRES alarm audio board calendar conversation display gallery input market network power recovery rtc sd_image sensors settings storage timer update weather esp_app_format esp_system esp_timer heap esp_driver_usb_serial_jtag vfs
+    REQUIRES alarm audio board calendar conversation display environment gallery input market network power recovery rtc sd_image sensors settings storage timer update weather esp_app_format esp_system esp_timer heap esp_driver_usb_serial_jtag vfs
 )

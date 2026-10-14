@@ -136,6 +136,41 @@ static void test_failure_counter_saturates(void)
     assert(status.consecutive_failures == UINT8_MAX);
 }
 
+static void test_slow_sampling_uses_elapsed_time_not_failure_count(void)
+{
+    const uint32_t intervals[] = {30000U, 31700U, 60000U, 61700U};
+    for (size_t cadence = 0;
+         cadence < sizeof(intervals) / sizeof(intervals[0]); ++cadence) {
+        environment_observation_t observation;
+        environment_observation_init(&observation);
+        const uint32_t start_ms = 1000U;
+        environment_observation_record_success(&observation, start_ms);
+        uint32_t age_ms = intervals[cadence];
+        while (age_ms < ENVIRONMENT_OBSERVATION_STALE_WINDOW_MS) {
+            environment_observation_record_failure(&observation);
+            const environment_observation_status_t status =
+                environment_observation_evaluate(&observation, start_ms + age_ms);
+            assert(status.display_valid);
+            assert(status.stale);
+            assert(status.last_success_ms == start_ms);
+            age_ms += intervals[cadence];
+        }
+        environment_observation_record_failure(&observation);
+        environment_observation_status_t status =
+            environment_observation_evaluate(&observation, start_ms + age_ms);
+        assert(!status.display_valid);
+        assert(!status.stale);
+
+        const uint32_t recovery_ms = start_ms + age_ms + intervals[cadence];
+        environment_observation_record_success(&observation, recovery_ms);
+        status = environment_observation_evaluate(&observation, recovery_ms);
+        assert(status.display_valid);
+        assert(!status.stale);
+        assert(status.age_ms == 0U);
+        assert(status.consecutive_failures == 0U);
+    }
+}
+
 int main(void)
 {
     test_no_success_is_not_displayable();
@@ -145,6 +180,7 @@ int main(void)
     test_stale_window_boundary();
     test_timestamp_wrap();
     test_failure_counter_saturates();
+    test_slow_sampling_uses_elapsed_time_not_failure_count();
     puts("environment observation tests passed");
     return 0;
 }

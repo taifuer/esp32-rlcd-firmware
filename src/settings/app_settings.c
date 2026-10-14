@@ -10,6 +10,7 @@
 #include "freertos/semphr.h"
 #include "nvs.h"
 #include "settings_record.h"
+#include "settings_backup.h"
 
 #define SETTINGS_NAMESPACE "rlcd_cfg"
 #define SETTINGS_SCHEMA_KEY "schema"
@@ -35,9 +36,13 @@
 #define SETTINGS_SCHEMA10_RECORD_SLOT_B_KEY "cfg10_b"
 #define SETTINGS_SCHEMA11_RECORD_SLOT_A_KEY "cfg11_a"
 #define SETTINGS_SCHEMA11_RECORD_SLOT_B_KEY "cfg11_b"
-/* Preserve old records; commit both v12 slots before the schema marker. */
-#define SETTINGS_RECORD_SLOT_A_KEY "cfg12_a"
-#define SETTINGS_RECORD_SLOT_B_KEY "cfg12_b"
+#define SETTINGS_SCHEMA12_RECORD_SLOT_A_KEY "cfg12_a"
+#define SETTINGS_SCHEMA12_RECORD_SLOT_B_KEY "cfg12_b"
+#define SETTINGS_SCHEMA13_RECORD_SLOT_A_KEY "cfg13_a"
+#define SETTINGS_SCHEMA13_RECORD_SLOT_B_KEY "cfg13_b"
+/* Preserve old records; commit both v14 slots before the schema marker. */
+#define SETTINGS_RECORD_SLOT_A_KEY "cfg14_a"
+#define SETTINGS_RECORD_SLOT_B_KEY "cfg14_b"
 
 static const char *TAG = "app_settings";
 static SemaphoreHandle_t s_mutex;
@@ -554,6 +559,52 @@ static esp_err_t recover_legacy_settings(nvs_handle_t handle,
                                          app_settings_t *settings,
                                          uint16_t maximum_schema)
 {
+    if (maximum_schema >= 13U) {
+        settings_record_t records[2] = {0};
+        bool valid[2] = {false, false};
+        const char *keys[] = {SETTINGS_SCHEMA13_RECORD_SLOT_A_KEY,
+                              SETTINGS_SCHEMA13_RECORD_SLOT_B_KEY};
+        for (size_t index = 0U; index < 2U; ++index) {
+            uint8_t encoded[SETTINGS_RECORD_SCHEMA13_ENCODED_SIZE];
+            size_t size = sizeof(encoded);
+            const esp_err_t error = nvs_get_blob(handle, keys[index], encoded, &size);
+            if (error == ESP_OK) {
+                valid[index] = settings_record_decode_schema13(encoded, size, &records[index]);
+            } else if (!recoverable_field_error(error) &&
+                       error != ESP_ERR_NVS_INVALID_LENGTH) {
+                return error;
+            }
+        }
+        const settings_record_slot_t latest = settings_record_select_latest(
+            valid[0] ? &records[0] : NULL, valid[1] ? &records[1] : NULL);
+        if (latest != SETTINGS_RECORD_SLOT_NONE) {
+            *settings = records[latest == SETTINGS_RECORD_SLOT_A ? 0 : 1].settings;
+            return ESP_OK;
+        }
+    }
+    if (maximum_schema >= 12U) {
+        settings_record_t records[2] = {0};
+        bool valid[2] = {false, false};
+        const char *keys[] = {SETTINGS_SCHEMA12_RECORD_SLOT_A_KEY,
+                              SETTINGS_SCHEMA12_RECORD_SLOT_B_KEY};
+        for (size_t index = 0U; index < 2U; ++index) {
+            uint8_t encoded[SETTINGS_RECORD_SCHEMA12_ENCODED_SIZE];
+            size_t size = sizeof(encoded);
+            const esp_err_t error = nvs_get_blob(handle, keys[index], encoded, &size);
+            if (error == ESP_OK) {
+                valid[index] = settings_record_decode_schema12(encoded, size, &records[index]);
+            } else if (!recoverable_field_error(error) &&
+                       error != ESP_ERR_NVS_INVALID_LENGTH) {
+                return error;
+            }
+        }
+        const settings_record_slot_t latest = settings_record_select_latest(
+            valid[0] ? &records[0] : NULL, valid[1] ? &records[1] : NULL);
+        if (latest != SETTINGS_RECORD_SLOT_NONE) {
+            *settings = records[latest == SETTINGS_RECORD_SLOT_A ? 0 : 1].settings;
+            return ESP_OK;
+        }
+    }
     if (maximum_schema >= 11U) {
         settings_record_t records[2] = {0};
         bool valid[2] = {false, false};
@@ -762,7 +813,7 @@ static esp_err_t recover_settings_without_schema(
     if (!current_found) {
         *active_slot = SETTINGS_RECORD_SLOT_NONE;
         *generation = 0U;
-        return recover_legacy_settings(handle, settings, 11U);
+        return recover_legacy_settings(handle, settings, 13U);
     }
     return ESP_OK;
 }
@@ -887,7 +938,9 @@ static bool settings_equal(const app_settings_t *left,
            memcmp(left->daily_pages_order, right->daily_pages_order,
                   sizeof(left->daily_pages_order)) == 0 &&
            left->music_mode == right->music_mode &&
-           left->timer_minutes == right->timer_minutes;
+           left->timer_minutes == right->timer_minutes &&
+           left->environment_history_save_enabled == right->environment_history_save_enabled &&
+           left->environment_archive_save_enabled == right->environment_archive_save_enabled;
 }
 
 static esp_err_t migrate_to_current_schema(
@@ -1005,7 +1058,7 @@ esp_err_t app_settings_init(void)
             memcpy(loaded.daily_pages_order, order, sizeof(order));
             error = load_v1_fields(handle, &loaded);
             needs_migration = error == ESP_OK;
-        } else if (error == ESP_OK && schema >= 2U && schema <= 11U) {
+        } else if (error == ESP_OK && schema >= 2U && schema <= 13U) {
             error = recover_legacy_settings(handle, &loaded, schema);
             needs_migration = error == ESP_OK;
         } else if (error == ESP_OK &&
@@ -1024,7 +1077,7 @@ esp_err_t app_settings_init(void)
                 error = load_current_schema(handle, &loaded, &active_slot,
                                             &generation);
             } else if (error == ESP_OK) {
-                error = recover_legacy_settings(handle, &loaded, 11U);
+                error = recover_legacy_settings(handle, &loaded, 13U);
                 needs_migration = error == ESP_OK;
             }
         }
@@ -1115,6 +1168,11 @@ static esp_err_t save_settings_locked(const app_settings_t *settings)
     if (settings_equal(settings, &s_settings)) {
         return ESP_OK;
     }
+    const bool timezone_changed = settings->utc_offset_minutes != s_settings.utc_offset_minutes;
+    if (timezone_changed) {
+        const esp_err_t timezone_error = app_settings_apply_timezone(settings);
+        if (timezone_error != ESP_OK) return timezone_error;
+    }
     nvs_handle_t handle = 0;
     settings_record_slot_t written_slot = SETTINGS_RECORD_SLOT_NONE;
     uint32_t written_generation = 0U;
@@ -1131,6 +1189,12 @@ static esp_err_t save_settings_locked(const app_settings_t *settings)
         s_settings = *settings;
         s_active_slot = written_slot;
         s_generation = written_generation;
+    } else if (timezone_changed) {
+        const esp_err_t rollback_error = app_settings_apply_timezone(&s_settings);
+        if (rollback_error != ESP_OK) {
+            ESP_LOGE(TAG, "could not restore runtime timezone after save failure: %s",
+                     esp_err_to_name(rollback_error));
+        }
     }
     return error;
 }
@@ -1149,6 +1213,45 @@ esp_err_t app_settings_save(const app_settings_t *settings)
     const esp_err_t error = save_settings_locked(settings);
     xSemaphoreGive(s_mutex);
     return error;
+}
+
+typedef bool (*settings_parser_t)(const char *, size_t,
+                                 const app_settings_t *, app_settings_t *);
+
+static esp_err_t save_parsed_settings(const char *input, size_t length,
+                                      settings_parser_t parse,
+                                      app_settings_t *saved)
+{
+    if (input == NULL || length == 0U) return ESP_ERR_INVALID_ARG;
+    if (!s_initialized || s_mutex == NULL) return ESP_ERR_INVALID_STATE;
+    if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) return ESP_ERR_TIMEOUT;
+    app_settings_t updated;
+    const esp_err_t error = parse(input, length, &s_settings, &updated)
+        ? save_settings_locked(&updated) : ESP_ERR_INVALID_ARG;
+    if (error == ESP_OK && saved != NULL) *saved = s_settings;
+    xSemaphoreGive(s_mutex);
+    return error;
+}
+
+esp_err_t app_settings_save_form(const char *body, size_t length,
+                                app_settings_t *saved)
+{
+    return save_parsed_settings(body, length, app_settings_parse_form, saved);
+}
+
+esp_err_t app_settings_import_backup(const char *json, size_t length,
+                                    app_settings_t *saved)
+{
+    return save_parsed_settings(json, length, settings_backup_parse, saved);
+}
+
+esp_err_t app_settings_export_backup(char *buffer, size_t capacity, size_t *length)
+{
+    app_settings_t settings;
+    const esp_err_t error = app_settings_get(&settings);
+    if (error != ESP_OK) return error;
+    return settings_backup_encode(&settings, buffer, capacity, length)
+        ? ESP_OK : ESP_ERR_INVALID_ARG;
 }
 
 esp_err_t app_settings_toggle_manual_saving(bool *saved_requested)

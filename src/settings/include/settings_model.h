@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define APP_SETTINGS_SCHEMA_VERSION 12U
+#define APP_SETTINGS_SCHEMA_VERSION 14U
 #define APP_SETTINGS_DEFAULT_UTC_OFFSET_MINUTES 480
 #define APP_SETTINGS_MIN_UTC_OFFSET_MINUTES (-720)
 #define APP_SETTINGS_MAX_UTC_OFFSET_MINUTES 840
@@ -39,16 +39,17 @@ extern "C" {
 #define APP_DAILY_PAGE_MUSIC (1U << 4U)
 #define APP_DAILY_PAGE_CHAT (1U << 5U)
 #define APP_DAILY_PAGE_TIMER (1U << 6U)
-#define APP_DAILY_PAGES_ALL_MASK 0x7fU
-#define APP_DAILY_PAGE_COUNT 7U
+#define APP_DAILY_PAGE_ENVIRONMENT (1U << 7U)
+#define APP_DAILY_PAGES_ALL_MASK 0xffU
+#define APP_DAILY_PAGE_COUNT 8U
 /* Stable IDs deliberately match visibility bits, not the UI page enum. */
 #define APP_DAILY_PAGES_DEFAULT_ORDER { APP_DAILY_PAGE_WEATHER, \
-    APP_DAILY_PAGE_MARKET, APP_DAILY_PAGE_CALENDAR, APP_DAILY_PAGE_TIMER, \
+    APP_DAILY_PAGE_ENVIRONMENT, APP_DAILY_PAGE_MARKET, APP_DAILY_PAGE_CALENDAR, APP_DAILY_PAGE_TIMER, \
     APP_DAILY_PAGE_IMAGE, APP_DAILY_PAGE_MUSIC, APP_DAILY_PAGE_CHAT }
-/* Existing installations retain all six old positions; TIMER is appended. */
+/* Existing installations retain their old positions; new pages are appended. */
 #define APP_DAILY_PAGES_LEGACY_ORDER { APP_DAILY_PAGE_WEATHER, \
     APP_DAILY_PAGE_MARKET, APP_DAILY_PAGE_CALENDAR, APP_DAILY_PAGE_IMAGE, \
-    APP_DAILY_PAGE_MUSIC, APP_DAILY_PAGE_CHAT, APP_DAILY_PAGE_TIMER }
+    APP_DAILY_PAGE_MUSIC, APP_DAILY_PAGE_CHAT, APP_DAILY_PAGE_TIMER, APP_DAILY_PAGE_ENVIRONMENT }
 
 static inline bool app_daily_pages_order_valid(const uint8_t *order)
 {
@@ -102,6 +103,8 @@ typedef struct {
     uint8_t daily_pages_order[APP_DAILY_PAGE_COUNT];
     app_music_mode_t music_mode;
     uint8_t timer_minutes;
+    bool environment_history_save_enabled;
+    bool environment_archive_save_enabled;
 } app_settings_t;
 
 void app_settings_defaults(app_settings_t *settings);
@@ -117,7 +120,7 @@ bool app_manual_saving_from_legacy_power(uint16_t schema_version,
                                          bool *manual_requested);
 bool app_settings_format_posix_tz(int16_t utc_offset_minutes,
                                   char *buffer, size_t capacity);
-/* Apply a scoped (section=general|alarm|updates|pages|music|timer) or legacy complete form.
+/* Apply a scoped (section=general|alarm|updates|pages|music|timer|environment) or legacy complete form.
  * Unrelated fields, including the device-side manual saving request,
  * are preserved from the latest validated base record. Pages requires both
  * daily_pages_mask and a complete daily_pages_order CSV, including hidden IDs. */

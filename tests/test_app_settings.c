@@ -9,11 +9,13 @@ static void test_defaults_and_validation(void)
 {
     app_settings_t settings;
     app_settings_defaults(&settings);
-    assert(APP_SETTINGS_SCHEMA_VERSION == 12U);
-    assert(APP_DAILY_PAGE_TIMER == 64U && APP_DAILY_PAGES_ALL_MASK == 127U);
-    assert(APP_DAILY_PAGE_COUNT == 7U);
+    assert(APP_SETTINGS_SCHEMA_VERSION == 14U);
+    assert(APP_DAILY_PAGE_TIMER == 64U && APP_DAILY_PAGES_ALL_MASK == 255U);
+    assert(APP_DAILY_PAGE_COUNT == 8U);
     assert(settings.schema_version == APP_SETTINGS_SCHEMA_VERSION);
     assert(!settings.manual_saving_requested);
+    assert(!settings.environment_history_save_enabled);
+    assert(!settings.environment_archive_save_enabled);
     assert(settings.utc_offset_minutes == 480);
     assert(settings.temperature_unit == APP_TEMPERATURE_UNIT_CELSIUS);
     assert(settings.audio_playback_volume == 68U);
@@ -70,9 +72,9 @@ static void test_defaults_and_validation(void)
     settings.daily_pages_mask = 0U;
     assert(app_settings_validate(&settings));
     settings.daily_pages_mask = 128U;
-    assert(!app_settings_validate(&settings));
+    assert(app_settings_validate(&settings));
     settings.daily_pages_mask = UINT8_MAX;
-    assert(!app_settings_validate(&settings));
+    assert(app_settings_validate(&settings));
     app_settings_defaults(&settings);
     settings.music_mode = APP_MUSIC_MODE_REPEAT_ONE;
     assert(app_settings_validate(&settings));
@@ -149,13 +151,13 @@ static void test_daily_page_forms(void)
     base.music_mode = APP_MUSIC_MODE_REPEAT_ONE;
     for (unsigned mask = 0U; mask <= APP_DAILY_PAGES_ALL_MASK; ++mask) {
         char form[96];
-        snprintf(form, sizeof(form), "section=pages&daily_pages_mask=%u&daily_pages_order=1,2,4,64,8,16,32", mask);
+        snprintf(form, sizeof(form), "section=pages&daily_pages_mask=%u&daily_pages_order=1,128,2,4,64,8,16,32", mask);
         assert(app_settings_parse_form(form, strlen(form), &base, &parsed));
         assert(parsed.daily_pages_mask == mask);
         parsed.daily_pages_mask = base.daily_pages_mask;
         assert(memcmp(&parsed, &base, sizeof(base)) == 0);
     }
-    const char *reordered = "daily_pages_mask=%31%32%37&daily_pages_order=1%2C2%2C4%2C64%2C8%2C16%2C32&section=pages";
+    const char *reordered = "daily_pages_mask=%32%35%35&daily_pages_order=1%2C128%2C2%2C4%2C64%2C8%2C16%2C32&section=pages";
     assert(app_settings_parse_form(reordered, strlen(reordered), &base, &parsed));
     assert(parsed.daily_pages_mask == APP_DAILY_PAGES_ALL_MASK);
     const char *legacy = "timezone=480&unit=c&volume=50&updates=stable&alarm=off&alarm_hour=7&alarm_minute=30&alarm_days=62";
@@ -237,6 +239,35 @@ static void test_music_forms(void)
 
 static unsigned tested_orders;
 
+static void test_environment_forms(void)
+{
+    app_settings_t base, parsed;
+    app_settings_defaults(&base);
+    const char *on = "section=environment&environment_history_save_enabled=on";
+    const char *off = "section=environment&environment_history_save_enabled=off";
+    assert(app_settings_parse_form(on, strlen(on), &base, &parsed));
+    assert(parsed.environment_history_save_enabled);
+    parsed.environment_history_save_enabled = false;
+    assert(memcmp(&parsed, &base, sizeof(base)) == 0);
+    base.environment_history_save_enabled = true;
+    assert(app_settings_parse_form(off, strlen(off), &base, &parsed));
+    assert(!parsed.environment_history_save_enabled);
+    const char *invalid[] = {
+        "environment_history_save_enabled=on", "section=environment",
+        "section=environment&environment_history_save_enabled=true",
+        "section=environment&environment_history_save_enabled=1",
+        "section=environment&environment_history_save_enabled=on&volume=10",
+        "section=environment&environment_history_save_enabled=on&environment_history_save_enabled=off",
+        "section=environment&environment_history_save_enabled=on&section=environment",
+        "section=general&timezone=480&unit=c&volume=50&environment_history_save_enabled=on",
+    };
+    for (size_t i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        parsed = base;
+        assert(!app_settings_parse_form(invalid[i], strlen(invalid[i]), &base, &parsed));
+        assert(memcmp(&parsed, &base, sizeof(base)) == 0);
+    }
+}
+
 static void test_timer_forms(void)
 {
     app_settings_t base, parsed;
@@ -315,8 +346,8 @@ static void test_order_permutations(uint8_t *order, size_t position)
     base.music_mode = APP_MUSIC_MODE_REPEAT_ALL;
     char form[128];
     snprintf(form, sizeof(form),
-             "section=pages&daily_pages_mask=17&daily_pages_order=%u,%u,%u,%u,%u,%u,%u",
-             order[0], order[1], order[2], order[3], order[4], order[5], order[6]);
+             "section=pages&daily_pages_mask=17&daily_pages_order=%u,%u,%u,%u,%u,%u,%u,%u",
+             order[0], order[1], order[2], order[3], order[4], order[5], order[6], order[7]);
     assert(app_settings_parse_form(form, strlen(form), &base, &parsed));
     assert(parsed.daily_pages_mask == 17U);
     assert(memcmp(parsed.daily_pages_order, order, APP_DAILY_PAGE_COUNT) == 0);
@@ -331,11 +362,11 @@ static void test_daily_order_forms(void)
     uint8_t order[] = APP_DAILY_PAGES_DEFAULT_ORDER;
     tested_orders = 0U;
     test_order_permutations(order, 0U);
-    assert(tested_orders == 5040U);
+    assert(tested_orders == 40320U);
     assert(!app_daily_pages_order_valid(NULL));
     app_settings_t base, parsed;
     app_settings_defaults(&base);
-    const uint8_t reverse[] = {32U, 16U, 8U, 64U, 4U, 2U, 1U};
+    const uint8_t reverse[] = {32U, 16U, 8U, 64U, 4U, 2U, 1U, 128U};
     memcpy(base.daily_pages_order, reverse, sizeof(reverse));
     const char *general = "section=general&timezone=330&unit=f&volume=51";
     assert(app_settings_parse_form(general, strlen(general), &base, &parsed));
@@ -483,7 +514,7 @@ static void test_power_policy_profiles(void)
     assert(policy.show_seconds);
     assert(policy.automatic_network);
     assert(policy.rtc_read_interval_ms == 1000U);
-    assert(policy.sensor_read_interval_ms == 5000U);
+    assert(policy.sensor_read_interval_ms == 30000U);
     assert(policy.battery_read_interval_ms == 30000U);
     assert(app_power_policy_next_clock_delay_ms(&policy, 0U) == 1000U);
     assert(app_power_policy_next_clock_delay_ms(&policy, 45U) == 1000U);
@@ -811,6 +842,7 @@ static void test_form_parser_preserves_device_setting(void)
 
 int main(void)
 {
+    test_environment_forms();
     test_defaults_and_validation();
     test_scoped_forms();
     test_daily_page_forms();

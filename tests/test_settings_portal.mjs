@@ -30,6 +30,7 @@ assert.deepEqual(stack, []);
 for (const [id, expected] of Object.entries({
   settings: ['section', 'timezone', 'unit', 'volume'],
   timerForm: ['section', 'timer_minutes'],
+  environmentForm: ['section'],
   alarmForm: ['section', 'alarm_volume', 'alarm', 'alarm_hour', 'alarm_minute', 'alarm_days'],
   updatesForm: ['section', 'updates'],
   pagesForm: ['section', 'daily_pages_mask', 'daily_pages_order'],
@@ -100,6 +101,8 @@ class Element {
   hasPointerCapture(id) { return this.pointerCaptures.has(id); }
   releasePointerCapture(id) { this.pointerCaptures.delete(id); }
   focus() {}
+  click() {}
+  getContext() { return null; }
   querySelectorAll() { return this.controls; }
 }
 const elements = Object.fromEntries(ids.map(id => [id, new Element()]));
@@ -107,6 +110,7 @@ const days = [1, 2, 4, 8, 16, 32, 64].map(bit => Object.assign(new Element(), {d
 const forms = {
   settings: {section: 'general', names: {timezone: 'timezone', unit: 'unit', volume: 'volume'}},
   timerForm: {section: 'timer', names: {timerMinutes: 'timer_minutes'}},
+  environmentForm: {section: 'environment', names: {environmentSaveEnabled: 'environment_history_save_enabled'}},
   alarmForm: {section: 'alarm', names: {alarmVolume: 'alarm_volume', alarm: 'alarm', alarmHour: 'alarm_hour', alarmMinute: 'alarm_minute', alarmDays: 'alarm_days'}},
   updatesForm: {section: 'updates', names: {updates: 'updates'}},
   pagesForm: {section: 'pages', names: {dailyPagesMask: 'daily_pages_mask', dailyPagesOrder: 'daily_pages_order'}},
@@ -119,7 +123,7 @@ const forms = {
 for (const [id, form] of Object.entries(forms)) elements[id].controls = Object.keys(form.names).map(name => elements[name]);
 elements.alarmForm.controls.push(elements.alarmTime, elements.alarmPreview, ...days);
 elements.timerForm.controls.push(elements.timerSave);
-const pageIds = ['pageWeather', 'pageMarket', 'pageCalendar', 'pageImage', 'pageMusic', 'pageChat', 'pageTimer'];
+const pageIds = ['pageWeather', 'pageMarket', 'pageCalendar', 'pageImage', 'pageMusic', 'pageChat', 'pageTimer', 'pageEnvironment'];
 elements.pagesForm.controls.push(...pageIds.flatMap(id => [elements[id], elements[id+'Up'], elements[id+'Down']]), elements.pagesSave);
 elements.panelNetwork.hidden = elements.panelMedia.hidden = elements.panelMaintenance.hidden = true;
 elements.musicSection.open = true;
@@ -127,7 +131,7 @@ elements.musicSleep.value = '15';
 elements.wifiForm.hidden = true;
 let state = {
   token: 'test-token', timezone: 480, unit: 'c', volume: 50, alarm_volume: 68, timer_minutes: 5, updates: 'stable',
-  daily_pages_mask: 127, daily_pages_order: [1,2,4,64,8,16,32], music_mode: 'sequential',
+  daily_pages_mask: 255, daily_pages_order: [1,2,4,64,8,16,32,128], music_mode: 'sequential', environment_history_save_enabled: false, environment_archive_save_enabled: false, environment_card_available: true,
   alarm: 'off', alarm_hour: 7, alarm_minute: 30, alarm_days: 62,
   wifi_configured: true, wifi_ssid: 'Test Wi-Fi', sd_state: 'ready', image_count: 0,
   weather: {available: true, enabled: false, configured: false, key_saved: false,
@@ -154,6 +158,20 @@ const sessionToken = '00123456789abcdeffedcba987654321';
 let lastPath = '', confirmed = true, lastConfirmation = '', request;
 let music = {ready: true, scanned: true, truncated: false, state: 'stopped', elapsed: 0, playback_mode: 'sequential', sleep_remaining_seconds: 0,
   selected_index: 0, tracks: [{name: '01 - 音乐 & 测试.mp3', bytes: 1234567}, {name: '02.wav', bytes: 5678}]};
+const backupData = {format:'esp32-rlcd-preferences',version:1,preferences:{
+  utc_offset_minutes:480,temperature_unit:'c',audio_playback_volume:40,alarm_volume:60,
+  alarm_enabled:false,alarm_hour:8,alarm_minute:15,alarm_weekdays:62,
+  daily_pages_mask:255,daily_pages_order:[1,128,2,4,64,8,16,32],music_mode:'repeat_all',timer_minutes:10,
+}};
+let environment = {recording_age:3600,restored:false,card_available:true,storage_enabled:false,
+  storage_error:false,saved_this_boot:false,points:[
+    {age:900,valid:true,restored:false,t:2300,h:4500,failures:0},
+    {age:600,valid:false,restored:false,t:0,h:0,failures:1},
+    {age:300,valid:true,restored:false,t:2500,h:4700,failures:0},
+  ]};
+let archivePage = {files:[{month:'2026-10',bytes:1024},{month:'2026-09',bytes:512}],next_cursor:'2026-09'};
+let archiveText = 'unix_seconds,temperature\n1790000000,24.5\n';
+let archiveType = 'text/csv; charset=utf-8', archiveBytes, downloads = 0;
 class FakeRequest {
   constructor() { request = this; this.headers = {}; this.upload = {}; }
   open(method, path) { this.method = method; this.path = path; }
@@ -189,8 +207,22 @@ const context = vm.createContext({
         }
         if (fields.get('section') === 'music') state.music_mode = fields.get('music_mode');
         if (fields.get('section') === 'timer') state.timer_minutes = Number(fields.get('timer_minutes'));
+        if (fields.get('section') === 'environment') {
+          if (fields.get('environment_archive_save_enabled') === 'on') assert.equal(options.headers['X-RLCD-Confirm'],'ENABLE_ARCHIVE');
+          else if (fields.get('environment_history_save_enabled') === 'on') assert.equal(options.headers['X-RLCD-Confirm'],'ENABLE_HISTORY');
+          state.environment_history_save_enabled = fields.get('environment_history_save_enabled') === 'on';
+          state.environment_archive_save_enabled = fields.get('environment_archive_save_enabled') === 'on';
+        }
       }
-      if (path === '/api/settings/defaults' && !failPost) { state.daily_pages_mask = 127; state.daily_pages_order = [1,2,4,64,8,16,32]; state.music_mode = 'sequential'; state.timer_minutes = 5; }
+      if (path === '/api/settings/defaults' && !failPost) { state.daily_pages_mask = 255; state.daily_pages_order = [1,128,2,4,64,8,16,32]; state.music_mode = 'sequential'; state.timer_minutes = 5; state.environment_history_save_enabled = false; state.environment_archive_save_enabled = false; }
+      if (path === '/api/settings/restore' && !failPost) {
+        assert.equal(options.headers['X-RLCD-Confirm'], 'RESTORE_PREFERENCES');
+        const p = JSON.parse(options.body).preferences;
+        Object.assign(state,{timezone:p.utc_offset_minutes,unit:p.temperature_unit,volume:p.audio_playback_volume,
+          alarm_volume:p.alarm_volume,alarm:p.alarm_enabled?'on':'off',alarm_hour:p.alarm_hour,
+          alarm_minute:p.alarm_minute,alarm_days:p.alarm_weekdays,daily_pages_mask:p.daily_pages_mask,
+          daily_pages_order:[...p.daily_pages_order],music_mode:p.music_mode,timer_minutes:p.timer_minutes});
+      }
       if (path === '/api/conversation/key' && !failPost) {
         const fields = new URLSearchParams(options.body);
         state.conversation = {...state.conversation,
@@ -241,6 +273,13 @@ const context = vm.createContext({
     if (path === '/api/market/config') return {ok: true, json: async () => structuredClone(market)};
     if (path === '/api/images') return {ok: true, json: async () => ({images: [], selected: ''})};
     if (path === '/api/music') return {ok: true, json: async () => structuredClone(music)};
+    if (path === '/api/settings/backup') return {ok:true,text:async()=>JSON.stringify(backupData)};
+    if (path === '/api/environment') return {ok:true,json:async()=>structuredClone(environment)};
+    if (path === '/api/environment.csv') return {ok:true,text:async()=> 'unix_seconds,age_seconds,valid\n,600,0\n'};
+    if (path.startsWith('/api/environment/archives')) return {ok:true,json:async()=>structuredClone(archivePage)};
+    if (path.startsWith('/api/environment/archive.csv')) return {ok:true,
+      headers:{get:name=>name==='Content-Type'?archiveType:name==='X-RLCD-CSV-Bytes'?String(archiveBytes??Buffer.byteLength(archiveText)):null},
+      text:async()=>archiveText};
     if (path.startsWith('/api/weather/regions')) return {ok: true, json: async () => ({items: [{id: 1, name: '测试'}]})};
     assert.fail('unexpected request ' + path);
   },
@@ -262,6 +301,7 @@ const context = vm.createContext({
   clearTimeout(id) { timers.delete(id); },
   AbortController, XMLHttpRequest: FakeRequest,
   Blob,
+  URL: {createObjectURL() { downloads += 1; return 'blob:download'; }, revokeObjectURL() {}},
   requestAnimationFrame(callback) { const id = ++nextFrame; frames.set(id, callback); return id; },
   cancelAnimationFrame(id) { frames.delete(id); },
 });
@@ -734,11 +774,11 @@ elements.alarmVolume.value = 31;
 elements.conversationKey.value = 'keep-ai-draft';
 elements.weatherKey.value = 'keep-weather-draft';
 const marketDraft = selectedMarket();
-for (let mask = 0; mask <= 127; mask++) {
+for (let mask = 0; mask <= 255; mask++) {
   pageIds.forEach((id, index) => { elements[id].checked = (mask & (1 << index)) !== 0; });
   await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
   assert.equal(lastPath, '/api/settings');
-  assert.equal(lastBody, 'section=pages&daily_pages_mask=' + mask + '&daily_pages_order=1%2C2%2C4%2C64%2C8%2C16%2C32');
+  assert.equal(lastBody, 'section=pages&daily_pages_mask=' + mask + '&daily_pages_order=1%2C2%2C4%2C64%2C8%2C16%2C32%2C128');
   assert.equal(state.daily_pages_mask, mask);
   assert.equal(elements.volume.value, 43);
   assert.equal(elements.alarmVolume.value, 31);
@@ -753,7 +793,7 @@ elements.volume.value = 43;
 failPost = true;
 await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
 assert.equal(elements.pageCalendar.checked, false, 'failed save preserves page draft');
-assert.equal(state.daily_pages_mask, 127);
+assert.equal(state.daily_pages_mask, 255);
 assert.equal(elements.pagesMessage.textContent, '保存失败');
 assert.equal(elements.pagesSave.disabled, false);
 failPost = false;
@@ -766,7 +806,7 @@ assert.equal(elements.volume.disabled, false);
 finishPagesPost();
 await pagesSubmission;
 pendingPost = null;
-state.daily_pages_mask = 128;
+state.daily_pages_mask = 256;
 await vm.runInContext("load('pages')", context);
 assert.equal(elements.pagesSave.disabled, true, 'unsupported mask is not silently truncated');
 state.daily_pages_mask = 0;
@@ -999,29 +1039,29 @@ assert.equal(elements.musicMode.value, state.music_mode, 'explicit retry shows a
 assert.equal(elements.musicSettingsMessage.textContent, '', 'successful verification clears stale uncertain message');
 assert.equal(elements.loadNotice.hidden, true);
 
-// Ordering keeps the seven stable IDs, preserves hidden pages and independent
+// Ordering keeps the eight stable IDs, preserves hidden pages and independent
 // drafts, and changes only after explicit save. Invalid server data blocks it.
-state.daily_pages_order = [1,2,4,64,8,16,32];
+state.daily_pages_order = [1,2,4,64,8,16,32,128];
 await vm.runInContext("load('pages')", context);
 assert.equal(elements.pageWeatherUp.disabled, true);
-assert.equal(elements.pageChatDown.disabled, true);
+assert.equal(elements.pageEnvironmentDown.disabled, true);
 elements.pageChatUp.onclick();
 const orderedBits = () => Array.from(vm.runInContext('dailyPageOrder', context));
-assert.deepEqual(orderedBits(), [1,2,4,64,8,32,16]);
-assert.deepEqual(state.daily_pages_order, [1,2,4,64,8,16,32]);
+assert.deepEqual(orderedBits(), [1,2,4,64,8,32,16,128]);
+assert.deepEqual(state.daily_pages_order, [1,2,4,64,8,16,32,128]);
 elements.pageChat.checked = false;
 await vm.runInContext("load('settings')", context);
 elements.navNetwork.onclick(); elements.navGeneral.onclick();
-assert.deepEqual(orderedBits(), [1,2,4,64,8,32,16]);
+assert.deepEqual(orderedBits(), [1,2,4,64,8,32,16,128]);
 assert.equal(elements.pageChat.checked, false);
 await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
-assert.deepEqual(state.daily_pages_order, [1,2,4,64,8,32,16]);
+assert.deepEqual(state.daily_pages_order, [1,2,4,64,8,32,16,128]);
 assert.equal(elements.pageOrder.children[5], elements.pageChatRow);
 failPost = true;
 elements.pageChatUp.onclick();
 await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
-assert.deepEqual(orderedBits(), [1,2,4,64,32,8,16], 'failed save retains ordered draft');
-assert.deepEqual(state.daily_pages_order, [1,2,4,64,8,32,16]);
+assert.deepEqual(orderedBits(), [1,2,4,64,32,8,16,128], 'failed save retains ordered draft');
+assert.deepEqual(state.daily_pages_order, [1,2,4,64,8,32,16,128]);
 failPost = false;
 for (const invalid of [undefined, [], [1,2,4,8,16,32], [1,1,4,64,8,16,32], [1,2,4,8,16,64,128], ['1',2,4,64,8,16,32]]) {
   state.daily_pages_order = invalid;
@@ -1031,7 +1071,7 @@ for (const invalid of [undefined, [], [1,2,4,8,16,32], [1,1,4,64,8,16,32], [1,2,
   elements.pageChatUp.onclick();
   assert.deepEqual(orderedBits(), previous);
 }
-state.daily_pages_order = [1,2,4,64,8,16,32];
+state.daily_pages_order = [1,2,4,64,8,16,32,128];
 await vm.runInContext("load('pages')", context);
 
 // Daily AI preferences and service credentials are separate forms and trust
@@ -1521,10 +1561,348 @@ await vm.runInContext("load('pages')", context);
 assert.equal(elements.pageTimer.checked, true);
 assert.ok(pageIds.filter(id => id !== 'pageTimer').every(id => !elements[id].checked));
 elements.pageTimerUp.onclick();
-assert.deepEqual(orderedBits(), [1,2,64,4,8,16,32]);
+assert.deepEqual(orderedBits(), [1,128,2,64,4,8,16,32]);
 await elements.pagesForm.onsubmit({preventDefault() {}, target: elements.pagesForm});
 assert.equal(state.daily_pages_mask, 64);
-assert.deepEqual(state.daily_pages_order, [1,2,64,4,8,16,32]);
+assert.deepEqual(state.daily_pages_order, [1,128,2,64,4,8,16,32]);
+
+// Environment history is lazy and read-only. Missing media cannot disable the
+// regular forms, the RAM chart, or CSV export; enabling writes requires consent.
+assert.equal(getRequests.some(item => item.path === '/api/environment'), false);
+const historyWritesBefore = writes.length;
+elements.environmentSection.open = true;
+elements.environmentSection.ontoggle();
+await new Promise(resolve => setImmediate(resolve));
+assert.match(elements.environmentSummary.textContent, /2 组有效记录/);
+assert.match(elements.environmentRange.textContent, /本次开机开始记录/);
+assert.equal(writes.length, historyWritesBefore);
+elements.timerMinutes.value = '27';
+elements.environmentSaveEnabled.value = 'on';
+confirmed = false;
+await elements.environmentForm.onsubmit({preventDefault(){},target:elements.environmentForm});
+assert.equal(writes.length, historyWritesBefore, 'canceling SD consent performs no write');
+confirmed = true;
+await elements.environmentForm.onsubmit({preventDefault(){},target:elements.environmentForm});
+assert.equal(state.environment_history_save_enabled, true);
+assert.equal(lastBody, 'section=environment&environment_history_save_enabled=on&environment_archive_save_enabled=off');
+assert.equal(elements.timerMinutes.value, '27', 'history save leaves timer draft alone');
+state.sd_state = 'missing'; state.environment_card_available = false; environment.card_available = false;
+await vm.runInContext("load('environment')", context);
+assert.equal(elements.environmentSave.disabled, false, 'existing SD consent may be disabled without media');
+elements.environmentSaveEnabled.value = 'off';
+await elements.environmentForm.onsubmit({preventDefault(){},target:elements.environmentForm});
+assert.equal(state.environment_history_save_enabled, false);
+assert.equal(elements.environmentSave.disabled, true, 'no media cannot newly enable writes');
+assert.equal(elements.volume.disabled, false);
+assert.equal(elements.environmentCsv.disabled, false);
+const beforeCsv = writes.length;
+await elements.environmentCsv.onclick();
+assert.equal(writes.length, beforeCsv, 'CSV download is a GET only');
+assert.equal(getRequests.at(-1).path, '/api/environment.csv');
+assert.match(elements.environmentMessage.textContent, /不会写入 SD/);
+for (const [id,timer] of timers) if (timer.ms===1000) { timer.callback(); timers.delete(id); }
+const validPoints = environment.points;
+environment.points = [{age:0,valid:true,restored:false,t:'<svg>',h:4000,failures:0}];
+await elements.environmentRefresh.onclick();
+assert.match(elements.environmentMessage.textContent, /格式无效/);
+for (const invalid of [undefined, null, 0, 'false']) {
+  environment.points = [{...validPoints[0],restored:invalid}];
+  await elements.environmentRefresh.onclick();
+  assert.match(elements.environmentMessage.textContent, /格式无效/, 'restored is a required boolean');
+}
+environment.points = validPoints; environment.restored = true;
+await elements.environmentRefresh.onclick();
+assert.match(elements.environmentRange.textContent, /SD 卡恢复/);
+state.sd_state = 'ready'; state.environment_card_available = true; environment.card_available = true;
+await vm.runInContext("load('environment')", context);
+state.sd_state = 'full';
+await vm.runInContext("load('environment')", context);
+assert.equal(elements.environmentSave.disabled,false,'image catalog limits do not deny a usable history card');
+state.sd_state = 'ready';
+
+// Long retention is distinct consent, never inferred from existing snapshot
+// settings; file reads are lazy, bounded, authenticated GETs only.
+assert.equal(getRequests.some(item=>item.path.startsWith('/api/environment/archive')),false);
+state.environment_history_save_enabled=true;
+state.environment_archive_save_enabled=false;
+await vm.runInContext("load('environment')",context);
+assert.equal(elements.environmentSaveEnabled.value,'on');
+elements.environmentSaveEnabled.value='archive';
+const beforeArchiveConsent=writes.length;
+confirmed=false;
+await elements.environmentForm.onsubmit({preventDefault(){}});
+assert.equal(writes.length,beforeArchiveConsent);
+assert.match(lastConfirmation,/持续占用 SD 空间/);
+confirmed=true;
+await elements.environmentForm.onsubmit({preventDefault(){}});
+assert.equal(state.environment_archive_save_enabled,true);
+assert.equal(lastBody,'section=environment&environment_history_save_enabled=on&environment_archive_save_enabled=on');
+assert.equal(elements.timerMinutes.value,'27','archive consent leaves unrelated drafts alone');
+environment.archive_enabled=true;environment.archive_full=true;
+await elements.environmentRefresh.onclick();
+assert.match(elements.environmentStorage.textContent,/长期历史已暂停.*安全限制/);
+environment.storage_full=true;environment.storage_error=true;environment.archive_enabled=false;
+await elements.environmentRefresh.onclick();
+assert.match(elements.environmentStorage.textContent,/SD 可用空间不足.*暂停保存.*自动重试/,'snapshot-only writes expose the same full-card condition');
+assert.doesNotMatch(elements.environmentStorage.textContent,/最近一次保存失败/,'the actionable no-space reason takes priority over generic failure');
+environment.storage_full=false;environment.storage_error=false;environment.archive_enabled=true;
+environment.archive_full=false;environment.archive_error=true;
+await elements.environmentRefresh.onclick();
+assert.match(elements.environmentStorage.textContent,/长期历史写入失败/);
+environment.archive_error=false;
+elements.environmentArchiveSection.open=true;
+const archiveWrites=writes.length;
+elements.environmentArchiveSection.ontoggle();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(writes.length,archiveWrites);
+assert.equal(getRequests.at(-1).path,'/api/environment/archives');
+assert.equal(elements.environmentArchiveList.children.length,2);
+assert.equal(elements.environmentArchiveMore.hidden,false);
+assert.match(elements.environmentArchiveList.children[0].children[0].textContent,/2026-10.*MB.*下载 CSV/);
+const beforeArchiveDownload=downloads;
+await elements.environmentArchiveList.children[0].children[0].onclick();
+assert.equal(downloads,beforeArchiveDownload+1);
+assert.equal(getRequests.at(-1).path,'/api/environment/archive.csv?month=2026-10');
+assert.ok(getRequests.at(-1).options.headers['X-RLCD-Token']);
+assert.equal(writes.length,archiveWrites);
+for(const [type,bytes,text] of [
+  ['text/html',undefined,'<html>error</html>\n'],
+  ['text/csv',1,archiveText],
+  ['text/csv',undefined,'unterminated'],
+  ['text/csv',8388609,archiveText],
+  ['text/csv',0,''],
+]) {
+  const savedText=archiveText;
+  archiveType=type;archiveBytes=bytes;archiveText=text;
+  const previous=downloads;
+  await context.downloadEnvironmentArchive('2026-10');
+  assert.equal(downloads,previous,'bad CSV response is never saved as a download');
+  assert.match(elements.environmentArchiveMessage.textContent,/未生成下载/);
+  archiveText=savedText;
+}
+archiveType='text/csv; charset=utf-8';archiveBytes=undefined;
+failedGets.set('/api/environment/archive.csv?month=2026-10','SD 卡正在使用，请先停止音乐播放。');
+await context.downloadEnvironmentArchive('2026-10');
+assert.match(elements.environmentArchiveMessage.textContent,/停止音乐/);
+failedGets.delete('/api/environment/archive.csv?month=2026-10');
+const beforeInvalidMonth=getRequests.length;
+for(const month of ['../2026-10','2026-13','2026-01&x=1','2026-1','1999-12','2101-01','<svg>']) {
+  await context.downloadEnvironmentArchive(month);
+}
+assert.equal(getRequests.length,beforeInvalidMonth,'invalid month cannot become a URL');
+const savedPage=archivePage;
+archivePage={files:[{month:'2026-08',bytes:100}],next_cursor:''};
+await elements.environmentArchiveMore.onclick();
+assert.equal(getRequests.at(-1).path,'/api/environment/archives?before=2026-09');
+assert.equal(elements.environmentArchiveMore.hidden,true);
+assert.match(elements.environmentArchiveList.children[0].children[0].textContent,/2026-08/);
+for(const invalidPage of [
+  {files:[{month:'<svg>',bytes:100}],next_cursor:''},
+  {files:[{month:'2026-10',bytes:8388609}],next_cursor:''},
+  {files:[{month:'2026-10',bytes:100},{month:'2026-10',bytes:100}],next_cursor:''},
+  {files:[{month:'2026-09',bytes:100},{month:'2026-10',bytes:100}],next_cursor:''},
+  {files:[{month:'2026-10',bytes:100}],next_cursor:'2026-11'},
+  {files:[],next_cursor:'2026-13'},
+]) {
+  archivePage=invalidPage;
+  await elements.environmentArchiveRefresh.onclick();
+  assert.match(elements.environmentArchiveMessage.textContent,/列表无效/);
+}
+archivePage={files:[{month:'2026-10',bytes:100}],next_cursor:'2026-08'};
+await elements.environmentArchiveRefresh.onclick();
+assert.equal(elements.environmentArchiveMore.hidden,false,'cursor may skip a damaged month after the last returned file');
+archivePage={files:[],next_cursor:'2026-05'};
+await elements.environmentArchiveMore.onclick();
+assert.equal(getRequests.at(-1).path,'/api/environment/archives?before=2026-08');
+assert.equal(elements.environmentArchiveMore.hidden,false,'a full scanned page can contain no valid files');
+assert.match(elements.environmentArchiveMessage.textContent,/继续查看更早月份/);
+for(const cursor of ['2026-05','2026-06']) {
+  archivePage={files:[],next_cursor:cursor};
+  await elements.environmentArchiveMore.onclick();
+  assert.match(elements.environmentArchiveMessage.textContent,/列表无效/,'a next cursor must progress beyond the submitted cursor');
+}
+archivePage={files:[{month:'2026-04',bytes:100}],next_cursor:''};
+await elements.environmentArchiveMore.onclick();
+assert.equal(getRequests.at(-1).path,'/api/environment/archives?before=2026-05');
+assert.match(elements.environmentArchiveList.children[0].children[0].textContent,/2026-04/);
+archivePage=savedPage;
+hangRead=true;
+const cancelledDownload=context.downloadEnvironmentArchive('2026-10');
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(elements.environmentArchiveCancel.hidden,false);
+elements.environmentArchiveCancel.onclick();
+await cancelledDownload;
+assert.equal(elements.environmentArchiveCancel.hidden,true);
+assert.match(elements.environmentArchiveMessage.textContent,/取消或超时/);
+elements.environmentSaveEnabled.value='off';
+await elements.environmentForm.onsubmit({preventDefault(){}});
+assert.equal(state.environment_archive_save_enabled,false);
+await elements.environmentArchiveRefresh.onclick();
+assert.equal(elements.environmentArchiveList.children.length,2,'turning writes off retains archive downloads');
+state.environment_card_available=false;
+await vm.runInContext("load('environment')",context);
+assert.equal(elements.environmentArchiveList.children.length,0);
+assert.equal(elements.environmentArchiveRefresh.disabled,true);
+assert.equal(elements.environmentCsv.disabled,false,'RAM CSV remains available without media');
+state.environment_card_available=true;
+await vm.runInContext("load('environment')",context);
+environment.archive_enabled=false;
+
+// Exercise actual canvas path commands, not a copied continuity predicate.
+// A restart shorter than one bucket must still leave the chart disconnected.
+const historyCanvas = {
+  paths:[], current:[], labels:[], clearRect(){this.paths=[];this.labels=[];}, fillText(text){this.labels.push(text);}, fillRect(){},
+  beginPath(){this.current=[];},moveTo(x,y){this.current.push(['move',x,y]);},
+  lineTo(x,y){this.current.push(['line',x,y]);},stroke(){this.paths.push([...this.current]);},
+};
+elements.environmentTemperature.getContext=()=>historyCanvas;
+const chartPoint=(age,restored=false,extra={})=>({age,restored,valid:true,t:2300,h:4500,failures:0,...extra});
+const chartCommands=points=>{
+  context.environmentPlot('environmentTemperature',points,'t','温度 °C');
+  assert.equal(historyCanvas.paths.length,2,'axes and trace are separate paths');
+  return historyCanvas.paths[1].map(command=>command[0]);
+};
+assert.deepEqual(chartCommands([chartPoint(900),chartPoint(600),chartPoint(300)]),['move','line','line']);
+assert.deepEqual(chartCommands([chartPoint(900,true),chartPoint(600,true),chartPoint(300,false)]),['move','line','move'],'boot boundary breaks an otherwise consecutive sequence');
+assert.deepEqual(chartCommands([chartPoint(900),chartPoint(300)]),['move','move'],'missing bucket breaks line');
+assert.deepEqual(chartCommands([chartPoint(900),chartPoint(750)]),['move','move'],'partial spacing cannot appear continuous');
+assert.deepEqual(chartCommands([chartPoint(300),chartPoint(600)]),['move','move'],'reverse chronology never connects');
+assert.deepEqual(chartCommands([chartPoint(900),chartPoint(600,false,{valid:false}),chartPoint(300)]),['move','move']);
+assert.deepEqual(chartCommands([chartPoint(900),chartPoint(600,false,{failures:1}),chartPoint(300)]),['move','move','move'],'failed bucket breaks both adjacent segments');
+assert.deepEqual(chartCommands([chartPoint(86400),chartPoint(86100)]),['move'],'the expired 24h boundary is not drawn');
+const savedEnvironment=structuredClone(environment);
+environment.recording_age=600;environment.restored=false;
+environment.points=[chartPoint(600),chartPoint(300),chartPoint(0)];
+await elements.environmentRefresh.onclick();
+assert.equal(historyCanvas.paths[1][0][1],40,'new session starts at the left edge');
+assert.ok(historyCanvas.paths[1].at(-1)[1]<44,'ten minutes does not fill a 24h graph');
+assert.ok(historyCanvas.labels.includes('开始记录'));
+assert.ok(historyCanvas.labels.includes('+24 小时'));
+environment.recording_age=86400;
+await elements.environmentRefresh.onclick();
+assert.equal(historyCanvas.paths[1].at(-1)[1],468,'a full day uses the rolling right edge');
+assert.ok(historyCanvas.labels.includes('24 小时前'));
+environment.recording_age=600;environment.restored=true;
+environment.points=[chartPoint(3600,true),chartPoint(300),chartPoint(0)];
+await elements.environmentRefresh.onclick();
+assert.equal(historyCanvas.paths[1][0][1],40,'recovered oldest valid history anchors the left');
+assert.ok(historyCanvas.paths[1].at(-1)[1]>57&&historyCanvas.paths[1].at(-1)[1]<58);
+environment=savedEnvironment;
+elements.environmentTemperature.getContext=()=>null;
+
+// Backup selection and preview never upload. Only the confirmed ordinary
+// restore is posted; unsubmitted drafts and all excluded fields survive.
+const backupWritesBefore = writes.length;
+const selectBackup = async value => {
+  const text=typeof value==='string'?value:JSON.stringify(value);
+  elements.backupFile.files=[{size:new TextEncoder().encode(text).length,text:async()=>text}];
+  await elements.backupFile.onchange();
+};
+await selectBackup(backupData);
+assert.equal(elements.backupPreview.hidden, false);
+assert.match(elements.backupSummary.textContent, /环境趋势/);
+assert.match(elements.backupSummary.textContent, /10 分钟/);
+assert.equal(writes.length, backupWritesBefore);
+for (const invalid of ['not JSON', {...backupData,api_key:'hidden'},
+  {...backupData,version:2}, {...backupData,preferences:{...backupData.preferences,timer_minutes:181}},
+  {...backupData,preferences:{...backupData.preferences,daily_pages_order:[1,1,2,4,64,8,16,32]}},
+  {...backupData,preferences:{...backupData.preferences,temperature_unit:'<img src=x>'}}]) {
+  await selectBackup(invalid);
+  assert.equal(elements.backupPreview.hidden, true);
+  assert.equal(elements.backupRestore.disabled, true);
+}
+await selectBackup(' '.repeat(4097));
+assert.match(elements.backupMessage.textContent, /4 KiB/);
+let resolveOldBackup;
+elements.backupFile.files=[{size:100,text:()=>new Promise(resolve=>{resolveOldBackup=resolve;})}];
+const oldSelection=elements.backupFile.onchange();
+await selectBackup({...backupData,preferences:{...backupData.preferences,timer_minutes:15}});
+resolveOldBackup(JSON.stringify(backupData));await oldSelection;
+assert.match(elements.backupSummary.textContent, /15 分钟/, 'late file read cannot replace newer selection');
+await selectBackup(backupData);
+confirmed=false;await elements.backupRestore.onclick();
+assert.equal(writes.length, backupWritesBefore);
+confirmed=true;
+state.local_network=true;state.updates='beta';state.environment_history_save_enabled=true;
+await vm.runInContext("load('session')",context);
+elements.volume.value=77;elements.settings.oninput();
+elements.timerMinutes.value='37';elements.timerForm.oninput();
+elements.weatherKey.value='preserve-weather-key';
+elements.conversationKey.value='preserve-ai-key';
+const historyDraft = elements.environmentSaveEnabled.value;
+await elements.backupRestore.onclick();
+assert.equal(lastPath,'/api/settings/restore');
+assert.equal(state.volume,40);
+assert.equal(elements.volume.value,77,'restore keeps existing ordinary form draft');
+assert.equal(state.timer_minutes,10);
+assert.equal(elements.timerMinutes.value,'37');
+assert.match(elements.settingsMessage.textContent,/仍保留未保存/);
+assert.equal(state.updates,'beta');
+assert.equal(state.environment_history_save_enabled,true);
+assert.equal(elements.environmentSaveEnabled.value,historyDraft);
+assert.equal(elements.weatherKey.value,'preserve-weather-key');
+assert.equal(elements.conversationKey.value,'preserve-ai-key');
+assert.equal(elements.backupPreview.hidden,true);
+await selectBackup(backupData);
+failPost=true;await elements.backupRestore.onclick();failPost=false;
+assert.equal(elements.backupPreview.hidden,false,'definite failure keeps preview for correction or retry');
+disconnectedPost=true;await elements.backupRestore.onclick();disconnectedPost=false;
+assert.equal(elements.backupPreview.hidden,true,'uncertain result cannot be blindly resubmitted');
+assert.equal(elements.backupRestore.disabled,true);
+assert.match(elements.backupMessage.textContent,/下载当前偏好备份核对/);
+await elements.backupExport.onclick();
+assert.equal(getRequests.at(-1).path,'/api/settings/backup');
+for (const [id,timer] of timers) if(timer.ms===1000){timer.callback();timers.delete(id);}
+state.local_network=false;state.environment_history_save_enabled=false;
+await vm.runInContext("load('session')",context);
+
+// C-side trust boundary: recovery never registers these endpoints, all reads
+// are authorized, and mutation re-parses against the latest locked settings.
+for(const name of ['backup_uri','restore_uri','environment_uri','environment_csv_uri','environment_archives_uri','environment_archive_csv_uri']) {
+  assert.match(serverDefinition,new RegExp('if \\(error == ESP_OK && !recovery_mode\\) \\{\\s*error = httpd_register_uri_handler\\(s_http_server, &'+name+'\\);'));
+}
+const ordinaryRead=source.split('static bool ordinary_read_allowed(')[1].split('static esp_err_t settings_backup_get_handler')[0];
+assert.match(ordinaryRead,/authorize_get\(request\)/);
+assert.match(ordinaryRead,/boot_recovery_is_active\(\)/);
+const restoreHandler=source.split('static esp_err_t settings_restore_post_handler(')[1].split('static esp_err_t environment_get_handler')[0];
+assert.match(restoreHandler,/authorize_post\(request\)/);
+assert.match(restoreHandler,/RESTORE_PREFERENCES/);
+assert.match(restoreHandler,/content_len > APP_SETTINGS_BACKUP_MAX_LENGTH/);
+assert.ok(restoreHandler.indexOf('settings_backup_parse(')<restoreHandler.indexOf('begin_regular_mutation()'));
+assert.match(restoreHandler,/app_settings_import_backup\(body, length, &candidate\)/);
+assert.doesNotMatch(restoreHandler,/esp_restart|network_time|sd_image|app_settings_save\(/);
+const environmentHandler=source.split('static esp_err_t environment_get_handler(')[1].split('static esp_err_t finish_reprovisioning_request')[0];
+assert.match(environmentHandler,/ordinary_read_allowed\(request\)/);
+assert.match(environmentHandler,/heap_caps_malloc\(/);
+assert.match(environmentHandler,/environment_history_snapshot\(snapshot\)/);
+assert.match(environmentHandler,/environment_history_csv_row\(/);
+assert.match(environmentHandler,/point->restored \? "true" : "false"/);
+assert.match(environmentHandler,/httpd_resp_send_chunk/);
+assert.doesNotMatch(environmentHandler,/environment_history_record|set_storage_enabled|sd_image|app_settings_save|begin_regular_mutation/);
+const settingsHandler=source.split('static esp_err_t settings_post_handler(')[1].split('static esp_err_t market_config_post_handler')[0];
+assert.match(settingsHandler,/app_settings_save_form\(body, length, &settings\)/);
+assert.match(settingsHandler,/ENABLE_HISTORY/);
+assert.match(settingsHandler,/ENABLE_ARCHIVE/);
+assert.match(settingsHandler,/!current\.environment_archive_save_enabled/);
+const archiveHandler=source.split('static esp_err_t environment_archive_get_handler(')[1].split('static esp_err_t finish_reprovisioning_request')[0];
+assert.match(archiveHandler,/ordinary_read_allowed\(request\)/);
+assert.match(archiveHandler,/sd_media_begin_read\(&lease, 0U\)/);
+assert.match(archiveHandler,/environment_archive_inspect\(/);
+assert.match(archiveHandler,/environment_archive_stream\(/);
+assert.match(archiveHandler,/state\.sent != size/);
+assert.match(archiveHandler,/X-RLCD-CSV-Bytes/);
+assert.match(archiveHandler,/sd_media_end_read\(lease\)/);
+assert.doesNotMatch(archiveHandler,/audio_music_stop|begin_storage_change|begin_regular_mutation|app_settings_save|environment_archive_append/);
+const archiveQuery=source.split('static bool environment_archive_request_month(')[1].split('static esp_err_t environment_archive_error_response')[0];
+assert.match(archiveQuery,/length != prefix_length \+ 7U/);
+assert.match(archiveQuery,/memcmp\(query, prefix, prefix_length\)/);
+assert.match(archiveQuery,/environment_archive_valid_month\(month\)/);
+const archiveCheckpoint=source.split('static bool environment_archive_request_checkpoint(')[1].split('static bool environment_archive_response_write')[0];
+assert.match(archiveCheckpoint,/pdMS_TO_TICKS\(20000U\)/);
+assert.match(archiveCheckpoint,/session_deadline_expired\(\)/);
+assert.match(archiveCheckpoint,/!portal_is_ready\(\)/,'physical portal cancellation also ends a read');
+assert.doesNotMatch(source,/restore_previous_settings/);
+assert.doesNotMatch(recoveryMarkup,/backupFile|environmentSection|environment_history_save_enabled/);
 
 // Pure geometry runs the firmware functions, including extreme aspect ratios,
 // contain compatibility and source-bound clamping in every drag direction.
@@ -1809,4 +2187,4 @@ assert.equal(elements.upload.disabled, true, 'unrelated reads do not unlock ambi
 elements.upload.onclick();
 assert.equal(request, otaRequest);
 assert.equal(timers.size, 0);
-console.log('Settings portal: seven-page order, independent timer preferences, bounded browser crop/drag and decoder cleanup, AI/weather isolation, LAN auth, media guards and OTA uncertainty passed.');
+console.log('Settings portal: eight-page order, left-start environment charts, monthly archive consent/pagination/verified CSV/cancel, private ordinary-preference backup/restore, isolated drafts, LAN auth, media guards and OTA uncertainty passed.');

@@ -6,6 +6,7 @@
 #include <time.h>
 
 #include "app_settings.h"
+#include "settings_backup.h"
 #include "audio_alert.h"
 #include "audio_conversation.h"
 #include "audio_music.h"
@@ -14,6 +15,8 @@
 #include "conversation_config.h"
 #include "esp_app_format.h"
 #include "esp_event.h"
+#include "environment_service.h"
+#include "environment_archive.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
@@ -33,6 +36,7 @@
 #include "network_credentials.h"
 #include "network_time.h"
 #include "sd_image.h"
+#include "sd_media.h"
 #include "settings_portal_policy.h"
 #include "weather_config.h"
 #include "weather_location_catalog.h"
@@ -119,7 +123,7 @@ static const char RECOVERY_SETTINGS_PAGE[] =
     "function controls(){const open=$('openWifi').checked,blocked=!stateReady||wifiBusy||otaStarted;$('wifiEdit').disabled=blocked;$('wifiSsid').disabled=blocked;$('wifiPassword').disabled=blocked||open;$('showWifiPassword').disabled=blocked||open;$('openWifi').disabled=blocked;$('forgetWifi').disabled=blocked||!wifiConfigured;$('wifiSave').disabled=blocked;$('wifiCancel').disabled=blocked;$('upload').disabled=!stateReady||otaStarted||wifiBusy;$('file').disabled=$('upload').disabled;$('retryLoad').disabled=loading||otaStarted}"
     "function edit(value){$('wifiForm').hidden=!value;if(value){$('wifiPassword').value='';$('wifiSsid').focus()}}"
     "async function requestData(path,options={},format='json'){const writing=options.method==='POST',controller=new AbortController(),timer=setTimeout(()=>controller.abort(),writing?45000:15000);try{const response=await fetch(path,{...options,signal:controller.signal});if(!response.ok)throw new Error(await response.text()||'设备暂时无法处理');return await response[format]()}catch(error){if(error.name==='AbortError'||error.name==='TypeError')throw new Error(writing?'连接中断或请求超时，操作结果尚未确认。请重新连接门户后核对。':'无法读取恢复状态，请确认门户仍在开启后重试。');throw error}finally{clearTimeout(timer)}}"
-    "async function post(path,body){if(!stateReady)throw new Error('请先读取恢复状态');return requestData(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Token':token},body},'text')}"
+    "async function post(path,body,extraHeaders={}){if(!stateReady)throw new Error('请先读取恢复状态');return requestData(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Token':token,...extraHeaders},body},'text')}"
     "async function load(){if(loading||otaStarted)return;loading=true;controls();try{const state=await requestData('/api/state',{cache:'no-store'});if(!state||typeof state.token!=='string'||!state.token)throw new Error('设备返回的恢复状态无效');token=state.token;stateReady=true;wifiConfigured=state.wifi_configured===true;$('wifiLabel').textContent=wifiConfigured?'已保存网络':'网络状态';$('wifiName').textContent=wifiConfigured?state.wifi_ssid:(state.wifi_readable?'尚未配置':'无法读取，可更换网络或升级');if($('wifiForm').hidden)$('wifiSsid').value=wifiConfigured?state.wifi_ssid:'';show('loadMessage','');$('retryLoad').hidden=true}catch(error){show('loadMessage',error.message);$('retryLoad').hidden=false}finally{loading=false;controls()}}"
     "$('wifiEdit').onclick=()=>edit(true);$('wifiCancel').onclick=()=>{edit(false);show('wifiMessage','')};$('showWifiPassword').onchange=()=>{$('wifiPassword').type=$('showWifiPassword').checked?'text':'password'};"
     "$('openWifi').onchange=()=>{if($('openWifi').checked){$('wifiPassword').value='';$('showWifiPassword').checked=false;$('wifiPassword').type='password'}controls()};"
@@ -195,17 +199,31 @@ static const char SETTINGS_PAGE[] =
     "<div id=\"pageMarketRow\"><label class=\"check\"><input id=\"pageMarket\" type=\"checkbox\">市场看板</label><button id=\"pageMarketUp\" type=\"button\" class=\"secondary\" aria-label=\"市场看板上移\">↑</button><button id=\"pageMarketDown\" type=\"button\" class=\"secondary\" aria-label=\"市场看板下移\">↓</button></div>"
     "<div id=\"pageCalendarRow\"><label class=\"check\"><input id=\"pageCalendar\" type=\"checkbox\">日历</label><button id=\"pageCalendarUp\" type=\"button\" class=\"secondary\" aria-label=\"日历上移\">↑</button><button id=\"pageCalendarDown\" type=\"button\" class=\"secondary\" aria-label=\"日历下移\">↓</button></div>"
     "<div id=\"pageTimerRow\"><label class=\"check\"><input id=\"pageTimer\" type=\"checkbox\">计时</label><button id=\"pageTimerUp\" type=\"button\" class=\"secondary\" aria-label=\"计时上移\">↑</button><button id=\"pageTimerDown\" type=\"button\" class=\"secondary\" aria-label=\"计时下移\">↓</button></div>"
+    "<div id=\"pageEnvironmentRow\"><label class=\"check\"><input id=\"pageEnvironment\" type=\"checkbox\">环境趋势</label><button id=\"pageEnvironmentUp\" type=\"button\" class=\"secondary\" aria-label=\"环境趋势上移\">↑</button><button id=\"pageEnvironmentDown\" type=\"button\" class=\"secondary\" aria-label=\"环境趋势下移\">↓</button></div>"
     "<div id=\"pageImageRow\"><label class=\"check\"><input id=\"pageImage\" type=\"checkbox\">图片</label><button id=\"pageImageUp\" type=\"button\" class=\"secondary\" aria-label=\"图片上移\">↑</button><button id=\"pageImageDown\" type=\"button\" class=\"secondary\" aria-label=\"图片下移\">↓</button></div>"
     "<div id=\"pageMusicRow\"><label class=\"check\"><input id=\"pageMusic\" type=\"checkbox\">音乐</label><button id=\"pageMusicUp\" type=\"button\" class=\"secondary\" aria-label=\"音乐上移\">↑</button><button id=\"pageMusicDown\" type=\"button\" class=\"secondary\" aria-label=\"音乐下移\">↓</button></div>"
     "<div id=\"pageChatRow\"><label class=\"check\"><input id=\"pageChat\" type=\"checkbox\">对话</label><button id=\"pageChatUp\" type=\"button\" class=\"secondary\" aria-label=\"对话上移\">↑</button><button id=\"pageChatDown\" type=\"button\" class=\"secondary\" aria-label=\"对话下移\">↓</button></div></div>"
     "<p class=\"note\">隐藏只跳过页面，不停用功能，也不删除配置或文件。天气与市场仍需启用，图片与音乐仍需有可用内容。</p>"
-    "<input id=\"dailyPagesMask\" name=\"daily_pages_mask\" type=\"hidden\" value=\"127\">"
-    "<input id=\"dailyPagesOrder\" name=\"daily_pages_order\" type=\"hidden\" value=\"1,2,4,64,8,16,32\">"
+    "<input id=\"dailyPagesMask\" name=\"daily_pages_mask\" type=\"hidden\" value=\"255\">"
+    "<input id=\"dailyPagesOrder\" name=\"daily_pages_order\" type=\"hidden\" value=\"1,128,2,4,64,8,16,32\">"
     "<button id=\"pagesSave\" type=\"submit\">保存显示页面</button></form><p id=\"pagesMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section>"
     "<section><details><summary class=\"section-toggle\">计时设置</summary><form id=\"timerForm\"><input type=\"hidden\" name=\"section\" value=\"timer\">"
     "<label for=\"timerMinutes\">自定义时长（分钟）</label><input id=\"timerMinutes\" name=\"timer_minutes\" type=\"number\" min=\"1\" max=\"180\" step=\"1\" value=\"5\" required>"
     "<p class=\"note\">自定义 1—180 分钟，默认 5 分钟；与设备 1/5/10/30 分钟不重复时增加为第 5 档。保存不改当前选中时长或正在进行的计时，也不自动开始。设备未开始时短按 KEY 选时长，按住 KEY 2 秒开始。</p>"
     "<button id=\"timerSave\" type=\"submit\">保存计时设置</button></form><p id=\"timerMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section>"
+    "<section><details id=\"environmentSection\"><summary class=\"section-toggle\">环境趋势</summary>"
+    "<p id=\"environmentSummary\">展开后读取最近 24 小时的温湿度记录。</p><p id=\"environmentRange\" class=\"note\"></p>"
+    "<canvas id=\"environmentTemperature\" width=\"480\" height=\"150\" style=\"width:100%;height:auto\" aria-label=\"温度趋势\"></canvas>"
+    "<canvas id=\"environmentHumidity\" width=\"480\" height=\"150\" style=\"width:100%;height:auto\" aria-label=\"湿度趋势\"></canvas>"
+    "<div class=\"button-row\"><button id=\"environmentRefresh\" type=\"button\" class=\"secondary\">刷新记录</button><button id=\"environmentCsv\" type=\"button\" class=\"secondary\">下载 CSV</button></div>"
+    "<p class=\"note\">每 5 分钟一组。设备本地采样，缺失数据保留断点。CSV 导出当前可用的最近 24 小时记录；无卡时仅记录本次开机的数据。</p>"
+    "<form id=\"environmentForm\"><input type=\"hidden\" name=\"section\" value=\"environment\">"
+    "<label for=\"environmentSaveEnabled\">microSD 保存方式</label><select id=\"environmentSaveEnabled\"><option value=\"off\">关闭（默认）</option><option value=\"on\">最近 24 小时，供开机恢复</option><option value=\"archive\">长期历史，按月保存 CSV</option></select>"
+    "<p id=\"environmentStorage\" class=\"note\"></p><p class=\"note\">正常每 30 秒采样，省电时每 60 秒采样，每 5 分钟汇总一条。开启保存后约每 5 分钟尝试写卡；需有效 RTC，门户、音频和升级期间延后。长期历史也保留最近 24 小时恢复数据，卡空间不足时停止写入，不删除文件。关机期间不采样，关闭保存保留已有文件。请关机后再取卡。</p>"
+    "<button id=\"environmentSave\" type=\"submit\">保存记录设置</button></form><p id=\"environmentMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p>"
+    "<details id=\"environmentArchiveSection\" class=\"advanced\"><summary>SD 历史文件</summary><p class=\"note\">按月下载已保存的 CSV。关闭保存后仍可下载；记录只覆盖设备实际运行并成功写卡的时段，月份按 UTC 划分。下载时请先停止音乐播放。</p>"
+    "<div id=\"environmentArchiveList\"></div><div class=\"button-row\"><button id=\"environmentArchiveRefresh\" type=\"button\" class=\"secondary\">刷新文件</button><button id=\"environmentArchiveMore\" type=\"button\" class=\"secondary\" hidden>更早月份</button><button id=\"environmentArchiveCancel\" type=\"button\" class=\"secondary\" hidden>取消下载</button></div>"
+    "<p id=\"environmentArchiveMessage\" class=\"message\" role=\"status\" aria-live=\"polite\">展开后读取 SD 历史文件。</p></details></details></section>"
     "<section><h2>日期与时间</h2><p>使用手机或电脑的时间校准 RTC。</p>"
     "<button id=\"setTime\" type=\"button\" class=\"secondary\">校准设备时间</button>"
     "<p id=\"timeMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></section>"
@@ -399,7 +417,12 @@ static const char SETTINGS_PAGE[] =
     "<progress id=\"progress\" max=\"100\" value=\"0\"></progress>"
     "<p id=\"updateMessage\" class=\"message\">等待选择固件</p>"
     "<small>写入期间请保持设备供电。校验成功后设备会自动重启。</small></details></section>"
-    "<section><details><summary class=\"section-toggle\">恢复默认设置</summary><p>恢复时区、单位、音量、显示页面、计时时长、音乐播放方式、闹钟与更新偏好；Wi-Fi、天气、市场看板和 AI 配置、SD 卡文件保留，不修改当前选中时长、正在进行的计时或本次音乐定时。</p><button id=\"defaults\" type=\"button\" class=\"danger\">恢复偏好默认值</button><p id=\"maintenanceMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section></div>"
+    "<section><details><summary class=\"section-toggle\">偏好备份</summary><p class=\"note\">备份时区、温标、音量、闹钟、计时、页面顺序和音乐播放方式。不包含网络、API Key、Host、更新通道、省电请求、SD 记录开关或文件。</p>"
+    "<button id=\"backupExport\" type=\"button\" class=\"secondary\">下载偏好备份</button><label for=\"backupFile\">选择备份文件</label><input id=\"backupFile\" type=\"file\" accept=\".json,application/json\">"
+    "<p class=\"note\">选择文件只在浏览器中预览。确认恢复后才提交，不重启设备，也不启动计时、音乐或联网服务。</p>"
+    "<div id=\"backupPreview\" hidden><h3>待恢复的偏好</h3><p id=\"backupSummary\" style=\"white-space:pre-line\"></p><button id=\"backupRestore\" type=\"button\">确认恢复偏好</button></div>"
+    "<p id=\"backupMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section>"
+    "<section><details><summary class=\"section-toggle\">恢复默认设置</summary><p>恢复时区、单位、音量、显示页面、计时时长、音乐播放方式、闹钟与更新偏好，关闭 SD 环境记录；Wi-Fi、天气、市场看板和 AI 配置、SD 卡文件保留，不修改当前选中时长、正在进行的计时或本次音乐定时。</p><button id=\"defaults\" type=\"button\" class=\"danger\">恢复偏好默认值</button><p id=\"maintenanceMessage\" class=\"message\" role=\"status\" aria-live=\"polite\"></p></details></section></div>"
     "<p class=\"note\">闲置 5 分钟后关闭；一次最多使用 30 分钟，上传中不会因闲置而中断。</p>"
     "<footer>© <span id=\"portalYear\">2026</span> <a href=\"https://mcu.taifua.com/\" target=\"_blank\" rel=\"noopener noreferrer\">ESP32 固件</a></footer>"
     "<script>document.getElementById('portalYear').textContent=String(new Date().getFullYear());let token='',initialUpdates='stable',settingsBusy=false,wifiConfigured=false,savedWifi='',wifiBusy=false,weatherAvailable=false,weatherConfigured=false,weatherKeySaved=false,weatherEnabled=false,initialWeatherEnabled=false,weatherBusy=false,weatherRegionRequest=0,conversationAvailable=false,conversationConfigured=false,conversationEnabled=false,conversationBusy=false,sdReady=false,imageBusy=false,imageGray=null,imagePbm=null,imageFrame=0,"
@@ -409,25 +432,46 @@ static const char SETTINGS_PAGE[] =
     "let marketAvailable=false,marketBusy=false,marketPresets=[],marketIds=[],marketChecks=[],marketMoves=[];"
     "const $=id=>document.getElementById(id);let localAccess=true,weatherPreferencesReady=false;"
     "const sections=['General','Network','Media','Maintenance'];let alarmBusy=false,timerBusy=false,updatesBusy=false,pagesBusy=false,pagesAvailable=false;"
-    "const dailyPageIds=['pageWeather','pageMarket','pageCalendar','pageImage','pageMusic','pageChat','pageTimer'];"
-    "let dailyPageOrder=[1,2,4,64,8,16,32];const validPageOrder=order=>Array.isArray(order)&&order.length===7&&new Set(order).size===7&&order.every(bit=>[1,2,4,8,16,32,64].includes(bit));"
+    "let environmentBusy=false,environmentReading=false,environmentLoaded=false,environmentWritable=false,initialEnvironmentSave=false,initialEnvironmentArchive=false,environmentArchiveBusy=false,environmentArchiveLoaded=false,environmentArchiveCursor='',environmentArchiveButtons=[],environmentArchiveAbort=null,backupBusy=false,backupDraft='',backupRequest=0;"
+    "const dailyPageIds=['pageWeather','pageMarket','pageCalendar','pageImage','pageMusic','pageChat','pageTimer','pageEnvironment'];"
+    "let dailyPageOrder=[1,128,2,4,64,8,16,32];const validPageOrder=order=>Array.isArray(order)&&order.length===8&&new Set(order).size===8&&order.every(bit=>[1,2,4,8,16,32,64,128].includes(bit));"
     "function renderPageOrder(){dailyPageOrder.forEach(bit=>{$('pageOrder').appendChild($(dailyPageIds[Math.log2(bit)]+'Row'))});pagesControls(pagesBusy)}"
-    "dailyPageIds.forEach((id,index)=>{for(const [suffix,delta] of [['Up',-1],['Down',1]])$(id+suffix).onclick=()=>{if(pagesBusy||!pagesAvailable||!stateReady)return;const from=dailyPageOrder.indexOf(1<<index),to=from+delta;if(to<0||to>=dailyPageIds.length)return;[dailyPageOrder[from],dailyPageOrder[to]]=[dailyPageOrder[to],dailyPageOrder[from]];renderPageOrder();$(id+suffix).focus();show('pagesMessage','顺序已调整，保存后生效。')}});"
+    "dailyPageIds.forEach((id,index)=>{for(const [suffix,delta] of [['Up',-1],['Down',1]])$(id+suffix).onclick=()=>{if(pagesBusy||backupBusy||!pagesAvailable||!stateReady)return;const from=dailyPageOrder.indexOf(1<<index),to=from+delta;if(to<0||to>=dailyPageIds.length)return;[dailyPageOrder[from],dailyPageOrder[to]]=[dailyPageOrder[to],dailyPageOrder[from]];dirtyPreferences.add('pages');renderPageOrder();$(id+suffix).focus();show('pagesMessage','顺序已调整，保存后生效。')}});"
     "let stateReady=false,initialStateLoaded=false,retryBusy=false,otaStarted=false;const loadedSections=new Set(),failedLoads=new Map();const musicModes=['sequential','repeat_one','repeat_all'];"
-    "const sectionNames={all:'设备设置',settings:'常用设置',pages:'显示页面',timer:'计时设置',alarm:'闹钟',updates:'更新设置',weather:'天气',weatherPreferences:'天气设置',weatherKey:'天气 API Key',weatherCities:'城市列表',market:'市场看板',conversation:'AI 对话',conversationPreferences:'对话设置',conversationCredentials:'AI API Key',images:'图片',music:'歌曲列表',musicSettings:'播放设置',session:'连接状态'};"
+    "const sectionNames={all:'设备设置',settings:'常用设置',pages:'显示页面',timer:'计时设置',environment:'环境记录设置',alarm:'闹钟',updates:'更新设置',weather:'天气',weatherPreferences:'天气设置',weatherKey:'天气 API Key',weatherCities:'城市列表',market:'市场看板',conversation:'AI 对话',conversationPreferences:'对话设置',conversationCredentials:'AI API Key',images:'图片',music:'歌曲列表',musicSettings:'播放设置',session:'连接状态'};"
     "function loadNotice(){const names=Array.from(failedLoads.keys(),name=>sectionNames[name]||name);$('loadNotice').hidden=!names.length;$('loadMessage').textContent=names.length?'需要重新读取或核对：'+names.join('、')+'。确认门户仍在开启后重试；只重新读取以上内容，其他未保存修改保留。':'';$('retryLoads').disabled=retryBusy||otaStarted}"
     "function loadFailed(section,error){failedLoads.set(section,error.message);loadNotice()}function loadSucceeded(section){failedLoads.delete(section);loadedSections.add(section);loadNotice()}"
     "function uncertainError(message){const error=new Error(message);error.uncertain=true;return error}function checkUncertain(section,error){if(error.uncertain)loadFailed(section,error)}"
-    "async function requestData(path,options={},format='json'){const writing=options.method==='POST',controller=new AbortController(),timer=setTimeout(()=>controller.abort(),writing?45000:15000);try{const response=await fetch(path,{...options,signal:controller.signal});"
-    "if(!response.ok){if(response.status===401){token='';stateReady=false;$('pairPanel').hidden=false;syncControls();throw new Error('请使用屏幕访问码或二维码重新授权。')}throw new Error(await response.text()||'设备暂时无法处理，请稍后重试。')}return await response[format]()}"
-    "catch(error){if(error.name==='AbortError')throw writing?uncertainError('请求超时，操作结果尚未确认；请重新读取状态后核对，不要重复提交。'):new Error('读取超时，请确认连接后重试。');if(error.name==='TypeError')throw writing?uncertainError('连接中断，操作结果尚未确认；请重新连接门户后核对。'):new Error('无法连接设备，请确认设置门户仍在开启后重试。');throw error}finally{clearTimeout(timer)}}"
+    "async function requestData(path,options={},format='json'){const writing=options.method==='POST',controller=new AbortController(),timer=setTimeout(()=>controller.abort(),writing?45000:format==='archive'?35000:15000);if(format==='archive'){environmentArchiveAbort=()=>controller.abort();$('environmentArchiveCancel').hidden=false}try{const response=await fetch(path,{...options,signal:controller.signal});"
+    "if(!response.ok){if(response.status===401){token='';stateReady=false;$('pairPanel').hidden=false;syncControls();throw new Error('请使用屏幕访问码或二维码重新授权。')}throw new Error(await response.text()||'设备暂时无法处理，请稍后重试。')}if(format==='archive'){const type=response.headers.get('Content-Type')||'',expected=response.headers.get('X-RLCD-CSV-Bytes')||'';if(!/^text\\/csv(?:;|$)/i.test(type)||!/^\\d+$/.test(expected)||Number(expected)===0||Number(expected)>8388608)throw new Error('历史文件响应无效，未生成下载。');const text=await response.text(),bytes=new TextEncoder().encode(text).length;if(bytes!==Number(expected)||!text.endsWith('\\n'))throw new Error('历史文件不完整，未生成下载。');return text}return await response[format]()}"
+    "catch(error){if(error.name==='AbortError')throw writing?uncertainError('请求超时，操作结果尚未确认；请重新读取状态后核对，不要重复提交。'):new Error(format==='archive'?'下载已取消或超时，未生成文件。':'读取超时，请确认连接后重试。');if(error.name==='TypeError')throw writing?uncertainError('连接中断，操作结果尚未确认；请重新连接门户后核对。'):new Error('无法连接设备，请确认设置门户仍在开启后重试。');throw error}finally{clearTimeout(timer);if(format==='archive'){environmentArchiveAbort=null;$('environmentArchiveCancel').hidden=true}}}"
     "const getJson=path=>requestData(path,getOptions());"
     "function selectSection(name){sections.forEach(section=>{$('panel'+section).hidden=section!==name;$('nav'+section).setAttribute('aria-pressed',section===name?'true':'false')});if(name==='Media'&&stateReady&&!musicBusy)loadMusic().catch(error=>show('musicMessage',error.message))}"
     "sections.forEach(section=>{$('nav'+section).onclick=()=>selectSection(section)});"
     "if(typeof location!=='undefined'&&location.hash){const fragment=location.hash.slice(1);if(/^[a-f0-9]{32}$/.test(fragment))token=fragment;history.replaceState(null,'',location.pathname)}"
     "const getOptions=()=>({cache:'no-store',headers:{'X-RLCD-Token':token}});"
-    "const LAN_POSTS=new Set(['/api/settings','/api/time','/api/hotspot','/api/alarm/preview','/api/activity','/api/market/config','/api/conversation/preferences','/api/conversation/clear','/api/weather/preferences','/api/weather/clear','/api/images/select','/api/images/delete','/api/images/upload','/api/music/play','/api/music/stop','/api/music/delete','/api/music/upload','/api/music/sleep']);"
-    "let lastActivity=0;function userActivity(){const now=Date.now();if(!stateReady||!token||musicBusy||musicSettingsBusy||musicSleepBusy||imageBusy||settingsBusy||timerBusy||pagesBusy||wifiBusy||weatherBusy||conversationBusy||marketBusy||now-lastActivity<30000)return;lastActivity=now;post('/api/activity','').catch(()=>{})}"
+    "const preferenceForms={settings:'settings',pages:'pagesForm',timer:'timerForm',alarm:'alarmForm',musicSettings:'musicSettingsForm'};const dirtyPreferences=new Set();Object.entries(preferenceForms).forEach(([name,id])=>{$(id).oninput=()=>dirtyPreferences.add(name);$(id).onchange=()=>dirtyPreferences.add(name)});"
+    "function downloadLocal(text,name,type){const url=URL.createObjectURL(new Blob([text],{type})),link=document.createElement('a');link.href=url;link.download=name;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}"
+    "function backupPreferenceData(text){if(new TextEncoder().encode(text).length>4096)throw new Error('备份文件不得超过 4 KiB。');let data;try{data=JSON.parse(text)}catch{throw new Error('备份文件不是有效的 JSON。')}const exact=(value,keys)=>value&&typeof value==='object'&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));"
+    "const keys=['utc_offset_minutes','temperature_unit','audio_playback_volume','alarm_volume','alarm_enabled','alarm_hour','alarm_minute','alarm_weekdays','daily_pages_mask','daily_pages_order','music_mode','timer_minutes'];if(!exact(data,['format','version','preferences'])||data.format!=='esp32-rlcd-preferences'||data.version!==1||!exact(data.preferences,keys))throw new Error('备份格式或版本不受支持。');const p=data.preferences,range=(value,min,max)=>Number.isInteger(value)&&value>=min&&value<=max;"
+    "if(!range(p.utc_offset_minutes,-720,840)||p.utc_offset_minutes%15!==0||!['c','f'].includes(p.temperature_unit)||!range(p.audio_playback_volume,0,100)||!range(p.alarm_volume,0,100)||typeof p.alarm_enabled!=='boolean'||!range(p.alarm_hour,0,23)||!range(p.alarm_minute,0,59)||!range(p.alarm_weekdays,1,127)||!range(p.daily_pages_mask,0,255)||!validPageOrder(p.daily_pages_order)||!musicModes.includes(p.music_mode)||!range(p.timer_minutes,1,180))throw new Error('备份中的偏好值无效。');return p}"
+    "function backupDescription(p){const names=['天气','市场看板','日历','图片','音乐','对话','计时','环境趋势'],offset=p.utc_offset_minutes,zone='UTC'+(offset<0?'-':'+')+String(Math.floor(Math.abs(offset)/60)).padStart(2,'0')+':'+String(Math.abs(offset)%60).padStart(2,'0');return '时区：'+zone+'；温标：'+(p.temperature_unit==='c'?'°C':'°F')+'\\n播放音量：'+p.audio_playback_volume+'%；闹钟音量：'+p.alarm_volume+'%\\n闹钟：'+(p.alarm_enabled?'开启':'关闭')+' '+String(p.alarm_hour).padStart(2,'0')+':'+String(p.alarm_minute).padStart(2,'0')+'；重复：'+['日','一','二','三','四','五','六'].filter((day,i)=>p.alarm_weekdays&(1<<i)).join('、')+'\\n计时自定义：'+p.timer_minutes+' 分钟；音乐：'+({sequential:'顺序播放',repeat_one:'单曲循环',repeat_all:'列表循环'})[p.music_mode]+'\\n显示顺序：时钟'+p.daily_pages_order.filter(bit=>p.daily_pages_mask&bit).map(bit=>' → '+names[Math.log2(bit)]).join('')}"
+    "$('backupFile').onchange=async()=>{const id=++backupRequest;backupDraft='';$('backupPreview').hidden=true;backupControls();const file=$('backupFile').files[0];if(!file)return;if(file.size===0||file.size>4096){show('backupMessage','请选择不超过 4 KiB 的偏好 JSON 文件。');return}try{const text=await file.text();if(id!==backupRequest)return;const p=backupPreferenceData(text);backupDraft=text;$('backupSummary').textContent=backupDescription(p);$('backupPreview').hidden=false;show('backupMessage','文件已在本地预览，尚未更改设备。')}catch(error){if(id===backupRequest)show('backupMessage',error.message)}finally{backupControls()}};"
+    "$('backupExport').onclick=async()=>{if(!stateReady||backupBusy||otaStarted)return;backupBusy=true;syncControls();try{const text=await requestData('/api/settings/backup',getOptions(),'text');backupPreferenceData(text);downloadLocal(text,'esp32-rlcd-preferences.json','application/json');show('backupMessage','备份已生成，请保存下载文件。')}catch(error){show('backupMessage',error.message)}finally{backupBusy=false;syncControls()}};"
+    "$('backupRestore').onclick=async()=>{if(!stateReady||backupBusy||ordinaryBusy()||!backupDraft||otaStarted)return;if(!confirm('确认恢复上述偏好？设备当前普通偏好将被替换；网页中未保存的输入保留。网络与 API 配置、更新通道、省电请求、SD 记录开关及文件均不变。'))return;backupBusy=true;syncControls();try{const message=await requestData('/api/settings/restore',{method:'POST',headers:{'Content-Type':'application/json','X-RLCD-Token':token,'X-RLCD-Confirm':'RESTORE_PREFERENCES'},body:backupDraft},'text');for(const section of Object.keys(preferenceForms)){if(dirtyPreferences.has(section)){show(section==='musicSettings'?'musicSettingsMessage':section+'Message','备份已恢复；此表单仍保留未保存的修改，保存会再次覆盖对应偏好。')}else await load(section)}backupDraft='';$('backupFile').value='';$('backupPreview').hidden=true;show('backupMessage',message)}catch(error){show('backupMessage',error.message);if(error.uncertain){backupDraft='';$('backupPreview').hidden=true;show('backupMessage',error.message+' 请下载当前偏好备份核对，不要直接重复恢复。')}}finally{backupBusy=false;syncControls()}};"
+    "function environmentPlot(id,points,field,label,range,windowAge=86400){const canvas=$(id),ctx=canvas.getContext('2d');if(!ctx)return;ctx.clearRect(0,0,480,150);ctx.fillStyle='#555';ctx.font='14px sans-serif';const values=points.filter(p=>p.valid&&p.age<86400).map(p=>p[field]/100);if(!values.length){ctx.fillText(label+'：暂无有效记录',12,32);return}const low=range&&range.every(Number.isInteger)?range[0]/100:Math.min(...values),high=range&&range.every(Number.isInteger)?range[1]/100:Math.max(...values),span=Math.max(high-low,1);ctx.fillText(label+' · 最低 '+low.toFixed(1)+' / 最高 '+high.toFixed(1),12,20);ctx.strokeStyle='#d7dade';ctx.beginPath();ctx.moveTo(40,35);ctx.lineTo(40,125);ctx.lineTo(468,125);ctx.stroke();ctx.strokeStyle='#255da8';ctx.lineWidth=2;ctx.beginPath();let previous=null;for(const p of points){if(!p.valid||p.age>=86400){previous=null;continue}const x=40+428*Math.max(0,Math.min(86400,windowAge-p.age))/86400,y=120-75*(p[field]/100-low)/span;if(previous&&!previous.failures&&!p.failures&&previous.age-p.age===300&&previous.restored===p.restored)ctx.lineTo(x,y);else ctx.moveTo(x,y);ctx.fillRect(x-1,y-1,3,3);previous=p}ctx.stroke();ctx.fillText(windowAge>=86400?'24 小时前':'开始记录',40,146);ctx.fillText(windowAge>=86400?'12 小时前':'+12 小时',224,146);ctx.fillText(windowAge>=86400?'现在':'+24 小时',416,146)}"
+    "function renderEnvironment(data){if(!data||!Array.isArray(data.points)||data.points.length>288||!Number.isInteger(data.recording_age)||data.recording_age<0||!data.points.every(p=>Number.isInteger(p.age)&&p.age>=0&&p.age<=86400&&typeof p.valid==='boolean'&&typeof p.restored==='boolean'&&Number.isInteger(p.failures)&&p.failures>=0&&(!p.valid||(Number.isInteger(p.t)&&p.t>=-5000&&p.t<=12500&&Number.isInteger(p.h)&&p.h>=0&&p.h<=10000))))throw new Error('环境记录格式无效，请重新读取。');environmentLoaded=true;environmentWritable=data.card_available===true;if(!environmentWritable){environmentArchiveLoaded=false;environmentArchiveCursor='';while($('environmentArchiveList').firstChild)$('environmentArchiveList').removeChild($('environmentArchiveList').firstChild);environmentArchiveButtons=[];show('environmentArchiveMessage','microSD 不可用，请关机插卡后重试。')}const hours=(data.recording_age/3600).toFixed(1);$('environmentSummary').textContent='最近 24 小时 · '+data.points.filter(p=>p.valid).length+' 组有效记录';$('environmentRange').textContent=data.restored?'包含 SD 卡恢复的近期记录；本次开机已记录 '+hours+' 小时。':'本次开机开始记录，已记录 '+hours+' 小时；重启会清除未保存的数据。';$('environmentStorage').textContent=!data.card_available?'microSD 不可用，可继续查看和下载内存记录。':data.storage_full?'SD 可用空间不足，已暂停保存；已有文件保留。请关机整理卡片，开机后自动重试。':data.storage_error?'最近一次保存失败；内存记录仍可查看，关闭设备后检查 SD 卡。':data.storage_enabled?(data.clock_required?'等待校准 RTC，当前仅在内存记录。':data.saved_this_boot?'已开启 SD 记录，本次开机已有保存。':'已开启 SD 记录，等待后台保存。'):'microSD 可用，当前未开启写入。';const windowAge=Math.min(86400,Math.max(data.recording_age,...(data.restored?data.points.filter(p=>p.valid&&p.age<86400).map(p=>p.age):[0])));environmentPlot('environmentTemperature',data.points,'t','温度 °C',[data.min_t,data.max_t],windowAge);environmentPlot('environmentHumidity',data.points,'h','湿度 %',[data.min_h,data.max_h],windowAge);if(data.archive_enabled){$('environmentStorage').textContent+=data.storage_full?'':data.archive_full?' 长期历史已暂停：存储空间或单月文件达到安全限制，请关机后用电脑检查。':data.archive_error?' 最近一次长期历史写入失败，已有文件保留。':data.archive_saved_this_boot?' 本次开机已写入长期历史。':' 长期历史已开启，等待有效 RTC 和完整汇总后写入。'}environmentControls()}"
+    "async function loadEnvironment(){if(!stateReady||environmentReading)return;environmentReading=true;environmentControls();try{renderEnvironment(await getJson('/api/environment'));show('environmentMessage','')}catch(error){show('environmentMessage',error.message)}finally{environmentReading=false;environmentControls()}}"
+    "$('environmentSection').ontoggle=()=>{if($('environmentSection').open&&stateReady&&!environmentLoaded)loadEnvironment()};$('environmentRefresh').onclick=loadEnvironment;"
+    "$('environmentCsv').onclick=async()=>{if(!stateReady||environmentReading)return;environmentReading=true;environmentControls();try{const csv=await requestData('/api/environment.csv',getOptions(),'text');downloadLocal(csv,'environment-24h.csv','text/csv;charset=utf-8');show('environmentMessage','CSV 已生成；导出不会写入 SD 卡。')}catch(error){show('environmentMessage',error.message)}finally{environmentReading=false;environmentControls()}};"
+    "$('environmentForm').onsubmit=async event=>{event.preventDefault();if(environmentBusy||backupBusy||!stateReady||!loadedSections.has('environment'))return;const mode=$('environmentSaveEnabled').value;if(!['off','on','archive'].includes(mode))return;const enable=mode!=='off',archive=mode==='archive';if(enable&&!environmentWritable){show('environmentMessage','microSD 不可用，请关机插卡后重试。');return}if(archive&&!initialEnvironmentArchive&&!confirm('开启长期环境历史？每 5 分钟汇总并在空闲时写入按月 CSV，持续占用 SD 空间；空间不足时停止，不自动删除文件。需有效 RTC，关机期间留空。请定期下载备份，关机后再取卡。'))return;if(enable&&!archive&&!initialEnvironmentSave&&!confirm('开启 microSD 环境记录？设备约每 5 分钟在空闲时保存最近 24 小时记录；需有效 RTC，门户、音频和升级期间延后。关机期间留空，请关机后再取卡。'))return;environmentBusy=true;environmentControls();try{const message=await post('/api/settings','section=environment&environment_history_save_enabled='+(enable?'on':'off')+'&environment_archive_save_enabled='+(archive?'on':'off'),enable?{'X-RLCD-Confirm':archive?'ENABLE_ARCHIVE':'ENABLE_HISTORY'}:{});await load('environment');show('environmentMessage',message+(enable?' 关闭门户后按保存计划写入；可稍后重新打开查看状态。':' 后续不再写入，已有文件保留。'))}catch(error){checkUncertain('environment',error);show('environmentMessage',error.message)}finally{environmentBusy=false;environmentControls()}};"
+    "const archiveMonth=month=>typeof month==='string'&&/^(?:20[0-9]{2}|2100)-(?:0[1-9]|1[0-2])$/.test(month);"
+    "function archiveControls(){const blocked=!stateReady||environmentArchiveBusy||!environmentWritable;$('environmentArchiveRefresh').disabled=blocked;$('environmentArchiveMore').disabled=blocked;$('environmentArchiveMore').hidden=!environmentArchiveCursor;environmentArchiveButtons.forEach(button=>button.disabled=blocked)}"
+    "async function downloadEnvironmentArchive(month){if(!stateReady||environmentArchiveBusy||!environmentWritable||!archiveMonth(month))return;environmentArchiveBusy=true;archiveControls();show('environmentArchiveMessage','正在读取 '+month+'…');try{const csv=await requestData('/api/environment/archive.csv?month='+month,getOptions(),'archive');downloadLocal(csv,'environment-'+month+'.csv','text/csv;charset=utf-8');show('environmentArchiveMessage',month+' 历史文件已生成。')}catch(error){show('environmentArchiveMessage',error.message)}finally{environmentArchiveBusy=false;archiveControls()}}"
+    "async function loadEnvironmentArchives(earlier=false){if(!stateReady||environmentArchiveBusy||!environmentWritable)return;const cursor=earlier?environmentArchiveCursor:'';if(earlier&&!archiveMonth(cursor))return;environmentArchiveBusy=true;archiveControls();try{const data=await getJson('/api/environment/archives'+(cursor?'?before='+cursor:''));if(!data||!Array.isArray(data.files)||data.files.length>24||typeof data.next_cursor!=='string'||(data.next_cursor&&!archiveMonth(data.next_cursor))||!data.files.every((item,index)=>item&&archiveMonth(item.month)&&Number.isSafeInteger(item.bytes)&&item.bytes>0&&item.bytes<=8388608&&(!cursor||item.month<cursor)&&(!index||item.month<data.files[index-1].month))||(data.next_cursor&&((cursor&&data.next_cursor>=cursor)||(data.files.length&&data.next_cursor>data.files.at(-1).month))))throw new Error('历史文件列表无效，请重新读取。');while($('environmentArchiveList').firstChild)$('environmentArchiveList').removeChild($('environmentArchiveList').firstChild);environmentArchiveButtons=[];for(const item of data.files){const row=document.createElement('div'),button=document.createElement('button');row.className='button-row';button.type='button';button.className='secondary';button.textContent=item.month+' · '+(item.bytes/1048576).toFixed(2)+' MB · 下载 CSV';button.onclick=()=>downloadEnvironmentArchive(item.month);row.appendChild(button);$('environmentArchiveList').appendChild(row);environmentArchiveButtons.push(button)}environmentArchiveCursor=data.next_cursor;environmentArchiveLoaded=true;show('environmentArchiveMessage',data.files.length?'按月份由新到旧排列；仅含成功保存的记录。':data.next_cursor?'本页无可下载文件，可继续查看更早月份。':cursor?'没有更早的历史文件。':'尚无历史文件；开启长期保存后，退出门户并等待首条汇总写入。')}catch(error){show('environmentArchiveMessage',error.message)}finally{environmentArchiveBusy=false;archiveControls()}}"
+    "$('environmentArchiveSection').ontoggle=()=>{if($('environmentArchiveSection').open&&!environmentArchiveLoaded)loadEnvironmentArchives()};$('environmentArchiveRefresh').onclick=()=>loadEnvironmentArchives();$('environmentArchiveMore').onclick=()=>loadEnvironmentArchives(true);$('environmentArchiveCancel').onclick=()=>{if(environmentArchiveAbort)environmentArchiveAbort()};"
+    "const LAN_POSTS=new Set(['/api/settings','/api/settings/restore','/api/time','/api/hotspot','/api/alarm/preview','/api/activity','/api/market/config','/api/conversation/preferences','/api/conversation/clear','/api/weather/preferences','/api/weather/clear','/api/images/select','/api/images/delete','/api/images/upload','/api/music/play','/api/music/stop','/api/music/delete','/api/music/upload','/api/music/sleep']);"
+    "let lastActivity=0;function userActivity(){const now=Date.now();if(!stateReady||!token||musicBusy||musicSettingsBusy||musicSleepBusy||imageBusy||settingsBusy||timerBusy||environmentBusy||backupBusy||pagesBusy||wifiBusy||weatherBusy||conversationBusy||marketBusy||now-lastActivity<30000)return;lastActivity=now;post('/api/activity','').catch(()=>{})}"
     "if(document.addEventListener){document.addEventListener('input',userActivity,{passive:true});document.addEventListener('click',userActivity,{passive:true})}"
     "const IMAGE_WIDTH=400,IMAGE_HEIGHT=300,CONTENT_HEIGHT=250;"
     "const SOURCE_MAX_BYTES=32*1024*1024,SOURCE_MAX_PIXELS=40000000;"
@@ -641,23 +685,27 @@ static const char SETTINGS_PAGE[] =
     "const sign=minutes>=0?'+':'-';const absolute=Math.abs(minutes),hours=String(Math.floor(absolute/60)).padStart(2,'0'),"
     "remainder=String(absolute%60).padStart(2,'0');option.value=minutes;option.textContent='UTC'+sign+hours+':'+remainder+"
     "(minutes===480?' · 中国标准时间':'');select.appendChild(option)}}"
-    "async function post(path,body){if(!stateReady)throw new Error('请先重新连接并读取设备设置。');if(localAccess&&!LAN_POSTS.has(path))throw new Error('此操作请切换到设备热点。');return requestData(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Token':token},body},'text')}"
+    "async function post(path,body,extraHeaders={}){if(!stateReady)throw new Error('请先重新连接并读取设备设置。');if(localAccess&&!LAN_POSTS.has(path))throw new Error('此操作请切换到设备热点。');return requestData(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded','X-RLCD-Token':token,...extraHeaders},body},'text')}"
     "function formControls(id,busy){$(id).setAttribute('aria-busy',busy?'true':'false');$(id).querySelectorAll('input,select,button').forEach(input=>{input.disabled=busy})}"
-    "function defaultControls(){$('defaults').disabled=!stateReady||localAccess||settingsBusy||alarmBusy||timerBusy||updatesBusy||pagesBusy||musicSettingsBusy}"
-    "function settingsControls(busy){settingsBusy=busy;formControls('settings',busy||!stateReady||!loadedSections.has('settings'));defaultControls()}"
-    "function timerControls(busy){timerBusy=busy;formControls('timerForm',busy||!stateReady||!loadedSections.has('timer'));defaultControls()}"
-    "function alarmControls(busy){alarmBusy=busy;formControls('alarmForm',busy||!stateReady||!loadedSections.has('alarm'));defaultControls()}"
+    "function ordinaryBusy(){return settingsBusy||alarmBusy||timerBusy||pagesBusy||musicSettingsBusy||environmentBusy||updatesBusy}"
+    "function backupControls(){$('backupExport').disabled=!stateReady||backupBusy||otaStarted;$('backupFile').disabled=!stateReady||backupBusy||otaStarted;$('backupRestore').disabled=!stateReady||backupBusy||ordinaryBusy()||!backupDraft||otaStarted}"
+    "function defaultControls(){$('defaults').disabled=!stateReady||localAccess||ordinaryBusy()||backupBusy;backupControls()}"
+    "function settingsControls(busy){settingsBusy=busy;formControls('settings',busy||backupBusy||!stateReady||!loadedSections.has('settings'));defaultControls()}"
+    "function timerControls(busy){timerBusy=busy;formControls('timerForm',busy||backupBusy||!stateReady||!loadedSections.has('timer'));defaultControls()}"
+    "function environmentControls(){const blocked=!stateReady||!loadedSections.has('environment')||environmentBusy||backupBusy;formControls('environmentForm',blocked);$('environmentSaveEnabled').disabled=blocked||(!environmentWritable&&!initialEnvironmentSave);$('environmentSave').disabled=blocked||(!environmentWritable&&!initialEnvironmentSave);$('environmentRefresh').disabled=!stateReady||environmentReading;$('environmentCsv').disabled=!stateReady||environmentReading;archiveControls();defaultControls()}"
+    "function alarmControls(busy){alarmBusy=busy;formControls('alarmForm',busy||backupBusy||!stateReady||!loadedSections.has('alarm'));defaultControls()}"
     "function updatesControls(busy){updatesBusy=busy;formControls('updatesForm',busy||!stateReady||!loadedSections.has('updates'));defaultControls()}"
-    "function pagesControls(busy){pagesBusy=busy;const blocked=busy||!stateReady||!pagesAvailable;formControls('pagesForm',blocked);dailyPageOrder.forEach((bit,index)=>{const id=dailyPageIds[Math.log2(bit)];$(id+'Up').disabled=blocked||index===0;$(id+'Down').disabled=blocked||index===dailyPageIds.length-1});defaultControls()}"
-    "function musicSettingsControls(busy){musicSettingsBusy=busy;formControls('musicSettingsForm',busy||!stateReady||!loadedSections.has('musicSettings'));defaultControls()}"
-    "function syncControls(){settingsControls(settingsBusy);timerControls(timerBusy);alarmControls(alarmBusy);updatesControls(updatesBusy);pagesControls(pagesBusy);musicSettingsControls(musicSettingsBusy);wifiControls();weatherControls();conversationControls();marketControls();imageControls();musicControls();$('setTime').disabled=!stateReady;['file','upload'].forEach(id=>$(id).disabled=!stateReady||localAccess||otaStarted)}"
+    "function pagesControls(busy){pagesBusy=busy;const blocked=busy||backupBusy||!stateReady||!pagesAvailable;formControls('pagesForm',blocked);dailyPageOrder.forEach((bit,index)=>{const id=dailyPageIds[Math.log2(bit)];$(id+'Up').disabled=blocked||index===0;$(id+'Down').disabled=blocked||index===dailyPageIds.length-1});defaultControls()}"
+    "function musicSettingsControls(busy){musicSettingsBusy=busy;formControls('musicSettingsForm',busy||backupBusy||!stateReady||!loadedSections.has('musicSettings'));defaultControls()}"
+    "function syncControls(){settingsControls(settingsBusy);timerControls(timerBusy);alarmControls(alarmBusy);updatesControls(updatesBusy);pagesControls(pagesBusy);musicSettingsControls(musicSettingsBusy);environmentControls();wifiControls();weatherControls();conversationControls();marketControls();imageControls();musicControls();$('setTime').disabled=!stateReady;['file','upload'].forEach(id=>$(id).disabled=!stateReady||localAccess||otaStarted)}"
     "async function load(section='all',preferred){let state;try{state=await getJson('/api/state');if(!state||typeof state.token!=='string'||!state.token)throw new Error('设备返回的连接状态无效');}catch(error){loadFailed(section,error);syncControls();throw error}"
     "token=state.token;stateReady=true;initialStateLoaded=true;localAccess=state.local_network===true;$('pairPanel').hidden=true;$('lanPanel').hidden=!localAccess;setWifiState(state.wifi_configured,state.wifi_ssid);"
-    "async function part(name,action,message){if(section!=='all'&&section!==name)return;try{await action();if(message)show(message,'');loadSucceeded(name)}catch(error){loadedSections.delete(name);loadFailed(name,error);if(message)show(message,error.message);if(name==='weather'||name==='weatherPreferences'){weatherPreferencesReady=false;weatherControls()}if(name==='market'){marketAvailable=false;$('marketStatus').textContent='暂不可用'}if(name==='pages')pagesAvailable=false;}finally{syncControls()}}"
+    "async function part(name,action,message){if(section!=='all'&&section!==name)return;try{await action();dirtyPreferences.delete(name);if(message)show(message,'');loadSucceeded(name)}catch(error){loadedSections.delete(name);loadFailed(name,error);if(message)show(message,error.message);if(name==='weather'||name==='weatherPreferences'){weatherPreferencesReady=false;weatherControls()}if(name==='market'){marketAvailable=false;$('marketStatus').textContent='暂不可用'}if(name==='pages')pagesAvailable=false;}finally{syncControls()}}"
     "await part('settings',()=>{if(!Number.isInteger(state.timezone)||!['c','f'].includes(state.unit)||!Number.isInteger(state.volume)||state.volume<0||state.volume>100)throw new Error('常用设置暂不可用');$('timezone').value=state.timezone;$('unit').value=state.unit;$('volume').value=state.volume;$('volumeValue').value=state.volume},'settingsMessage');"
     "await part('updates',()=>{if(!['stable','beta'].includes(state.updates))throw new Error('更新设置暂不可用');$('updates').value=state.updates;initialUpdates=state.updates},'updatesMessage');"
-    "await part('pages',()=>{pagesAvailable=Number.isInteger(state.daily_pages_mask)&&state.daily_pages_mask>=0&&state.daily_pages_mask<=127&&validPageOrder(state.daily_pages_order);if(!pagesAvailable)throw new Error('显示页面设置暂不可用，其他设置仍可使用。');dailyPageOrder=[...state.daily_pages_order];dailyPageIds.forEach((id,index)=>{$(id).checked=(state.daily_pages_mask&(1<<index))!==0});renderPageOrder();show('pagesMessage','')},'pagesMessage');"
+    "await part('pages',()=>{pagesAvailable=Number.isInteger(state.daily_pages_mask)&&state.daily_pages_mask>=0&&state.daily_pages_mask<=255&&validPageOrder(state.daily_pages_order);if(!pagesAvailable)throw new Error('显示页面设置暂不可用，其他设置仍可使用。');dailyPageOrder=[...state.daily_pages_order];dailyPageIds.forEach((id,index)=>{$(id).checked=(state.daily_pages_mask&(1<<index))!==0});renderPageOrder();show('pagesMessage','')},'pagesMessage');"
     "await part('timer',()=>{if(!Number.isInteger(state.timer_minutes)||state.timer_minutes<1||state.timer_minutes>180)throw new Error('计时设置暂不可用');$('timerMinutes').value=state.timer_minutes},'timerMessage');"
+    "await part('environment',()=>{if(typeof state.environment_history_save_enabled!=='boolean'||typeof state.environment_archive_save_enabled!=='boolean'||(state.environment_archive_save_enabled&&!state.environment_history_save_enabled))throw new Error('环境记录设置暂不可用');initialEnvironmentSave=state.environment_history_save_enabled;initialEnvironmentArchive=state.environment_archive_save_enabled;$('environmentSaveEnabled').value=initialEnvironmentArchive?'archive':initialEnvironmentSave?'on':'off';environmentWritable=state.environment_card_available===true;$('environmentStorage').textContent=environmentWritable?'microSD 可用；开启后将在后台保存。':'microSD 不可用，仍可查看和下载内存记录；已开启的记录设置可以关闭。';if(!environmentWritable){environmentArchiveLoaded=false;environmentArchiveCursor='';while($('environmentArchiveList').firstChild)$('environmentArchiveList').removeChild($('environmentArchiveList').firstChild);environmentArchiveButtons=[];show('environmentArchiveMessage','microSD 不可用，请关机插卡后重试。')}},'environmentMessage');"
     "await part('alarm',()=>{if(!Number.isInteger(state.alarm_volume)||state.alarm_volume<0||state.alarm_volume>100||!['on','off'].includes(state.alarm)||!Number.isInteger(state.alarm_hour)||state.alarm_hour<0||state.alarm_hour>23||!Number.isInteger(state.alarm_minute)||state.alarm_minute<0||state.alarm_minute>59||!Number.isInteger(state.alarm_days)||state.alarm_days<1||state.alarm_days>127)throw new Error('闹钟设置暂不可用');$('alarmVolume').value=state.alarm_volume;$('alarmVolumeValue').value=state.alarm_volume;"
     "$('alarm').value=state.alarm;$('alarmTime').value=String(state.alarm_hour).padStart(2,'0')+':'+String(state.alarm_minute).padStart(2,'0');alarmDays().forEach(input=>{input.checked=(state.alarm_days&Number(input.dataset.bit))!==0})},'alarmMessage');"
     "await part('musicSettings',()=>{if(!musicModes.includes(state.music_mode))throw new Error('播放设置暂不可用');$('musicMode').value=state.music_mode},'musicSettingsMessage');"
@@ -738,9 +786,9 @@ static const char SETTINGS_PAGE[] =
     "if(!confirm('确认清除 API Key，关闭 AI 对话并恢复默认设置？未保存的对话设置也会清空，此操作无法撤销。'))return;conversationBusy=true;conversationControls();"
     "show('conversationMessage','正在清除…');try{const message=await post('/api/conversation/clear','confirm=CLEAR_CONVERSATION');"
     "await load('conversation');show('conversationMessage',message)}catch(error){checkUncertain('conversation',error);show('conversationMessage',error.message)}finally{conversationBusy=false;conversationControls()}};"
-    "$('defaults').onclick=async()=>{if(!stateReady||localAccess||settingsBusy||alarmBusy||timerBusy||updatesBusy||pagesBusy||musicSettingsBusy||!confirm('恢复偏好默认值？常用、显示页面、计时、音乐播放方式、闹钟与更新设置的未保存修改也会清除。Wi-Fi、天气、市场看板和 AI 配置不变，当前选中时长、正在进行的计时与本次音乐定时不变。'))return;settingsControls(true);timerControls(true);alarmControls(true);updatesControls(true);pagesControls(true);musicSettingsControls(true);"
-    "show('maintenanceMessage','正在恢复…');try{const message=await post('/api/settings/defaults','confirm=DEFAULTS');await load('settings');await load('timer');await load('pages');await load('alarm');await load('updates');await load('musicSettings');show('maintenanceMessage',message)}"
-    "catch(error){if(error.uncertain)['settings','timer','pages','alarm','updates','musicSettings'].forEach(section=>loadFailed(section,error));show('maintenanceMessage',error.message)}finally{settingsControls(false);timerControls(false);alarmControls(false);updatesControls(false);pagesControls(false);musicSettingsControls(false)}};"
+    "$('defaults').onclick=async()=>{if(!stateReady||localAccess||settingsBusy||alarmBusy||timerBusy||updatesBusy||pagesBusy||musicSettingsBusy||environmentBusy||backupBusy||!confirm('恢复偏好默认值？常用、显示页面、计时、音乐播放方式、闹钟、环境记录与更新设置的未保存修改也会清除。Wi-Fi、天气、市场看板和 AI 配置不变，当前选中时长、正在进行的计时与本次音乐定时不变。'))return;settingsControls(true);timerControls(true);alarmControls(true);updatesControls(true);pagesControls(true);musicSettingsControls(true);environmentBusy=true;environmentControls();"
+    "show('maintenanceMessage','正在恢复…');try{const message=await post('/api/settings/defaults','confirm=DEFAULTS');await load('settings');await load('timer');await load('pages');await load('alarm');await load('updates');await load('musicSettings');await load('environment');show('maintenanceMessage',message)}"
+    "catch(error){if(error.uncertain)['settings','timer','pages','alarm','updates','musicSettings','environment'].forEach(section=>loadFailed(section,error));show('maintenanceMessage',error.message)}finally{settingsControls(false);timerControls(false);alarmControls(false);updatesControls(false);pagesControls(false);musicSettingsControls(false);environmentBusy=false;environmentControls()}};"
     "$('forgetWifi').onclick=async()=>{if(!confirm('移除已保存的 Wi-Fi？设置热点随后会关闭并进入首次配网。'))return;"
     "wifiBusy=true;wifiControls();show('wifiMessage','正在移除…');try{show('wifiMessage',await post('/api/wifi/clear','confirm=FORGET'))}"
     "catch(error){wifiBusy=false;wifiControls();show('wifiMessage',error.message)}};"
@@ -1762,6 +1810,9 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
                          "设备设置暂不可用。\n");
     }
 
+    environment_history_status_t environment_status = {0};
+    environment_history_get_status(&environment_status);
+
     typedef struct {
         char token[SETTINGS_PORTAL_TOKEN_CAPACITY];
         char escaped_ssid[
@@ -1887,7 +1938,10 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         "{\"local_network\":%s,\"wifi_configured\":%s,\"wifi_ssid\":\"%s\","
         "\"timezone\":%d,\"unit\":\"%s\","
         "\"volume\":%u,\"alarm_volume\":%u,\"timer_minutes\":%u,\"updates\":\"%s\",\"daily_pages_mask\":%u,\"music_mode\":\"%s\","
-        "\"daily_pages_order\":[%u,%u,%u,%u,%u,%u,%u],"
+        "\"daily_pages_order\":[%u,%u,%u,%u,%u,%u,%u,%u],"
+        "\"environment_history_save_enabled\":%s,"
+        "\"environment_archive_save_enabled\":%s,"
+        "\"environment_card_available\":%s,"
         "\"alarm\":\"%s\","
         "\"alarm_hour\":%u,\"alarm_minute\":%u,\"alarm_days\":%u,"
         "\"sd_state\":\"%s\",\"image_count\":%u,"
@@ -1926,6 +1980,10 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
         (unsigned int)settings.daily_pages_order[4],
         (unsigned int)settings.daily_pages_order[5],
         (unsigned int)settings.daily_pages_order[6],
+        (unsigned int)settings.daily_pages_order[7],
+        settings.environment_history_save_enabled ? "true" : "false",
+        settings.environment_archive_save_enabled ? "true" : "false",
+        environment_status.card_available ? "true" : "false",
         settings.alarm_enabled ? "on" : "off",
         (unsigned int)settings.alarm_hour,
         (unsigned int)settings.alarm_minute,
@@ -1979,17 +2037,6 @@ static esp_err_t settings_state_get_handler(httpd_req_t *request)
     return send_error;
 }
 
-static esp_err_t restore_previous_settings(
-    const app_settings_t *previous)
-{
-    esp_err_t result = app_settings_save(previous);
-    const esp_err_t timezone_error = app_settings_apply_timezone(previous);
-    if (result == ESP_OK) {
-        result = timezone_error;
-    }
-    return result;
-}
-
 static bool current_unix_time_is_reliable(int64_t *unix_seconds)
 {
     if (unix_seconds == NULL) {
@@ -2014,66 +2061,350 @@ static bool current_unix_time_is_reliable(int64_t *unix_seconds)
     return true;
 }
 
-static esp_err_t save_settings(
-    const app_settings_t *replacement, bool *time_needs_calibration)
+static bool preserve_rtc_after_settings(const app_settings_t *previous,
+                                        const app_settings_t *saved,
+                                        bool unix_time_reliable,
+                                        int64_t unix_seconds)
 {
-    if (time_needs_calibration == NULL) {
-        return ESP_ERR_INVALID_ARG;
+    if (previous->utc_offset_minutes == saved->utc_offset_minutes) {
+        return false;
     }
-    *time_needs_calibration = false;
-
-    /* The caller has already received and validated the bounded form, then
-     * acquired the regular-mutation slot before the session deadline. From
-     * this point the NVS/TZ/RTC transaction must finish atomically; the
-     * session task grants it a bounded cleanup window. OTA remains subject to
-     * deadline checks at every receive and flash boundary below. */
-
-    app_settings_t previous = {0};
-    esp_err_t error = app_settings_get(&previous);
-    if (error != ESP_OK) {
-        return error;
-    }
-    const bool timezone_changed =
-        previous.utc_offset_minutes != replacement->utc_offset_minutes;
-    error = app_settings_save(replacement);
-    if (error != ESP_OK) {
-        return error;
-    }
-    if (!timezone_changed) {
-        return ESP_OK;
-    }
-
-    int64_t unix_seconds = 0;
-    const bool unix_time_reliable =
-        current_unix_time_is_reliable(&unix_seconds);
-    error = app_settings_apply_timezone(replacement);
-    if (error != ESP_OK) {
-        const esp_err_t rollback_error = restore_previous_settings(&previous);
-        if (rollback_error != ESP_OK) {
-            ESP_LOGE(TAG,
-                     "could not restore settings after timezone failure: %s",
-                     esp_err_to_name(rollback_error));
-        }
-        return error;
-    }
-
     if (!unix_time_reliable) {
-        *time_needs_calibration = true;
         ESP_LOGW(TAG,
                  "timezone saved, but current Unix time is not reliable; "
                  "phone calibration is required");
-        return ESP_OK;
+        return true;
     }
-
-    error = clock_service_set_unix_time(unix_seconds);
+    const esp_err_t error = clock_service_set_unix_time(unix_seconds);
     if (error != ESP_OK) {
-        *time_needs_calibration = true;
         ESP_LOGW(TAG,
                  "timezone saved, but RTC could not preserve Unix time: %s; "
                  "phone calibration is required",
                  esp_err_to_name(error));
     }
-    return ESP_OK;
+    /* NVS/TZ is already atomically committed. Never restore an old whole
+     * snapshot here: unrelated device edits may have committed meanwhile. */
+    return error != ESP_OK;
+}
+
+static bool ordinary_read_allowed(httpd_req_t *request)
+{
+    if (!authorize_get(request)) return false;
+    if (boot_recovery_is_active() || !portal_is_ready()) {
+        (void)send_page(request, "409 Conflict", "text/plain; charset=utf-8",
+                        "当前会话不提供此操作，请重新打开普通设置门户。\n");
+        return false;
+    }
+    return true;
+}
+
+static esp_err_t settings_backup_get_handler(httpd_req_t *request)
+{
+    if (!ordinary_read_allowed(request)) return ESP_OK;
+    char *body = heap_caps_calloc(1U, APP_SETTINGS_BACKUP_MAX_LENGTH + 1U,
+                                 MALLOC_CAP_8BIT);
+    if (body == NULL) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8", "暂时无法生成备份，请稍后重试。\n");
+    }
+    size_t length = 0U;
+    const esp_err_t error = app_settings_export_backup(
+        body, APP_SETTINGS_BACKUP_MAX_LENGTH + 1U, &length);
+    esp_err_t sent;
+    if (error != ESP_OK || length == 0U) {
+        sent = send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8", "暂时无法读取偏好，请稍后重试。\n");
+    } else {
+        httpd_resp_set_hdr(request, "Content-Disposition",
+                          "attachment; filename=esp32-rlcd-preferences.json");
+        sent = send_page(request, "200 OK", "application/json; charset=utf-8", body);
+    }
+    heap_caps_free(body);
+    return sent;
+}
+
+static esp_err_t settings_restore_post_handler(httpd_req_t *request)
+{
+    if (!authorize_post(request)) return ESP_OK;
+    char confirmation[32] = {0};
+    if (boot_recovery_is_active() ||
+        httpd_req_get_hdr_value_str(request, "X-RLCD-Confirm", confirmation,
+                                   sizeof(confirmation)) != ESP_OK ||
+        strcmp(confirmation, "RESTORE_PREFERENCES") != 0) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                         "请先预览备份，再确认恢复偏好。\n");
+    }
+    if (request->content_len == 0U ||
+        request->content_len > APP_SETTINGS_BACKUP_MAX_LENGTH) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                         "偏好备份不得超过 4 KiB。\n");
+    }
+    char *body = heap_caps_calloc(1U, APP_SETTINGS_BACKUP_MAX_LENGTH + 1U,
+                                 MALLOC_CAP_8BIT);
+    if (body == NULL) {
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8", "设备暂忙，请稍后重试。\n");
+    }
+    size_t length = 0U;
+    esp_err_t error = receive_form(request, body,
+                                   APP_SETTINGS_BACKUP_MAX_LENGTH + 1U, &length);
+    app_settings_t previous = {0}, candidate = {0};
+    if (error == ESP_OK) error = app_settings_get(&previous);
+    const bool valid = error == ESP_OK &&
+        settings_backup_parse(body, length, &previous, &candidate);
+    if (!valid) {
+        heap_caps_free(body);
+        if (error == ESP_ERR_TIMEOUT) return send_deadline_response(request);
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                         "备份格式、版本或偏好值无效，设备未更改。\n");
+    }
+    if (!begin_regular_mutation()) {
+        heap_caps_free(body);
+        return send_mutation_unavailable(request);
+    }
+    int64_t unix_seconds = 0;
+    const bool reliable = current_unix_time_is_reliable(&unix_seconds);
+    error = app_settings_import_backup(body, length, &candidate);
+    heap_caps_free(body);
+    if (error != ESP_OK) {
+        return finish_regular_request(request, "500 Internal Server Error",
+            "偏好未能恢复，原设置保留；请稍后重试。\n");
+    }
+    const bool calibrate = preserve_rtc_after_settings(
+        &previous, &candidate, reliable, unix_seconds);
+    return finish_regular_request(request, "200 OK", calibrate ?
+        "偏好已恢复，无需重启；时区已变更，请使用手机时间校准 RTC。\n" :
+        "偏好已恢复，无需重启；网络、更新通道、省电请求及 SD 记录开关保持不变。\n");
+}
+
+static esp_err_t environment_get_handler(httpd_req_t *request)
+{
+    if (!ordinary_read_allowed(request)) return ESP_OK;
+    environment_history_snapshot_t *snapshot = heap_caps_malloc(
+        sizeof(*snapshot), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (snapshot == NULL || !environment_history_snapshot(snapshot)) {
+        heap_caps_free(snapshot);
+        return send_page(request, "503 Service Unavailable",
+                         "text/plain; charset=utf-8", "环境记录尚未就绪，请稍后重试。\n");
+    }
+    environment_history_status_t state = {0};
+    environment_history_get_status(&state);
+    const bool csv = strncmp(request->uri, "/api/environment.csv",
+                            sizeof("/api/environment.csv") - 1U) == 0;
+    httpd_resp_set_type(request, csv ? "text/csv; charset=utf-8" :
+                                      "application/json; charset=utf-8");
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(request, "X-Content-Type-Options", "nosniff");
+    if (csv) httpd_resp_set_hdr(request, "Content-Disposition",
+                               "attachment; filename=environment-24h.csv");
+    char chunk[512];
+    esp_err_t error = ESP_OK;
+    if (csv) {
+        error = httpd_resp_send_chunk(request, environment_history_csv_header(),
+                                     HTTPD_RESP_USE_STRLEN);
+    } else {
+        int64_t recording_age = (snapshot->captured_monotonic_ms -
+            snapshot->recording_started_monotonic_ms) / 1000;
+        if (recording_age < 0) recording_age = 0;
+        snprintf(chunk, sizeof(chunk),
+            "{\"recording_age\":%lld,\"restored\":%s,\"card_available\":%s,"
+            "\"storage_enabled\":%s,\"storage_error\":%s,\"storage_full\":%s,\"saved_this_boot\":%s,\"clock_required\":%s,"
+            "\"archive_enabled\":%s,\"archive_saved_this_boot\":%s,\"archive_full\":%s,\"archive_error\":%s,"
+            "\"min_t\":%d,\"max_t\":%d,\"min_h\":%u,\"max_h\":%u,\"points\":[",
+            (long long)recording_age, snapshot->restored_history ? "true" : "false",
+            state.card_available ? "true" : "false", state.storage_enabled ? "true" : "false",
+            state.last_storage_error != ESP_OK ? "true" : "false",
+            state.storage_full ? "true" : "false",
+            state.saved_this_boot ? "true" : "false",
+            state.clock_required ? "true" : "false",
+            state.archive_enabled ? "true" : "false",
+            state.archive_saved_this_boot ? "true" : "false",
+            state.archive_full ? "true" : "false",
+            state.archive_last_error != ESP_OK ? "true" : "false",
+            (int)snapshot->temperature_min_centi_c,
+            (int)snapshot->temperature_max_centi_c,
+            (unsigned int)snapshot->humidity_min_centi_percent,
+            (unsigned int)snapshot->humidity_max_centi_percent);
+        error = httpd_resp_send_chunk(request, chunk, HTTPD_RESP_USE_STRLEN);
+    }
+    for (size_t i = 0U; error == ESP_OK && i < snapshot->count; ++i) {
+        if (session_deadline_expired()) { error = ESP_ERR_TIMEOUT; break; }
+        if (csv) {
+            if (!environment_history_csv_row(snapshot, i, chunk, sizeof(chunk))) {
+                error = ESP_FAIL;
+                break;
+            }
+        } else {
+            const environment_history_point_t *point = &snapshot->points[i];
+            int64_t age = (snapshot->captured_monotonic_ms - point->start_monotonic_ms) / 1000;
+            if (age < 0) age = 0;
+            if (age > 86400) age = 86400;
+            snprintf(chunk, sizeof(chunk),
+                "%s{\"age\":%lld,\"valid\":%s,\"restored\":%s,\"t\":%d,\"h\":%u,\"failures\":%u}",
+                i == 0U ? "" : ",", (long long)age,
+                point->sample_count > 0U ? "true" : "false",
+                point->restored ? "true" : "false",
+                (int)point->temperature_mean_centi_c,
+                (unsigned int)point->humidity_mean_centi_percent,
+                (unsigned int)point->failure_count);
+        }
+        error = httpd_resp_send_chunk(request, chunk, HTTPD_RESP_USE_STRLEN);
+    }
+    heap_caps_free(snapshot);
+    if (error == ESP_OK && !csv) {
+        error = httpd_resp_send_chunk(request, "]}", 2U);
+    }
+    if (error == ESP_OK) error = httpd_resp_send_chunk(request, NULL, 0U);
+    return error;
+}
+
+typedef struct {
+    httpd_req_t *request;
+    TickType_t started;
+    TickType_t last_yield;
+    uint64_t sent;
+} environment_archive_request_t;
+
+static bool environment_archive_request_checkpoint(void *context)
+{
+    environment_archive_request_t *state = context;
+    const TickType_t now = xTaskGetTickCount();
+    if (now - state->started >= pdMS_TO_TICKS(20000U) ||
+        session_deadline_expired() || !portal_is_ready()) return false;
+    if (now - state->last_yield >= pdMS_TO_TICKS(20U)) {
+        vTaskDelay(1);
+        state->last_yield = now;
+    }
+    return true;
+}
+
+static bool environment_archive_response_write(const char *bytes, size_t length,
+                                                void *context)
+{
+    environment_archive_request_t *state = context;
+    /* The archive service already batches rows into a 1 KiB buffer. */
+    if (!environment_archive_request_checkpoint(context) ||
+        httpd_resp_send_chunk(state->request, bytes, length) != ESP_OK) return false;
+    state->sent += length;
+    return true;
+}
+
+/* Exact, unescaped month tokens only: no paths, duplicate keys or extra fields. */
+static bool environment_archive_request_month(httpd_req_t *request,
+                                               bool download, char month[8])
+{
+    const size_t length = httpd_req_get_url_query_len(request);
+    month[0] = '\0';
+    if (length == 0U) return !download;
+    const char *prefix = download ? "month=" : "before=";
+    const size_t prefix_length = strlen(prefix);
+    char query[16];
+    if (length != prefix_length + 7U || length >= sizeof(query) ||
+        httpd_req_get_url_query_str(request, query, sizeof(query)) != ESP_OK ||
+        memcmp(query, prefix, prefix_length) != 0) return false;
+    memcpy(month, query + prefix_length, 8U);
+    return environment_archive_valid_month(month);
+}
+
+static esp_err_t environment_archive_error_response(httpd_req_t *request,
+    environment_storage_result_t error)
+{
+    return send_page(request,
+        error == ENVIRONMENT_STORAGE_NOT_FOUND ? "404 Not Found" :
+        error == ENVIRONMENT_STORAGE_CANCELLED ? "408 Request Timeout" : "409 Conflict",
+        "text/plain; charset=utf-8",
+        error == ENVIRONMENT_STORAGE_NOT_FOUND ? "未找到该月历史文件，请刷新列表后重试。\n" :
+        error == ENVIRONMENT_STORAGE_CANCELLED ? "读取已取消或超时，请确认门户仍在开启后重试。\n" :
+        error == ENVIRONMENT_STORAGE_LIMIT ? "历史目录或文件超过读取上限，请关机后使用电脑备份查看。\n" :
+        "历史文件未通过校验或无法读取，未生成下载；请关机后使用电脑检查 SD 卡。\n");
+}
+
+static esp_err_t environment_archive_get_handler(httpd_req_t *request)
+{
+    if (!ordinary_read_allowed(request)) return ESP_OK;
+    const bool download = strncmp(request->uri, "/api/environment/archive.csv",
+        sizeof("/api/environment/archive.csv") - 1U) == 0;
+    char month[8];
+    if (!environment_archive_request_month(request, download, month)) {
+        return send_page(request, "400 Bad Request", "text/plain; charset=utf-8",
+                         "请选择有效的历史月份后重试。\n");
+    }
+    environment_history_status_t status = {0};
+    environment_history_get_status(&status);
+    if (!status.ready || !status.card_available) {
+        return send_page(request, "409 Conflict", "text/plain; charset=utf-8",
+                         "microSD 不可用，请关机插卡后重试。\n");
+    }
+    sd_media_read_t *lease = NULL;
+    if (environment_history_storage_busy() ||
+        sd_media_begin_read(&lease, 0U) != ESP_OK) {
+        return send_page(request, "409 Conflict", "text/plain; charset=utf-8",
+                         "SD 卡正在使用或暂不可读，请先停止音乐播放，稍后重试。\n");
+    }
+    environment_archive_request_t state = {
+        .request = request, .started = xTaskGetTickCount(),
+        .last_yield = xTaskGetTickCount(),
+    };
+    const char *directory = SD_MEDIA_MOUNT_PATH ENVIRONMENT_ARCHIVE_DIRECTORY;
+    environment_storage_result_t result;
+    esp_err_t error = ESP_OK;
+    httpd_resp_set_hdr(request, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(request, "X-Content-Type-Options", "nosniff");
+    if (download) {
+        uint64_t size = 0U;
+        result = environment_archive_inspect(directory, month, &size,
+            environment_archive_request_checkpoint, &state);
+        if (result != ENVIRONMENT_STORAGE_OK) {
+            (void)sd_media_end_read(lease);
+            return environment_archive_error_response(request, result);
+        }
+        char disposition[72], size_header[24];
+        snprintf(disposition, sizeof(disposition),
+            "attachment; filename=environment-%s.csv", month);
+        snprintf(size_header, sizeof(size_header), "%llu", (unsigned long long)size);
+        httpd_resp_set_type(request, "text/csv; charset=utf-8");
+        httpd_resp_set_hdr(request, "Content-Disposition", disposition);
+        httpd_resp_set_hdr(request, "X-RLCD-CSV-Bytes", size_header);
+        result = environment_archive_stream(directory, month,
+            environment_archive_response_write, &state,
+            environment_archive_request_checkpoint, &state);
+        if (result != ENVIRONMENT_STORAGE_OK || state.sent != size) error = ESP_FAIL;
+        if (sd_media_end_read(lease) != ESP_OK) error = ESP_FAIL;
+        /* Never terminate a partial response as a successful downloadable CSV. */
+        return error == ESP_OK ? httpd_resp_send_chunk(request, NULL, 0U) : error;
+    }
+    environment_archive_page_t *page = calloc(1U, sizeof(*page));
+    if (page == NULL) {
+        (void)sd_media_end_read(lease);
+        return send_page(request, "503 Service Unavailable", "text/plain; charset=utf-8",
+                         "设备内存暂不足，请稍后重试。\n");
+    }
+    result = environment_archive_list(directory, month, page,
+        environment_archive_request_checkpoint, &state);
+    const esp_err_t release_error = sd_media_end_read(lease);
+    if ((result != ENVIRONMENT_STORAGE_OK && result != ENVIRONMENT_STORAGE_NOT_FOUND) ||
+        release_error != ESP_OK) {
+        free(page);
+        return environment_archive_error_response(request,
+            release_error != ESP_OK ? ENVIRONMENT_STORAGE_IO_ERROR : result);
+    }
+    httpd_resp_set_type(request, "application/json; charset=utf-8");
+    error = httpd_resp_send_chunk(request, "{\"files\":[", HTTPD_RESP_USE_STRLEN);
+    char chunk[96];
+    for (size_t i = 0U; error == ESP_OK && i < page->count; ++i) {
+        if (!environment_archive_request_checkpoint(&state)) { error = ESP_FAIL; break; }
+        snprintf(chunk, sizeof(chunk), "%s{\"month\":\"%s\",\"bytes\":%llu}",
+            i == 0U ? "" : ",", page->entries[i].month,
+            (unsigned long long)page->entries[i].size_bytes);
+        error = httpd_resp_send_chunk(request, chunk, HTTPD_RESP_USE_STRLEN);
+    }
+    if (error == ESP_OK) {
+        snprintf(chunk, sizeof(chunk), "],\"next_cursor\":\"%s\"}",
+            page->has_more ? page->next_cursor : "");
+        error = httpd_resp_send_chunk(request, chunk, HTTPD_RESP_USE_STRLEN);
+    }
+    free(page);
+    return error == ESP_OK ? httpd_resp_send_chunk(request, NULL, 0U) : error;
 }
 
 static esp_err_t finish_reprovisioning_request(httpd_req_t *request,
@@ -2133,7 +2464,6 @@ static esp_err_t settings_post_handler(httpd_req_t *request)
     const bool valid = settings_read_error == ESP_OK &&
                        app_settings_parse_form(
                            body, length, &current, &settings);
-    memset(body, 0, sizeof(body));
     if (receive_error == ESP_ERR_TIMEOUT) {
         return send_deadline_response(request);
     }
@@ -2154,15 +2484,33 @@ static esp_err_t settings_post_handler(httpd_req_t *request)
         return send_mutation_unavailable(request);
     }
 
-    bool time_needs_calibration = false;
-    const esp_err_t error = save_settings(
-        &settings, &time_needs_calibration);
+    const bool enable_archive = !current.environment_archive_save_enabled &&
+        settings.environment_archive_save_enabled;
+    if (enable_archive || (!current.environment_history_save_enabled &&
+        settings.environment_history_save_enabled)) {
+        environment_history_status_t storage = {0};
+        environment_history_get_status(&storage);
+        char confirmation[32] = {0};
+        if (!storage.ready || !storage.card_available ||
+            httpd_req_get_hdr_value_str(request, "X-RLCD-Confirm", confirmation,
+                                       sizeof(confirmation)) != ESP_OK ||
+            strcmp(confirmation, enable_archive ? "ENABLE_ARCHIVE" : "ENABLE_HISTORY") != 0) {
+            return finish_regular_request(request, "409 Conflict",
+                "开启记录需要可用的 microSD 和明确确认；普通设置仍可使用。\n");
+        }
+    }
+    int64_t unix_seconds = 0;
+    const bool reliable = current_unix_time_is_reliable(&unix_seconds);
+    const esp_err_t error = app_settings_save_form(body, length, &settings);
+    memset(body, 0, sizeof(body));
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "settings save failed: %s", esp_err_to_name(error));
         return finish_regular_request(
             request, "500 Internal Server Error",
-            "设置未能完整保存，原设置已尽量恢复。\n");
+            "设置未保存，请检查输入或稍后重试。\n");
     }
+    const bool time_needs_calibration = preserve_rtc_after_settings(
+        &current, &settings, reliable, unix_seconds);
     if (time_needs_calibration) {
         return finish_regular_request(
             request,
@@ -2795,18 +3143,21 @@ static esp_err_t defaults_post_handler(httpd_req_t *request)
         return send_mutation_unavailable(request);
     }
 
+    app_settings_t previous = {0};
     app_settings_t defaults = {0};
-    app_settings_defaults(&defaults);
-    bool time_needs_calibration = false;
-    const esp_err_t error = save_settings(
-        &defaults, &time_needs_calibration);
+    int64_t unix_seconds = 0;
+    const bool reliable = current_unix_time_is_reliable(&unix_seconds);
+    esp_err_t error = app_settings_get(&previous);
+    if (error == ESP_OK) error = app_settings_restore_defaults();
+    if (error == ESP_OK) error = app_settings_get(&defaults);
     if (error != ESP_OK) {
         ESP_LOGW(TAG, "settings reset failed: %s", esp_err_to_name(error));
         return finish_regular_request(
             request, "500 Internal Server Error",
             "默认设置未能完整恢复，原设置已尽量保留。\n");
     }
-    if (time_needs_calibration) {
+    if (preserve_rtc_after_settings(&previous, &defaults, reliable,
+                                    unix_seconds)) {
         return finish_regular_request(
             request,
             "200 OK",
@@ -3577,7 +3928,7 @@ static esp_err_t start_web_server(void)
     const bool recovery_mode = boot_recovery_is_active();
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.stack_size = 8192U;
-    config.max_uri_handlers = 40U;
+    config.max_uri_handlers = 44U;
     config.max_open_sockets = 2U;
     config.recv_wait_timeout = 15U;
     config.lru_purge_enable = true;
@@ -3600,6 +3951,30 @@ static esp_err_t start_web_server(void)
         .uri = "/api/settings",
         .method = HTTP_POST,
         .handler = settings_post_handler,
+    };
+    const httpd_uri_t backup_uri = {
+        .uri = "/api/settings/backup", .method = HTTP_GET,
+        .handler = settings_backup_get_handler,
+    };
+    const httpd_uri_t restore_uri = {
+        .uri = "/api/settings/restore", .method = HTTP_POST,
+        .handler = settings_restore_post_handler,
+    };
+    const httpd_uri_t environment_uri = {
+        .uri = "/api/environment", .method = HTTP_GET,
+        .handler = environment_get_handler,
+    };
+    const httpd_uri_t environment_csv_uri = {
+        .uri = "/api/environment.csv", .method = HTTP_GET,
+        .handler = environment_get_handler,
+    };
+    const httpd_uri_t environment_archives_uri = {
+        .uri = "/api/environment/archives", .method = HTTP_GET,
+        .handler = environment_archive_get_handler,
+    };
+    const httpd_uri_t environment_archive_csv_uri = {
+        .uri = "/api/environment/archive.csv", .method = HTTP_GET,
+        .handler = environment_archive_get_handler,
     };
     const httpd_uri_t market_get_uri = {
         .uri = "/api/market/config",
@@ -3729,6 +4104,24 @@ static esp_err_t start_web_server(void)
     }
     if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server, &settings_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server, &backup_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server, &restore_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server, &environment_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server, &environment_csv_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server, &environment_archives_uri);
+    }
+    if (error == ESP_OK && !recovery_mode) {
+        error = httpd_register_uri_handler(s_http_server, &environment_archive_csv_uri);
     }
     if (error == ESP_OK && !recovery_mode) {
         error = httpd_register_uri_handler(s_http_server, &market_get_uri);

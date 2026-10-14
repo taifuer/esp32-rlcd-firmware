@@ -103,7 +103,7 @@ uint32_t settings_portal_clock_remaining(const settings_portal_clock_t *clock,
 bool settings_portal_lan_post_allowed(const char *uri)
 {
     static const char *const allowed[] = {
-        "/api/settings", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/activity",
+        "/api/settings", "/api/settings/restore", "/api/time", "/api/hotspot", "/api/alarm/preview", "/api/activity",
         "/api/market/config", "/api/conversation/preferences",
         "/api/weather/preferences", "/api/weather/clear", "/api/conversation/clear",
         "/api/images/select", "/api/images/delete", "/api/images/upload",

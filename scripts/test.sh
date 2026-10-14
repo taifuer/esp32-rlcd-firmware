@@ -26,6 +26,40 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
 "${RLCD_TEST_TMP}/test_timing_controls"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all -Isrc/environment/include \
+  src/environment/environment_history.c tests/test_environment_history.c \
+  -o "${RLCD_TEST_TMP}/test_environment_history"
+"${RLCD_TEST_TMP}/test_environment_history"
+cc -std=c17 -Wall -Wextra -Werror -pedantic -D_POSIX_C_SOURCE=200809L \
+  -fsanitize=undefined -fno-sanitize-recover=all -Isrc/environment/include \
+  src/environment/environment_history.c src/environment/environment_storage.c \
+  tests/test_environment_storage.c -o "${RLCD_TEST_TMP}/test_environment_storage"
+"${RLCD_TEST_TMP}/test_environment_storage" "${RLCD_TEST_TMP}/environment-storage"
+cc -std=c17 -Wall -Wextra -Werror -pedantic -D_POSIX_C_SOURCE=200809L \
+  -fsanitize=undefined -fno-sanitize-recover=all -Isrc/environment/include \
+  src/environment/environment_archive.c tests/test_environment_archive.c \
+  -o "${RLCD_TEST_TMP}/test_environment_archive"
+"${RLCD_TEST_TMP}/test_environment_archive" "${RLCD_TEST_TMP}/environment-archive"
+cc -std=c17 -Wall -Wextra -Werror -pedantic -D_POSIX_C_SOURCE=200809L \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -DSD_MEDIA_MOUNT_PATH="\"${RLCD_TEST_TMP}/environment-service\"" \
+  -Itests/environment_stubs -Itests/music_stubs -Isrc/environment/include \
+  src/environment/environment_history.c src/environment/environment_storage.c \
+  src/environment/environment_service.c tests/test_environment_service.c \
+  src/environment/environment_archive.c \
+  -o "${RLCD_TEST_TMP}/test_environment_service"
+"${RLCD_TEST_TMP}/test_environment_service"
+cc -std=c17 -Wall -Wextra -Werror -pedantic -D_POSIX_C_SOURCE=200809L \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -DSD_MEDIA_MOUNT_PATH="\"${RLCD_TEST_TMP}/environment-archive-service\"" \
+  -Itests/environment_stubs -Itests/music_stubs -Isrc/environment/include \
+  src/environment/environment_history.c src/environment/environment_storage.c \
+  src/environment/environment_archive.c src/environment/environment_service.c \
+  tests/test_environment_archive_service.c \
+  -o "${RLCD_TEST_TMP}/test_environment_archive_service"
+"${RLCD_TEST_TMP}/test_environment_archive_service"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -Isrc/audio/include tests/test_audio_alert_policy.c -o "${RLCD_TEST_TMP}/test_audio_alert_policy"
 "${RLCD_TEST_TMP}/test_audio_alert_policy"
 
@@ -212,6 +246,16 @@ cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
 "${RLCD_TEST_TMP}/test_timing_display"
 
 cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -I"${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc" -Isrc/display -Isrc/environment/include \
+  tests/test_environment_display.c \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_font.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8g2_fonts.c" \
+  "${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc/u8x8_8x8.c" \
+  -o "${RLCD_TEST_TMP}/test_environment_display"
+"${RLCD_TEST_TMP}/test_environment_display"
+
+cc -std=c17 -ffunction-sections -fdata-sections -Wl,--gc-sections \
   -I"${RLCD_WAVESHARE_COMPONENTS_DIR}/u8g2/csrc" \
   -Isrc/conversation/include -Isrc/display \
   src/conversation/conversation_feedback.c tests/test_conversation_layout.c \
@@ -286,8 +330,15 @@ cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \
   -Itests/settings_stubs -Isrc/settings/include -Isrc/settings -Isrc/storage/include \
   src/settings/settings_model.c src/settings/settings_record.c \
+  src/settings/settings_backup.c \
   tests/test_settings_storage.c \
   -o "${RLCD_TEST_TMP}/test_settings_storage"
+
+cc -std=c17 -Wall -Wextra -Werror -pedantic \
+  -fsanitize=undefined -fno-sanitize-recover=all \
+  -Isrc/settings/include src/settings/settings_model.c src/settings/settings_backup.c \
+  tests/test_settings_backup.c -o "${RLCD_TEST_TMP}/test_settings_backup"
+"${RLCD_TEST_TMP}/test_settings_backup"
 
 cc -std=c17 -Wall -Wextra -Werror -pedantic \
   -fsanitize=undefined -fno-sanitize-recover=all \

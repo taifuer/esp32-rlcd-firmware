@@ -100,6 +100,24 @@ assert.doesNotMatch(retryAction, /audio_voice_start|audio_conversation_continue|
   'retry starts new cloud intent, never replays old audio or bypasses capture-release gate');
 console.log('Page ordering and cloud retry: persisted order, explicit input, cleanup and release gating passed.');
 
+assert.match(main, /if \(!recovery_mode\) \{\s*const esp_err_t history_error = environment_history_init\(\)/);
+assert.match(main, /environment_view = heap_caps_calloc\(1, sizeof\(\*environment_view\)/,
+  'history snapshot belongs in PSRAM, never on the main task stack');
+assert.match(main, /const esp_err_t error = shtc3_read\(&measurement\);\s*environment_history_record\(/,
+  'only real sensor attempts feed history, not filtered cached home values');
+assert.match(main, /dashboard.time_valid \? \(int64_t\)time\(NULL\) : 0/);
+assert.match(main, /error == ESP_OK, measurement.temperature_c, measurement.humidity_percent/);
+assert.match(main, /active_page == APP_PAGE_ENVIRONMENT/);
+assert.match(main, /last_environment_render_ms >= 60000U/,
+  'history rendering stays bounded to one minute between explicit changes');
+assert.match(main, /if \(environment_history_storage_busy\(\)\) \{\s*pending_music_toggle/,
+  'music intent waits for a background SD lease without blocking the UI');
+assert.match(main, /environment_history_set_io_allowed\(!history_foreground_busy/);
+assert.match(main, /history_foreground_busy = recovery_mode \|\| alarm_modal_active/);
+assert.match(main, /history_idle_page == APP_PAGE_HOME[\s\S]{0,130}APP_PAGE_ENVIRONMENT/);
+assert.match(display, /environment_display_render\(s_u8g2, history, fahrenheit, next_daily_page\)/);
+console.log('Environment integration: real readings, recovery isolation, bounded rendering and SD priority passed.');
+
 const timerAdvance = main.split('const uint64_t timing_now_ms =')[1]
   .split('const uint32_t button_elapsed_ms')[0];
 assert.match(timerAdvance, /esp_timer_get_time\(\) \/ 1000U/);
@@ -130,3 +148,42 @@ assert.doesNotMatch(timerModal, /audio_alert_start\(|audio_alert_stop\(/,
   'timer cleanup cannot cancel a real RTC alarm');
 assert.match(main, /if \(alarm_button_events_suppressed \|\| timing_notice_result.consume_input\)/);
 console.log('Timing integration: background monotonic clock, hot preference, modal priority, muted sound and input gates passed.');
+
+// HOME is independent of the shared release gate, which also protects OTA,
+// modal exits and long-press actions. Only a fresh, completed chord may navigate.
+assert.match(main, /button_chord_init\(&home_shortcut\)/);
+assert.ok(main.indexOf('const bool home_shortcut_input_admitted =') <
+  main.indexOf('if (key_pressed_or_debounced &&\n            boot_pressed_or_debounced)'),
+  'capture external release gating before this sample can set the dual-key gate');
+assert.match(main, /!dual_button_release_gate \|\| button_chord_is_tracking\(&home_shortcut\)/);
+const homePermission = main.split('const bool home_shortcut_allowed =')[1]
+  .split('const bool home_shortcut_triggered =')[0];
+for (const gate of ['buttons_ready', '!recovery_mode', 'home_shortcut_input_admitted',
+  'display_allows_home_shortcut(previous_display_mode)', '!alarm_modal_active',
+  '!alarm_button_events_suppressed', '!timing_notice.visible', '!timing_notice_result.consume_input',
+  '!voice_session_active', '!voice_button_release_gate', '!firmware_update_ui_active',
+  '!gallery_download_ui_active', '!online_update_busy', '!online_update_confirmation_active',
+  '!quick_settings.active', 'manual_sync_ui == MANUAL_SYNC_UI_NONE',
+  'power_setting_ui == POWER_SETTING_UI_NONE', '!app_image_delete_ui_is_active(&image_delete_ui)',
+  '!image_delete_release_gate_was_active', '!image_delete_wait_for_button_release']) {
+  assert(homePermission.includes(gate), `home chord must respect ${gate}`);
+}
+assert.ok(main.indexOf('const bool home_shortcut_allowed =') >
+  main.indexOf('const timing_notice_result_t timing_notice_result ='),
+  'alarm and countdown priority are settled before a chord can return home');
+const homeAction = main.split('if (home_shortcut_triggered) {')[1]
+  .split('if (alarm_button_events_suppressed')[0];
+assert.match(homeAction, /app_page_state_go_home\(&page_state\)/);
+assert.match(homeAction, /key_event = BUTTON_EVENT_NONE;\s*boot_event = BUTTON_EVENT_NONE;/,
+  'a completed chord cannot also select an image, pause music/timer or switch page');
+assert.doesNotMatch(homeAction, /audio_|timing_|firmware_update_|app_settings_|network_time_|esp_restart/,
+  'HOME changes navigation only, not ongoing music, timing or persistent settings');
+const homeDisplays = main.split('static bool display_allows_home_shortcut(')[1]
+  .split('} app_display_mode_t;')[0].split('typedef enum')[0];
+for (const mode of ['DASHBOARD', 'WEATHER', 'MARKET', 'CALENDAR', 'MONOCHROME_IMAGE',
+  'MUSIC', 'TIMING', 'ENVIRONMENT', 'STATUS', 'VOICE', 'SETTINGS', 'ONLINE_UPDATE']) {
+  assert(homeDisplays.includes(`case APP_DISPLAY_${mode}:`));
+}
+assert.doesNotMatch(homeDisplays, /case APP_DISPLAY_(?:NONE|ALARM|TIMING_DONE|HOLD_PROMPT|QUICK_SETTINGS|NETWORK_SETUP|IMAGE_DELETE_|FIRMWARE_UPDATE_)/);
+assert.match(homeDisplays, /default:\s*return false;/);
+console.log('Home shortcut integration: fresh dual-key input, modal priority, release consumption and navigation-only action passed.');

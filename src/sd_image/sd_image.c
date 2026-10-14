@@ -250,6 +250,15 @@ esp_err_t sd_media_end_read(sd_media_read_t *session)
     return error;
 }
 
+esp_err_t sd_media_get_free_bytes(sd_media_read_t *session, uint64_t *free_bytes)
+{
+    if (session == NULL || free_bytes == NULL || session->card == NULL ||
+        session->owner != xTaskGetCurrentTaskHandle()) return ESP_ERR_INVALID_ARG;
+    uint64_t total_bytes = 0;
+    *free_bytes = 0;
+    return esp_vfs_fat_info(SD_IMAGE_MOUNT_PATH, &total_bytes, free_bytes);
+}
+
 esp_err_t sd_media_begin_write(sd_media_write_t **session, uint32_t wait_ms)
 {
     return sd_media_begin_read(session, wait_ms);
